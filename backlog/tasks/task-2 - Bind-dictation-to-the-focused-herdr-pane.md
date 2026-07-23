@@ -1,14 +1,16 @@
 ---
 id: TASK-2
 title: Bind dictation to the focused herdr pane
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-23 15:43'
-updated_date: '2026-07-23 15:45'
+updated_date: '2026-07-23 17:39'
 labels: []
 dependencies: []
 documentation:
   - doc-1
+modified_files:
+  - src/stores/settingsStore.ts
 ordinal: 2000
 ---
 
