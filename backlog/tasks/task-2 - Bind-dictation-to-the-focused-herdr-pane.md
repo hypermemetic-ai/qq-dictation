@@ -1,10 +1,10 @@
 ---
 id: TASK-2
 title: Bind dictation to the focused herdr pane
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-23 15:43'
-updated_date: '2026-07-23 17:39'
+updated_date: '2026-07-23 18:46'
 labels: []
 dependencies: []
 documentation:
@@ -40,3 +40,15 @@ Intent: bind the transcription target at recording start (the focused herdr pane
 - [ ] #5 Multi-line post-processed text on the herdr path cannot submit early (newlines collapsed)
 - [ ] #6 Setting can disable herdr binding; default on
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered on branch task/herdr-target-binding (commits a7fc733, 92cb113 + finalization).
+
+Mechanism: at recording start (only after successful start), capture the focused herdr pane via `herdr api snapshot` when the active X11 window is herdr's; deliver at paste time via `herdr pane send-text` (+ `send-keys enter` when auto_submit), keyed by per-recording tokens so overlapping in-flight transcriptions can't cross-deliver. Fallback to the legacy focus paste on any failure. New "Bind to Herdr Pane" setting, default on.
+
+Checks: cargo test 140 passed / 1 pre-existing catalog failure (base commit e8c73ba); clippy/tsc/eslint/prettier clean. Three fresh-context review rounds: round 1 found a wrong-pane blocker (global binding slot) — fixed with per-recording tokens; rounds 2–3 verified the fix and follow-ups. Built + installed via scripts/build-local.sh + install-local.sh (AppDir commit 92cb113).
+
+UAT (operator, accepted): (1) dictated into herdr pane w4G:p2, switched away mid-flight — text delivered to w4G:p2 (log-verified); (2) auto_submit=enter — text landed and submitted itself (operator-confirmed); (3) dictate into non-herdr app — legacy behavior unchanged.
+<!-- SECTION:FINAL_SUMMARY:END -->
