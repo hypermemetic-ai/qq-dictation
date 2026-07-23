@@ -578,6 +578,13 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
+            // Bind this recording to the focused herdr pane (if any) so the
+            // finished transcription can be delivered there regardless of
+            // later focus changes. Only after a successful start: a failed
+            // start must not mint a token or disturb the binding of a
+            // transcription still in flight. `stop` reads the token back via
+            // `latest_token`.
+            crate::target_binding::begin_capture(app.clone());
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -646,6 +653,11 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
         let cancel_generation = rm.cancel_generation();
+        // The recording being stopped is the latest one that successfully
+        // started (a new recording can only begin once this one's recorder
+        // returns to Idle, which happens inside the async task below), so
+        // this is its herdr binding token.
+        let target_token = crate::target_binding::latest_token();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
@@ -798,7 +810,11 @@ impl ShortcutAction for TranscribeAction {
                                         return;
                                     }
 
-                                    match utils::paste(final_text, ah_clone.clone()) {
+                                    match utils::paste(
+                                        final_text,
+                                        ah_clone.clone(),
+                                        Some(target_token),
+                                    ) {
                                         Ok(()) => debug!(
                                             "Text pasted successfully in {:?}",
                                             paste_time.elapsed()

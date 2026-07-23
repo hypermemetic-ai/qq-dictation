@@ -46,3 +46,6 @@ blob-report/
 
 # Nix build output
 result
+
+# Local subagent run artifacts
+.pi-subagents/
