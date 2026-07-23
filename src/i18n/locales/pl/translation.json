@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Powiąż z panelem Herdr",
+        "description": "Dostarcza transkrypcje do panelu herdr, który był aktywny w momencie rozpoczęcia nagrywania, nawet jeśli fokus przeniesie się gdzie indziej, zanim dotrze tekst"
+      },
       "translateToEnglish": {
         "label": "Tłumacz na angielski",
         "description": "Automatycznie tłumacz mowę z innych języków na angielski podczas transkrypcji."

@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Bind till Herdr-panel",
+        "description": "Leverera transkriptioner till den herdr-panel som hade fokus när inspelningen startade, även om fokus flyttas innan texten anländer"
+      },
       "translateToEnglish": {
         "label": "Översätt till engelska",
         "description": "Översätt automatiskt tal från andra språk till engelska under transkription."

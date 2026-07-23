@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Vázat na panel Herdr",
+        "description": "Doručí přepisy do panelu herdr, který byl aktivní při zahájení nahrávání, i když se fokus před doručením textu přesune jinam"
+      },
       "translateToEnglish": {
         "label": "Překládat do angličtiny",
         "description": "Během přepisu automaticky překládat řeč z jiných jazyků do angličtiny."

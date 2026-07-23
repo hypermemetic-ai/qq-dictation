@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Vincular al panel de Herdr",
+        "description": "Entrega las transcripciones al panel de herdr que tenía el foco al iniciar la grabación, aunque el foco se mueva a otro lugar antes de que llegue el texto"
+      },
       "translateToEnglish": {
         "label": "Traducir al inglés",
         "description": "Traducir automáticamente el habla de otros idiomas al inglés durante la transcripción."
