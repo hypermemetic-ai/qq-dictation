@@ -15,6 +15,8 @@ if [[ ! -x "${source_app_dir}/AppRun" ]]; then
     exit 1
 fi
 
+/usr/bin/python3 -c 'import Xlib' >/dev/null
+
 "${repository_root}/scripts/fetch-fdt-model.sh"
 
 mkdir -p "$install_parent" "$local_bin" "$user_units"
@@ -53,7 +55,7 @@ install -m 0644 \
 
 if [[ -f "$settings_path" ]]; then
     cp -a "$settings_path" "${settings_path}.before-qq-dictation.${timestamp}"
-    python3 - "$settings_path" <<'PY'
+    /usr/bin/python3 - "$settings_path" <<'PY'
 import json
 import os
 import sys
@@ -68,7 +70,6 @@ os.replace(temporary, path)
 PY
 fi
 
-python3 -c 'import Xlib' >/dev/null
 systemctl --user daemon-reload
 systemctl --user enable --now handy-ptt.service
 

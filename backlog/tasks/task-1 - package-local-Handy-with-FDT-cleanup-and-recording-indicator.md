@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-23 04:46'
-updated_date: '2026-07-23 05:39'
+updated_date: '2026-07-23 05:47'
 labels: []
 dependencies: []
 documentation:
@@ -96,5 +96,11 @@ Implementation checkpoint:
 - Rust classifier contract, 128/32 maximum-context windows, atomic transaction decoder, resident lifecycle, English language gate, custom-word ordering, and exact legacy fallback are implemented.
 - Native minimal overlay was exercised above Ghostty/herdr without focus theft.
 - Checks: frontend lint/format pass; 9/9 focused classifier tests pass including the real model and long transcript tail; legacy fallback integration test passes. Full library baseline is 134 pass, 1 unrelated upstream catalog failure (new moss architecture absent from KNOWN_ARCHES), 2 ignored.
+---
+
+author: @codex
+created: 2026-07-23 05:47
+---
+Installer live-run finding: the first install stopped before service restart because its Xlib preflight used PATH-selected Linuxbrew Python 3.14, while the tracked systemd unit correctly uses /usr/bin/python3 3.12 where python3-xlib is installed. Moved the preflight before mutations and made both installer Python calls explicit to /usr/bin/python3. The staged AppDir, model, wrapper, settings backup, and original before-qq-dictation backups remained intact; service/application restart is pending the corrected rerun.
 ---
 <!-- COMMENTS:END -->
