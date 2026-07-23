@@ -1,11 +1,11 @@
 ---
 id: TASK-1
 title: package local Handy with FDT cleanup and recording indicator
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-23 04:46'
-updated_date: '2026-07-23 05:56'
+updated_date: '2026-07-23 06:02'
 labels: []
 dependencies: []
 documentation:
@@ -65,7 +65,7 @@ Decision ledger:
 - [x] #5 Classifier success precedes custom-word correction and replaces legacy unconditional filler cleanup; every classifier failure follows the untouched legacy path
 - [x] #6 The resident cleaner adds negligible warm latency, logs decisions locally, and remains independent of ASR model unloading
 - [x] #7 A visible non-focus-stealing recording indicator works above Ghostty/herdr/Pi and Codex through the native Handy minimal overlay
-- [ ] #8 The local package installs reproducibly, preserves current Handy settings/models/PTT bridge, and passes focused plus end-to-end Checks
+- [x] #8 The local package installs reproducibly, preserves current Handy settings/models/PTT bridge, and passes focused plus end-to-end Checks
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -114,4 +114,20 @@ Live installation hardening and evidence:
 - New binary loaded FDT and both Vulkan0/CPU backends. A SIGUSR2 record/stop cycle completed through Parakeet and FDT. The Recording window appeared while the active Ghostty window ID stayed 62914564 before, during, and after.
 - systemd service is active under /usr/bin/python3 and the app autostart entry resolves to the qq-dictation AppDir. Original pre-install settings are recoverable at settings_store.json.before-qq-dictation.20260723T055301Z.
 ---
+
+author: @codex
+created: 2026-07-23 06:02
+---
+Final installed artifact: source commit c5bc48e284146e0ae1054fa207597c9bedb37f27 at ~/.local/opt/qq-dictation/Handy.AppDir. Three redundant 126 MB intermediate rollback AppDirs from live installer testing were moved to the desktop trash; the newest rollback (0818d34), original stock Handy tree, and settings/wrapper/service backups are retained.
+---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered qq-dictation as a private QQ-governed Handy distribution and installed source build c5bc48e locally. The shared English post-ASR path now uses the pinned FDT Mini classifier with first-WordPiece labeling, 128/32 maximum-context windows, atomic edit transactions, configurable geometric-mean confidence, local decision/latency logs, and exact legacy fail-open fallback. The resident classifier stays independent of Parakeet model unloading and successful output flows into custom-word correction without the old unconditional filler filter.
+
+The repository contains a pinned Docker/AppDir build, hash-verifying external model fetch, durable right-Control systemd bridge, settings-preserving per-user installer, live QQ governance links, project concepts, and distribution documentation. The installed package preserves Parakeet Q8, English, never-unload, Codex/Parakeet custom words, history, and app data; it owns only the minimal overlay and disabled upstream update checks. Stock Handy, pre-install wrappers/settings, and the newest qq-dictation rollback AppDir remain recoverable.
+
+Checks: frontend lint and format passed; shell/Python syntax passed; 9/9 focused FDT tests passed including real pinned-model cleanup and a multi-window long tail; explicit unavailable-cleaner legacy parity passed; final release/AppDir build has no unresolved libraries or bundled weights; live FDT/Vulkan/CPU initialization passed; a Parakeet record/transcribe/FDT cycle completed; PTT service and autostart point to the installed project; recording overlay appeared without changing Ghostty focus. The full upstream lib suite remains 134 pass, 1 unrelated baseline failure for catalog architecture moss missing from KNOWN_ARCHES, 2 ignored.
+<!-- SECTION:FINAL_SUMMARY:END -->
