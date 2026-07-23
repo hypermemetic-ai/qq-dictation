@@ -4,11 +4,12 @@ title: Bind dictation to the focused herdr pane
 status: Done
 assignee: []
 created_date: '2026-07-23 15:43'
-updated_date: '2026-07-23 18:46'
+updated_date: '2026-07-23 19:40'
 labels: []
 dependencies: []
 documentation:
   - doc-1
+  - doc-2
 modified_files:
   - src/stores/settingsStore.ts
 ordinal: 2000
