@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "綁定到 Herdr 窗格",
+        "description": "將轉寫內容傳送到開始錄音時處於焦點的 herdr 窗格，即使在文字送達前焦點已移至他處"
+      },
       "translateToEnglish": {
         "label": "翻譯為英語",
         "description": "在轉錄過程中自動將其他語言的語音翻譯為英語"

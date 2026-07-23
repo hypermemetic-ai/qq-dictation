@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Bind to Herdr Pane",
+        "description": "Deliver transcriptions to the herdr pane that was focused when recording started, even if focus moves elsewhere before the text arrives"
+      },
       "translateToEnglish": {
         "label": "Translate to English",
         "description": "Automatically translate speech from other languages to English during transcription."

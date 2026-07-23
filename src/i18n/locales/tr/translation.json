@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Herdr paneline bağla",
+        "description": "Kayıt başladığında odakta olan herdr paneline, metin gelmeden odak başka yere kaysa bile transkripsiyonları iletir"
+      },
       "translateToEnglish": {
         "label": "İngilizceye Çevir",
         "description": "Transkripsiyon sırasında diğer dillerden İngilizceye otomatik olarak çevirir."

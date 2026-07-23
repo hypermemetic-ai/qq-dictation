@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Herdr 패널에 바인딩",
+        "description": "녹음 시작 시 포커스된 herdr 패널로, 텍스트가 도착하기 전에 포커스가 다른 곳으로 이동하더라도 전사를 전달합니다"
+      },
       "translateToEnglish": {
         "label": "영어로 번역",
         "description": "텍스트로 변환시 다른 언어의 음성을 자동으로 영어로 번역합니다."
