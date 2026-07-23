@@ -1,0 +1,13 @@
+[Unit]
+Description=qq-dictation right-Control push-to-talk bridge
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/bin/handy-ptt-bridge.py
+Restart=on-failure
+RestartSec=1
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

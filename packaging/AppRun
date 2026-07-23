@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_dir="$(readlink -f "$(dirname "$0")")"
+private_lib_dir="$app_dir/usr/lib/Handy"
+
+export LD_LIBRARY_PATH="$private_lib_dir:$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$app_dir/usr/bin/handy" "$@"

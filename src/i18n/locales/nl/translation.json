@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Aan Herdr-paneel binden",
+        "description": "Lever transcripties af bij het herdr-paneel dat focus had toen de opname startte, zelfs als de focus ergens anders heen gaat voordat de tekst arriveert"
+      },
       "translateToEnglish": {
         "label": "Vertalen naar het Engels",
         "description": "Vertaal spraak uit andere talen tijdens het transcriberen automatisch naar het Engels."

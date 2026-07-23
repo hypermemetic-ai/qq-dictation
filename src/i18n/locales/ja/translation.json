@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Herdrペインにバインド",
+        "description": "録音開始時にフォーカスしていたherdrペインへ、フォーカスが他へ移ってもテキストが届くように文字起こしを配信します"
+      },
       "translateToEnglish": {
         "label": "英語に翻訳",
         "description": "文字起こし中に他の言語から英語に自動的に翻訳。"

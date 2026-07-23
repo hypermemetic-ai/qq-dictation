@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Gắn với khung Herdr",
+        "description": "Gửi bản ghi đến khung herdr đang được focus khi bắt đầu ghi âm, ngay cả khi focus chuyển đi nơi khác trước khi văn bản đến"
+      },
       "translateToEnglish": {
         "label": "Dịch sang tiếng Anh",
         "description": "Tự động dịch giọng nói từ các ngôn ngữ khác sang tiếng Anh trong quá trình chuyển đổi."

@@ -608,7 +608,11 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
-pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
+pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> Result<(), String> {
+    // Used only by the Linux herdr binding path.
+    #[cfg(not(target_os = "linux"))]
+    let _ = target_token;
+
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -625,6 +629,49 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         "Using paste method: {:?}, delay before: {}ms, delay after: {}ms",
         paste_method, paste_delay_ms, paste_delay_after_ms
     );
+
+    // Herdr target binding: if this transcription was bound to a herdr pane
+    // when its recording started, deliver straight to that pane's PTY —
+    // focus-independent and race-free. `take_for_recording` only yields the
+    // pane bound to *this* recording; anything else (or any delivery
+    // failure) falls back to the ordinary paste below.
+    #[cfg(target_os = "linux")]
+    if settings.herdr_binding_enabled {
+        if let Some(pane_id) = target_token.and_then(crate::target_binding::take_for_recording) {
+            if paste_method == PasteMethod::None {
+                info!("PasteMethod::None selected - skipping herdr pane delivery");
+            } else {
+                match crate::target_binding::deliver(&pane_id, &text) {
+                    Ok(()) => {
+                        info!("Delivered transcription to herdr pane {}", pane_id);
+                        if settings.auto_submit {
+                            std::thread::sleep(Duration::from_millis(50));
+                            if let Err(e) = crate::target_binding::send_enter(&pane_id) {
+                                log::error!(
+                                    "Failed to send Enter to herdr pane {}: {}",
+                                    pane_id,
+                                    e
+                                );
+                            }
+                        }
+                        if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+                            let clipboard = app_handle.clipboard();
+                            clipboard
+                                .write_text(&text)
+                                .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "herdr pane delivery failed ({}); falling back to focus-based paste",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // Get the managed Enigo instance
     let enigo_state = app_handle

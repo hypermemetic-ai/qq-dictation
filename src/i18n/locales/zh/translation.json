@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "绑定到 Herdr 窗格",
+        "description": "将转写内容发送到开始录音时处于焦点的 herdr 窗格，即使在文本到达前焦点已移往别处"
+      },
       "translateToEnglish": {
         "label": "翻译为英语",
         "description": "在转录过程中自动将其他语言的语音翻译为英语。"

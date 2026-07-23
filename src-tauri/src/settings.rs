@@ -427,6 +427,8 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
+    #[serde(default = "default_herdr_binding_enabled")]
+    pub herdr_binding_enabled: bool,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -553,6 +555,10 @@ fn default_paste_delay_after_ms() -> u64 {
 
 fn default_auto_submit() -> bool {
     false
+}
+
+fn default_herdr_binding_enabled() -> bool {
+    true
 }
 
 fn default_history_limit() -> usize {
@@ -877,6 +883,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
+        herdr_binding_enabled: default_herdr_binding_enabled(),
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,

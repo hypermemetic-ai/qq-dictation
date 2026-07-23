@@ -338,6 +338,10 @@
           "ctrlEnter": "Ctrl+Enter"
         }
       },
+      "herdrBinding": {
+        "label": "Lier au panneau Herdr",
+        "description": "Envoie les transcriptions au panneau herdr qui avait le focus au début de l'enregistrement, même si le focus se déplace avant l'arrivée du texte"
+      },
       "translateToEnglish": {
         "label": "Traduire en anglais",
         "description": "Traduire automatiquement la parole d'autres langues vers l'anglais pendant la transcription."

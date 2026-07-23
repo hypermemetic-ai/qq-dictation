@@ -40,5 +40,12 @@ blob-report/
 .direnv
 .envrc
 
+# qq-dictation local build/cache output
+.docker-cache/
+.local-build/
+
 # Nix build output
 result
+
+# Local subagent run artifacts
+.pi-subagents/
