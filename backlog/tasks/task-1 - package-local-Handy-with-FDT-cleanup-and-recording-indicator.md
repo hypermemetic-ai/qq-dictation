@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-23 04:46'
-updated_date: '2026-07-23 05:47'
+updated_date: '2026-07-23 05:56'
 labels: []
 dependencies: []
 documentation:
@@ -102,5 +102,16 @@ author: @codex
 created: 2026-07-23 05:47
 ---
 Installer live-run finding: the first install stopped before service restart because its Xlib preflight used PATH-selected Linuxbrew Python 3.14, while the tracked systemd unit correctly uses /usr/bin/python3 3.12 where python3-xlib is installed. Moved the preflight before mutations and made both installer Python calls explicit to /usr/bin/python3. The staged AppDir, model, wrapper, settings backup, and original before-qq-dictation backups remained intact; service/application restart is pending the corrected rerun.
+---
+
+author: @codex
+created: 2026-07-23 05:56
+---
+Live installation hardening and evidence:
+- Corrected installer now starts Handy in a detached session and verifies /proc/<pid>/exe resolves to the installed AppDir.
+- Pinned artifacts short-circuit locally after SHA-256 verification (14 ms in the live check) instead of redownloading.
+- Installer disables the stock upstream update check so the tracked private build remains authoritative; selected Parakeet Q8, English, never-unload, custom words, history, and PTT state remain preserved.
+- New binary loaded FDT and both Vulkan0/CPU backends. A SIGUSR2 record/stop cycle completed through Parakeet and FDT. The Recording window appeared while the active Ghostty window ID stayed 62914564 before, during, and after.
+- systemd service is active under /usr/bin/python3 and the app autostart entry resolves to the qq-dictation AppDir. Original pre-install settings are recoverable at settings_store.json.before-qq-dictation.20260723T055301Z.
 ---
 <!-- COMMENTS:END -->

@@ -6,6 +6,19 @@ repository="stillerman/fdt-disfluency-mini-11m"
 default_data_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/com.pais.handy"
 target_dir="${HANDY_FDT_MODEL_DIR:-${default_data_dir}/text-cleanup/fdt-mini-11m}"
 mkdir -p "$(dirname "$target_dir")"
+
+if [[ -d "$target_dir" ]] && (
+    cd "$target_dir"
+    sha256sum --check --status <<'CHECKSUMS'
+277208ae7810af2c1b96e9972939ef2968e9fccd985c28ec2695aa472c54144f  model_quantized.onnx
+2fc687b11de0bc1b3d8348f92e3b49ef1089a621506c7661fbf3248fcd54947e  tokenizer.json
+5950a263d977482445208831688f2bd0c5bed390d94e98e3898199a8a29e1fe4  config.json
+CHECKSUMS
+); then
+    printf 'Pinned FDT model already verified at %s\n' "$target_dir"
+    exit 0
+fi
+
 staging_dir="$(mktemp -d "${target_dir}.staging.XXXXXX")"
 
 cleanup() {

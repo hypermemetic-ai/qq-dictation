@@ -16,6 +16,7 @@ if [[ ! -x "${source_app_dir}/AppRun" ]]; then
 fi
 
 /usr/bin/python3 -c 'import Xlib' >/dev/null
+test -x /usr/bin/setsid
 
 "${repository_root}/scripts/fetch-fdt-model.sh"
 
@@ -63,7 +64,9 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
-data.setdefault("settings", {})["overlay_style"] = "minimal"
+settings = data.setdefault("settings", {})
+settings["overlay_style"] = "minimal"
+settings["update_checks_enabled"] = False
 temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 os.replace(temporary, path)
@@ -73,8 +76,26 @@ fi
 systemctl --user daemon-reload
 systemctl --user enable --now handy-ptt.service
 
-"${local_bin}/handy" --start-hidden >/dev/null 2>&1 &
-disown
+/usr/bin/setsid --fork "${local_bin}/handy" --start-hidden \
+    </dev/null >/dev/null 2>&1
+for _ in {1..50}; do
+    if pgrep -x handy >/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
+if ! pgrep -x handy >/dev/null; then
+    printf 'Handy did not remain running after installation.\n' >&2
+    exit 1
+fi
+handy_pid="$(pgrep -n -x handy)"
+expected_executable="${install_app_dir}/usr/bin/handy"
+actual_executable="$(readlink -f "/proc/${handy_pid}/exe")"
+if [[ "$actual_executable" != "$expected_executable" ]]; then
+    printf 'Unexpected Handy executable after installation: %s\n' \
+        "$actual_executable" >&2
+    exit 1
+fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
 printf 'The right-Control bridge and native minimal recording overlay are active.\n'

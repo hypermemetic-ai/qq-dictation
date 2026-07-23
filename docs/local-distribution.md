@@ -44,7 +44,10 @@ Installation writes only to the current user's directories:
 
 Existing Handy app data—settings, ASR models, history, and logs—is not replaced.
 The installer backs up any launcher, bridge, service, settings file, or prior
-qq-dictation AppDir that it supersedes.
+qq-dictation AppDir that it supersedes. It changes two distribution-owned
+settings: the overlay is set to `minimal`, and upstream update checks are
+disabled so a future stock Handy release cannot replace the tracked local
+build. Updates to qq-dictation are built and installed explicitly from Git.
 
 ## Runtime policy
 
