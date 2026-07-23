@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+install_dir="${QQ_DICTATION_INSTALL_DIR:-${HOME}/.local/opt/qq-dictation/Handy.AppDir}"
+exec "$install_dir/AppRun" "$@"
