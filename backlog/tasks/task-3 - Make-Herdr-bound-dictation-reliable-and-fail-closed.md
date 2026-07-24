@@ -1,10 +1,10 @@
 ---
 id: TASK-3
 title: Make Herdr-bound dictation reliable and fail closed
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-24 18:39'
-updated_date: '2026-07-24 20:59'
+updated_date: '2026-07-24 21:15'
 labels: []
 dependencies: []
 documentation:
@@ -48,7 +48,7 @@ Outcome: restore pane binding under the desktop-session environment; make every 
 - [x] #4 Recording started outside Herdr or with binding disabled preserves existing focus-based delivery
 - [x] #5 Automated regression checks and fresh local acceptance checks cover the repaired and fail-closed paths
 - [x] #6 The local release build serializes Cargo and CMake inside a Docker hard limit of 5 GiB total memory with no container swap and 2 CPUs, failing locally rather than causing global OOM
-- [ ] #7 While pinned transcribe-cpp lacks a MOSS loader, generator curation hides moss-transcribe-diarize and the bundled catalog contains no unsupported moss architecture
+- [x] #7 While pinned transcribe-cpp lacks a MOSS loader, generator curation hides moss-transcribe-diarize and the bundled catalog contains no unsupported moss architecture
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -81,4 +81,14 @@ Capped-build evidence: live Docker inspect recorded Memory=5368709120, MemorySwa
 Installed acceptance: branch artifact `63806d2` installed successfully, then Handy was killed and relaunched directly under the Cinnamon desktop PATH (which does not resolve `herdr`). Four subsequent recordings bound and delivered directly to Herdr panes. Operator UAT dictated in pane `w1Z:p1` and switched tabs immediately; the text returned and submitted in `w1Z:p1`, with matching bind/deliver logs. The operator explicitly accepted the result and skipped the disposable closed-pane hands-on check; the closed/missing/failing target behavior remains covered by focused policy tests and two fresh-context reviews.
 
 PR #4 final Rust CI reproduced the unchanged baseline failure after 145 passes and 2 ignored tests: catalog architecture `moss` is absent from `KNOWN_ARCHES`. Inspection of pinned `transcribe-cpp-sys 0.1.3/src/arch` confirmed no MOSS loader. The operator explicitly expanded TASK-3 to hide this unsupported model in generator curation and generated output; declaring it known is prohibited as false compatibility.
+
+Catalog correction: `453f30f` marks `moss-transcribe-diarize` hidden in generator curation and removes only its generated model object (net -54 lines). Python syntax/curation checks and JSON checks pass; catalog tests are 4/4; the full pinned Docker library suite is now 146 pass, 0 fail, 2 ignored. Fresh-context catalog review `0f497312` passed with no material finding. The capped final release rebuild completed without OOM, installed artifact `453f30f`, and Handy was again relaunched successfully under the desktop PATH without Linuxbrew. Pre-existing Python diagnostics outside the two inserted curation lines were dispositioned out of this Change.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Restored reliable Herdr pane binding after desktop login by resolving the CLI from PATH or the standard Linuxbrew location and carrying explicit Legacy/Bound/Failed capture outcomes. Identified Herdr capture or delivery failures now return through paste-error before any OS keyboard path, while genuine non-Herdr/disabled starts retain legacy behavior. After two global OOM events during delivery, the approved scope expanded to serialize Cargo/CMake and cap local Docker builds at 5 GiB total memory, no container swap, and 2 CPUs. Final CI exposed an unsupported MOSS catalog entry; the approved correction hides it while the pinned engine has no MOSS loader rather than falsely declaring compatibility.
+
+Evidence: primary Rust LSP and formatting clean; 8/8 target-binding, 5/5 clipboard, and 4/4 catalog focused tests pass; full library suite 146 pass, 0 fail, 2 ignored; four fresh-context reviews passed after one repaired finding; capped release builds completed with cgroup evidence and no new OOM; installed artifact `453f30f` runs under the sanitized desktop PATH; operator pane-switch UAT bound and delivered to the original pane and was explicitly accepted.
+<!-- SECTION:FINAL_SUMMARY:END -->
