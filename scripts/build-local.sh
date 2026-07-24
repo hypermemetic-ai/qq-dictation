@@ -20,6 +20,9 @@ docker build \
     "${repository_root}/packaging"
 
 docker run --rm \
+    --memory 5g \
+    --memory-swap 5g \
+    --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
     --workdir /work \
@@ -27,6 +30,8 @@ docker run --rm \
     --env CARGO_HOME=/work/.docker-cache/cargo \
     --env CARGO_TARGET_DIR=/work/.docker-cache/target \
     --env ORT_CACHE_DIR=/work/.docker-cache/ort \
+    --env CARGO_BUILD_JOBS=1 \
+    --env CMAKE_BUILD_PARALLEL_LEVEL=1 \
     "$builder_image" \
     bash -lc '
         set -euo pipefail

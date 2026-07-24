@@ -608,6 +608,23 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+#[cfg(target_os = "linux")]
+fn herdr_target(
+    capture: Option<crate::target_binding::CaptureOutcome>,
+    paste_method: PasteMethod,
+) -> Result<Option<String>, String> {
+    match capture {
+        Some(crate::target_binding::CaptureOutcome::Failed(reason)) => {
+            Err(format!("Herdr target capture failed: {}", reason))
+        }
+        // None has always meant no delivery at all. Consume a valid capture but
+        // keep the configured no-op behavior.
+        _ if paste_method == PasteMethod::None => Ok(None),
+        None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(None),
+        Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => Ok(Some(pane_id)),
+    }
+}
+
 pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> Result<(), String> {
     // Used only by the Linux herdr binding path.
     #[cfg(not(target_os = "linux"))]
@@ -630,46 +647,30 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
         paste_method, paste_delay_ms, paste_delay_after_ms
     );
 
-    // Herdr target binding: if this transcription was bound to a herdr pane
-    // when its recording started, deliver straight to that pane's PTY —
-    // focus-independent and race-free. `take_for_recording` only yields the
-    // pane bound to *this* recording; anything else (or any delivery
-    // failure) falls back to the ordinary paste below.
+    // Herdr target binding: a recording's captured outcome, including whether
+    // binding was disabled at its start, owns delivery policy. Once capture
+    // identifies a Herdr target or a targeting failure, no OS-level input path
+    // is allowed as a fallback.
     #[cfg(target_os = "linux")]
-    if settings.herdr_binding_enabled {
-        if let Some(pane_id) = target_token.and_then(crate::target_binding::take_for_recording) {
-            if paste_method == PasteMethod::None {
-                info!("PasteMethod::None selected - skipping herdr pane delivery");
-            } else {
-                match crate::target_binding::deliver(&pane_id, &text) {
-                    Ok(()) => {
-                        info!("Delivered transcription to herdr pane {}", pane_id);
-                        if settings.auto_submit {
-                            std::thread::sleep(Duration::from_millis(50));
-                            if let Err(e) = crate::target_binding::send_enter(&pane_id) {
-                                log::error!(
-                                    "Failed to send Enter to herdr pane {}: {}",
-                                    pane_id,
-                                    e
-                                );
-                            }
-                        }
-                        if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
-                            let clipboard = app_handle.clipboard();
-                            clipboard
-                                .write_text(&text)
-                                .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
-                        }
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "herdr pane delivery failed ({}); falling back to focus-based paste",
-                            e
-                        );
-                    }
-                }
+    {
+        let capture = target_token.map(crate::target_binding::take_for_recording);
+        if let Some(pane_id) = herdr_target(capture, paste_method)? {
+            crate::target_binding::deliver(&pane_id, &text)
+                .map_err(|e| format!("Failed to deliver to herdr pane {}: {}", pane_id, e))?;
+            info!("Delivered transcription to herdr pane {}", pane_id);
+            if settings.auto_submit {
+                std::thread::sleep(Duration::from_millis(50));
+                crate::target_binding::send_enter(&pane_id).map_err(|e| {
+                    format!("Failed to send Enter to herdr pane {}: {}", pane_id, e)
+                })?;
             }
+            if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+                let clipboard = app_handle.clipboard();
+                clipboard
+                    .write_text(&text)
+                    .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+            }
+            return Ok(());
         }
     }
 
@@ -752,5 +753,44 @@ mod tests {
         assert!(should_send_auto_submit(true, PasteMethod::Direct));
         assert!(should_send_auto_submit(true, PasteMethod::CtrlShiftV));
         assert!(should_send_auto_submit(true, PasteMethod::ShiftInsert));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn herdr_target_distinguishes_legacy_bound_and_failed_capture() {
+        use crate::target_binding::CaptureOutcome;
+
+        assert_eq!(
+            herdr_target(Some(CaptureOutcome::Legacy), PasteMethod::Direct),
+            Ok(None)
+        );
+        assert_eq!(
+            herdr_target(
+                Some(CaptureOutcome::Bound("workspace:pane".to_string())),
+                PasteMethod::Direct,
+            ),
+            Ok(Some("workspace:pane".to_string()))
+        );
+        assert_eq!(herdr_target(None, PasteMethod::Direct), Ok(None));
+
+        let failure = herdr_target(
+            Some(CaptureOutcome::Failed("snapshot timed out".to_string())),
+            PasteMethod::Direct,
+        )
+        .unwrap_err();
+        assert!(failure.contains("snapshot timed out"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn none_method_still_surfaces_targeting_failure() {
+        use crate::target_binding::CaptureOutcome;
+
+        let failure = herdr_target(
+            Some(CaptureOutcome::Failed("missing herdr".to_string())),
+            PasteMethod::None,
+        )
+        .unwrap_err();
+        assert!(failure.contains("missing herdr"));
     }
 }
