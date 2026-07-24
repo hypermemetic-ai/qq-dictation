@@ -4,7 +4,7 @@ title: Make Herdr-bound dictation reliable and fail closed
 status: In Progress
 assignee: []
 created_date: '2026-07-24 18:39'
-updated_date: '2026-07-24 20:04'
+updated_date: '2026-07-24 20:19'
 labels: []
 dependencies: []
 documentation:
@@ -68,4 +68,6 @@ Owner Checks: primary Rust LSP clean for both changed files; `cargo fmt --check`
 Fresh-context review run `a2789263` found one medium blocker: PasteMethod::None suppressed an identified targeting failure instead of emitting paste-error. Reproduced from the pure policy helper and fixed in `b191761`, which removed five net lines and made `CaptureOutcome::Failed` precede the configured no-op. Pinned Docker clipboard tests remained 5/5. Independent fresh fix-delta review `a199de74` passed with no remaining blocker.
 
 Scope realigned after two kernel-confirmed global OOM events during the required local release build (14:01:29 and 14:46:54 CDT). The operator explicitly chose to expand TASK-3 and approved permanent defaults: one Cargo/CMake job, 5 GiB Docker memory with no container swap, and 2 CPUs. The unconstrained build was interrupted; no qq-dictation build container or build process remained active when checked.
+
+Capped-build evidence: live Docker inspect recorded Memory=5368709120, MemorySwap=5368709120, NanoCpus=2000000000, CARGO_BUILD_JOBS=1, and CMAKE_BUILD_PARALLEL_LEVEL=1. The release build completed in 7m58s, produced an AppDir marked `63806d2`, and generated no new kernel OOM lines. Fresh-context build-containment review `7dd67d07` passed with no material finding. The earlier uncapped run is not accepted and no builder remains active.
 <!-- SECTION:NOTES:END -->
