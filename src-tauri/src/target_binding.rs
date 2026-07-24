@@ -11,35 +11,48 @@
 //! start while a previous transcription is still in flight (the recorder
 //! returns to Idle at stop), so a single global slot would deliver the older
 //! transcription to the newer recording's pane. Each recording takes only its
-//! own entry; anything else falls back to the ordinary paste path.
+//! own entry.
 //!
-//! Linux/X11-only in practice. Every public function degrades to a no-op or
-//! `None` off the supported path so the caller's fallback (the existing
-//! focus-based paste) stays intact.
+//! Linux/X11-only in practice. Off the supported path capture explicitly
+//! selects legacy focus-based delivery.
 
 #[cfg(target_os = "linux")]
 use log::{debug, warn};
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
+#[cfg(target_os = "linux")]
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-
-#[cfg(target_os = "linux")]
-use std::process::Command;
 use tauri::AppHandle;
 
 /// Title herdr's client sets on its terminal window; used to tell "operator
 /// is dictating into a herdr pane" apart from "herdr merely runs somewhere".
 #[cfg(target_os = "linux")]
 const HERDR_WINDOW_TITLE: &str = "herdr";
+#[cfg(target_os = "linux")]
+const LINUXBREW_HERDR: &str = "/home/linuxbrew/.linuxbrew/bin/herdr";
 
-/// In-flight capture results, keyed by recording token. The capture thread
-/// always writes an entry — `Some(pane)` when the recording was aimed at a
-/// herdr pane, `None` when it wasn't — so a missing entry means "capture
-/// still running", not "nothing bound". Bounded: old entries are evicted
-/// once the map outgrows a handful of recordings (a binding whose
-/// transcription never pastes — e.g. cancelled — would otherwise linger).
-static CAPTURES: Mutex<Option<HashMap<u64, Option<String>>>> = Mutex::new(None);
+/// The capture result that determines whether paste may use OS-level input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CaptureOutcome {
+    /// Binding was disabled or recording genuinely started outside Herdr.
+    Legacy,
+    /// Recording started in this Herdr pane.
+    Bound(String),
+    /// Herdr targeting was expected but could not be completed safely.
+    Failed(String),
+}
+
+/// In-flight capture results, keyed by recording token. A missing entry means
+/// capture is still running, not that legacy delivery is safe. Bounded: old
+/// entries are evicted once the map outgrows a handful of recordings (a
+/// cancelled recording would otherwise linger).
+static CAPTURES: Mutex<Option<HashMap<u64, CaptureOutcome>>> = Mutex::new(None);
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 static LATEST_TOKEN: AtomicU64 = AtomicU64::new(0);
 
@@ -56,16 +69,24 @@ pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        let pane = if crate::settings::get_settings(&app).herdr_binding_enabled {
+        let capture = if crate::settings::get_settings(&app).herdr_binding_enabled {
             focused_herdr_pane()
         } else {
-            None
+            CaptureOutcome::Legacy
         };
-        match &pane {
-            Some(pane_id) => debug!("Bound dictation #{} to herdr pane {}", token, pane_id),
-            None => debug!("Dictation #{} not aimed at a herdr pane", token),
+        match &capture {
+            CaptureOutcome::Bound(pane_id) => {
+                debug!("Bound dictation #{} to herdr pane {}", token, pane_id)
+            }
+            CaptureOutcome::Legacy => debug!("Dictation #{} not aimed at a herdr pane", token),
+            CaptureOutcome::Failed(reason) => {
+                warn!(
+                    "Herdr targeting failed for dictation #{}: {}",
+                    token, reason
+                )
+            }
         }
-        store_capture(token, pane);
+        store_capture(token, capture);
     });
 
     token
@@ -77,9 +98,9 @@ pub fn latest_token() -> u64 {
 }
 
 #[cfg(target_os = "linux")]
-fn store_capture(token: u64, capture: Option<String>) {
-    // into_inner: a poisoned map (panic while locked) must degrade to "no
-    // binding", not to silently disabling capture forever.
+fn store_capture(token: u64, capture: CaptureOutcome) {
+    // into_inner: a poisoned map must remain usable so paste can still see an
+    // explicit outcome (or fail closed on timeout).
     let mut guard = CAPTURES.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(HashMap::new);
     map.insert(token, capture);
@@ -92,12 +113,12 @@ fn store_capture(token: u64, capture: Option<String>) {
     }
 }
 
-/// Takes the pane bound to *this* recording, if any. A finished capture —
-/// including "recording wasn't aimed at a herdr pane" — answers immediately;
-/// only a capture still in flight waits (bounded), because a short streaming
-/// dictation can outrun the capture thread. After the wait, "no entry" means
-/// fall back to the focus-based paste.
-pub fn take_for_recording(token: u64) -> Option<String> {
+/// Takes the capture outcome for this recording. A finished capture answers
+/// immediately; only a capture still in flight waits, because a short
+/// streaming dictation can outrun the capture thread. An absent result after
+/// the bounded wait is an explicit targeting failure, never permission to type
+/// at the current focus.
+pub fn take_for_recording(token: u64) -> CaptureOutcome {
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     loop {
         {
@@ -110,7 +131,10 @@ pub fn take_for_recording(token: u64) -> Option<String> {
             }
         }
         if token == 0 || std::time::Instant::now() >= deadline {
-            return None;
+            return CaptureOutcome::Failed(format!(
+                "capture for recording #{} timed out before a target was recorded",
+                token
+            ));
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -120,37 +144,94 @@ pub fn take_for_recording(token: u64) -> Option<String> {
 /// active X11 window — otherwise the snapshot's focused pane is just stale
 /// state from before the operator moved to another app.
 #[cfg(target_os = "linux")]
-fn focused_herdr_pane() -> Option<String> {
+fn focused_herdr_pane() -> CaptureOutcome {
     if crate::utils::is_wayland() {
-        return None;
+        return CaptureOutcome::Legacy;
     }
-    let title = active_window_title()?;
+    let title = match active_window_title() {
+        Ok(title) => title,
+        Err(reason) => return CaptureOutcome::Failed(reason),
+    };
     if title != HERDR_WINDOW_TITLE {
-        return None;
+        return CaptureOutcome::Legacy;
     }
-    let output = run_with_timeout("herdr", &["api", "snapshot"], Duration::from_secs(2)).ok()?;
+
+    let herdr = match resolve_herdr() {
+        Ok(path) => path,
+        Err(reason) => return CaptureOutcome::Failed(reason),
+    };
+    let output = match run_with_timeout(&herdr, &["api", "snapshot"], Duration::from_secs(2)) {
+        Ok(output) => output,
+        Err(reason) => return CaptureOutcome::Failed(reason),
+    };
     if !output.status.success() {
-        warn!(
+        return CaptureOutcome::Failed(format!(
             "herdr api snapshot failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return None;
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    parse_focused_pane_id(&output.stdout)
+    match parse_focused_pane_id(&output.stdout) {
+        Some(pane_id) => CaptureOutcome::Bound(pane_id),
+        None => CaptureOutcome::Failed(
+            "herdr api snapshot did not contain a valid focused pane".to_string(),
+        ),
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn active_window_title() -> Option<String> {
+fn active_window_title() -> Result<String, String> {
     let output = run_with_timeout(
         "xdotool",
         &["getactivewindow", "getwindowname"],
         Duration::from_millis(500),
-    )
-    .ok()?;
+    )?;
     if !output.status.success() {
-        return None;
+        return Err(format!(
+            "failed to identify active window: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_herdr() -> Result<PathBuf, String> {
+    resolve_herdr_from(
+        std::env::var_os("PATH").as_deref(),
+        Path::new(LINUXBREW_HERDR),
+        is_executable,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_herdr_from(
+    path: Option<&OsStr>,
+    fallback: &Path,
+    mut executable: impl FnMut(&Path) -> bool,
+) -> Result<PathBuf, String> {
+    if let Some(path) = path {
+        for directory in std::env::split_paths(path) {
+            let candidate = directory.join("herdr");
+            if executable(&candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
+    if executable(fallback) {
+        return Ok(fallback.to_path_buf());
+    }
+    Err(format!(
+        "herdr executable was not found on process PATH or at {}",
+        fallback.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
@@ -170,9 +251,10 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
 #[cfg(target_os = "linux")]
 pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
     let text = collapse_newlines(text);
+    let herdr = resolve_herdr()?;
     // `--` guards transcriptions that start with a dash from clap's flag parser.
     let output = run_with_timeout(
-        "herdr",
+        &herdr,
         &["pane", "send-text", pane_id, "--", &text],
         Duration::from_secs(2),
     )?;
@@ -190,8 +272,9 @@ pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
 /// `auto_submit_key` setting's chorded variants target GUI apps.
 #[cfg(target_os = "linux")]
 pub fn send_enter(pane_id: &str) -> Result<(), String> {
+    let herdr = resolve_herdr()?;
     let output = run_with_timeout(
-        "herdr",
+        &herdr,
         &["pane", "send-keys", pane_id, "enter"],
         Duration::from_secs(2),
     )?;
@@ -216,17 +299,19 @@ fn collapse_newlines(text: &str) -> String {
 /// eventually finishes, so nothing is left as a zombie.
 #[cfg(target_os = "linux")]
 fn run_with_timeout(
-    program: &str,
+    program: impl AsRef<OsStr>,
     args: &[&str],
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
+    let program = program.as_ref();
+    let program_name = program.to_string_lossy();
     let child = Command::new(program)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn {}: {}", program, e))?;
+        .map_err(|e| format!("Failed to spawn {}: {}", program_name, e))?;
 
     let pid = child.id();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -236,16 +321,17 @@ fn run_with_timeout(
 
     match rx.recv_timeout(timeout) {
         Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => Err(format!("Failed to collect {} output: {}", program, e)),
+        Ok(Err(e)) => Err(format!("Failed to collect {} output: {}", program_name, e)),
         Err(_) => {
             // A last-moment exit is preferred over killing a recycled pid.
             if let Ok(result) = rx.try_recv() {
-                return result.map_err(|e| format!("Failed to collect {} output: {}", program, e));
+                return result
+                    .map_err(|e| format!("Failed to collect {} output: {}", program_name, e));
             }
             // Kill the wedged child (a wedged server would otherwise leak one
             // process + thread per attempt); the helper thread reaps it.
             let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-            Err(format!("{} timed out after {:?}", program, timeout))
+            Err(format!("{} timed out after {:?}", program_name, timeout))
         }
     }
 }
@@ -286,30 +372,83 @@ mod tests {
     fn captures_are_per_recording_and_evicted_in_order() {
         // A finished "not aimed at herdr" capture answers immediately — the
         // common non-herdr case must not pay the in-flight wait.
-        store_capture(950, None);
+        store_capture(950, CaptureOutcome::Legacy);
         let started = std::time::Instant::now();
-        assert_eq!(take_for_recording(950), None);
+        assert_eq!(take_for_recording(950), CaptureOutcome::Legacy);
         assert!(started.elapsed() < Duration::from_millis(100));
 
-        store_capture(901, Some("wA:p1".to_string()));
-        store_capture(902, Some("wB:p2".to_string()));
+        store_capture(901, CaptureOutcome::Bound("wA:p1".to_string()));
+        store_capture(902, CaptureOutcome::Bound("wB:p2".to_string()));
         // The newer recording's capture must not satisfy the older recording.
-        assert_eq!(take_for_recording(901), Some("wA:p1".to_string()));
-        // Taken entries are consumed.
-        assert_eq!(take_for_recording(901), None);
-        assert_eq!(take_for_recording(902), Some("wB:p2".to_string()));
+        assert_eq!(
+            take_for_recording(901),
+            CaptureOutcome::Bound("wA:p1".to_string())
+        );
+        assert_eq!(
+            take_for_recording(902),
+            CaptureOutcome::Bound("wB:p2".to_string())
+        );
 
         for token in 1000..1012 {
-            store_capture(token, Some(format!("wX:p{}", token)));
+            store_capture(token, CaptureOutcome::Bound(format!("wX:p{}", token)));
         }
         // Oldest beyond MAX_BOUND_PANES are evicted; the newest survive.
-        assert_eq!(take_for_recording(1000), None);
-        assert_eq!(take_for_recording(1011), Some("wX:p1011".to_string()));
+        assert!(matches!(
+            take_for_recording(1000),
+            CaptureOutcome::Failed(_)
+        ));
+        assert_eq!(
+            take_for_recording(1011),
+            CaptureOutcome::Bound("wX:p1011".to_string())
+        );
     }
 
     #[test]
-    fn unknown_or_zero_token_has_no_binding() {
-        assert_eq!(take_for_recording(0), None);
-        assert_eq!(take_for_recording(999_999), None);
+    fn absent_capture_is_a_targeting_failure() {
+        assert!(matches!(
+            take_for_recording(0),
+            CaptureOutcome::Failed(reason) if reason.contains("timed out")
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolves_path_before_linuxbrew_fallback() {
+        let path = OsStr::new("/desktop/bin:/usr/bin");
+        let fallback = Path::new(LINUXBREW_HERDR);
+
+        let from_path = resolve_herdr_from(Some(path), fallback, |candidate| {
+            candidate == Path::new("/usr/bin/herdr") || candidate == fallback
+        });
+        assert_eq!(from_path.unwrap(), PathBuf::from("/usr/bin/herdr"));
+
+        let from_fallback =
+            resolve_herdr_from(Some(path), fallback, |candidate| candidate == fallback);
+        assert_eq!(from_fallback.unwrap(), fallback);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolves_linuxbrew_herdr_when_desktop_path_omits_it() {
+        let desktop_path =
+            OsStr::new("/home/qqp/.local/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin");
+        let fallback = Path::new(LINUXBREW_HERDR);
+        let resolved = resolve_herdr_from(Some(desktop_path), fallback, |candidate| {
+            candidate == fallback
+        });
+
+        assert_eq!(resolved.unwrap(), fallback);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_herdr_is_an_explicit_error() {
+        let result = resolve_herdr_from(
+            Some(OsStr::new("/usr/bin:/bin")),
+            Path::new(LINUXBREW_HERDR),
+            |_| false,
+        );
+
+        assert!(result.unwrap_err().contains("was not found"));
     }
 }
