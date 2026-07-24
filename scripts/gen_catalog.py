@@ -49,6 +49,8 @@ CURATION = {
     "Fun-ASR-MLT-Nano-2512":           {"rank": 10, "desc": "A tiny multilingual model"},
     # description-only (unranked, not recommended) — carried over from the legacy .bin entry
     "Breeze-ASR-25":                   {"desc": "Optimized for Taiwanese Mandarin. Code-switching support."},
+    # Pinned transcribe-cpp 0.1.3 ships no MOSS architecture loader.
+    "moss-transcribe-diarize":         {"hidden": True},
 }
 # temporary capability corrections pending a card re-push (remove once cards fixed)
 OVERRIDES = {
