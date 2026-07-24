@@ -4,7 +4,7 @@ title: Make Herdr-bound dictation reliable and fail closed
 status: In Progress
 assignee: []
 created_date: '2026-07-24 18:39'
-updated_date: '2026-07-24 19:23'
+updated_date: '2026-07-24 19:30'
 labels: []
 dependencies: []
 documentation:
@@ -58,4 +58,6 @@ Implementation delegate committed `caf4609` (explicit Legacy/Bound/Failed captur
 The required same-fix-smaller pass replaced a redundant delivery enum with `Result<Option<String>, String>` in `0896c6d`, removing 12 net lines while preserving policy tests.
 
 Owner Checks: primary Rust LSP clean for both changed files; `cargo fmt --check` and `git diff --check` pass; pinned Docker focused suites pass (8 target-binding tests and 5 clipboard tests); full library suite is 145 pass, 1 pre-existing catalog `moss` failure, 2 ignored; the unchanged base exhibits the same catalog failure; advisory clippy completes with six pre-existing warnings and strict `-D warnings` is blocked by those baseline warnings.
+
+Fresh-context review run `a2789263` found one medium blocker: PasteMethod::None suppressed an identified targeting failure instead of emitting paste-error. Reproduced from the pure policy helper and fixed in `b191761`, which removed five net lines and made `CaptureOutcome::Failed` precede the configured no-op. Pinned Docker clipboard tests remained 5/5. Independent fresh fix-delta review `a199de74` passed with no remaining blocker.
 <!-- SECTION:NOTES:END -->
