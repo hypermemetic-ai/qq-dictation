@@ -609,29 +609,20 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 }
 
 #[cfg(target_os = "linux")]
-#[derive(Debug, PartialEq, Eq)]
-enum TargetDelivery {
-    Legacy,
-    HerdrPane(String),
-}
-
-#[cfg(target_os = "linux")]
-fn target_delivery_policy(
+fn herdr_target(
     capture: Option<crate::target_binding::CaptureOutcome>,
     paste_method: PasteMethod,
-) -> Result<TargetDelivery, String> {
+) -> Result<Option<String>, String> {
     // None has always meant no delivery at all. Consume the capture but keep
     // the ordinary no-op/clipboard behavior rather than surfacing targeting
     // failures for text that was never meant to be sent.
     if paste_method == PasteMethod::None {
-        return Ok(TargetDelivery::Legacy);
+        return Ok(None);
     }
 
     match capture {
-        None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(TargetDelivery::Legacy),
-        Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => {
-            Ok(TargetDelivery::HerdrPane(pane_id))
-        }
+        None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(None),
+        Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => Ok(Some(pane_id)),
         Some(crate::target_binding::CaptureOutcome::Failed(reason)) => {
             Err(format!("Herdr target capture failed: {}", reason))
         }
@@ -667,7 +658,7 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
     #[cfg(target_os = "linux")]
     {
         let capture = target_token.map(crate::target_binding::take_for_recording);
-        if let TargetDelivery::HerdrPane(pane_id) = target_delivery_policy(capture, paste_method)? {
+        if let Some(pane_id) = herdr_target(capture, paste_method)? {
             crate::target_binding::deliver(&pane_id, &text)
                 .map_err(|e| format!("Failed to deliver to herdr pane {}: {}", pane_id, e))?;
             info!("Delivered transcription to herdr pane {}", pane_id);
@@ -770,26 +761,23 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn target_delivery_policy_distinguishes_legacy_bound_and_failed_capture() {
+    fn herdr_target_distinguishes_legacy_bound_and_failed_capture() {
         use crate::target_binding::CaptureOutcome;
 
         assert_eq!(
-            target_delivery_policy(Some(CaptureOutcome::Legacy), PasteMethod::Direct),
-            Ok(TargetDelivery::Legacy)
+            herdr_target(Some(CaptureOutcome::Legacy), PasteMethod::Direct),
+            Ok(None)
         );
         assert_eq!(
-            target_delivery_policy(
+            herdr_target(
                 Some(CaptureOutcome::Bound("workspace:pane".to_string())),
                 PasteMethod::Direct,
             ),
-            Ok(TargetDelivery::HerdrPane("workspace:pane".to_string()))
+            Ok(Some("workspace:pane".to_string()))
         );
-        assert_eq!(
-            target_delivery_policy(None, PasteMethod::Direct),
-            Ok(TargetDelivery::Legacy)
-        );
+        assert_eq!(herdr_target(None, PasteMethod::Direct), Ok(None));
 
-        let failure = target_delivery_policy(
+        let failure = herdr_target(
             Some(CaptureOutcome::Failed("snapshot timed out".to_string())),
             PasteMethod::Direct,
         )
@@ -803,11 +791,11 @@ mod tests {
         use crate::target_binding::CaptureOutcome;
 
         assert_eq!(
-            target_delivery_policy(
+            herdr_target(
                 Some(CaptureOutcome::Failed("missing herdr".to_string())),
                 PasteMethod::None,
             ),
-            Ok(TargetDelivery::Legacy)
+            Ok(None)
         );
     }
 }
