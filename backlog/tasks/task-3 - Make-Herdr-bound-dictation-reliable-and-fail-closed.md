@@ -4,10 +4,14 @@ title: Make Herdr-bound dictation reliable and fail closed
 status: In Progress
 assignee: []
 created_date: '2026-07-24 18:39'
+updated_date: '2026-07-24 19:23'
 labels: []
 dependencies: []
 documentation:
   - doc-3
+modified_files:
+  - src-tauri/src/target_binding.rs
+  - src-tauri/src/clipboard.rs
 priority: high
 type: bug
 ordinal: 3000
@@ -45,3 +49,13 @@ Outcome: restore pane binding under the desktop-session environment and make eve
 4. Run focused and applicable Rust checks, then fresh-context review.
 5. Build and install the branch, restart it under the desktop-session environment, and verify pane-switch plus closed-pane behavior before finalizing the Task and pull request.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implementation delegate committed `caf4609` (explicit Legacy/Bound/Failed capture outcomes, PATH + Linuxbrew Herdr resolution, and fail-closed paste integration). Its process ended after structured completion because the generic child requested an unavailable supervisor tool; the structured envelope was recovered and every tree claim was verified by the accountable owner.
+
+The required same-fix-smaller pass replaced a redundant delivery enum with `Result<Option<String>, String>` in `0896c6d`, removing 12 net lines while preserving policy tests.
+
+Owner Checks: primary Rust LSP clean for both changed files; `cargo fmt --check` and `git diff --check` pass; pinned Docker focused suites pass (8 target-binding tests and 5 clipboard tests); full library suite is 145 pass, 1 pre-existing catalog `moss` failure, 2 ignored; the unchanged base exhibits the same catalog failure; advisory clippy completes with six pre-existing warnings and strict `-D warnings` is blocked by those baseline warnings.
+<!-- SECTION:NOTES:END -->
