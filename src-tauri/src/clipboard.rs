@@ -613,19 +613,15 @@ fn herdr_target(
     capture: Option<crate::target_binding::CaptureOutcome>,
     paste_method: PasteMethod,
 ) -> Result<Option<String>, String> {
-    // None has always meant no delivery at all. Consume the capture but keep
-    // the ordinary no-op/clipboard behavior rather than surfacing targeting
-    // failures for text that was never meant to be sent.
-    if paste_method == PasteMethod::None {
-        return Ok(None);
-    }
-
     match capture {
-        None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(None),
-        Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => Ok(Some(pane_id)),
         Some(crate::target_binding::CaptureOutcome::Failed(reason)) => {
             Err(format!("Herdr target capture failed: {}", reason))
         }
+        // None has always meant no delivery at all. Consume a valid capture but
+        // keep the configured no-op behavior.
+        _ if paste_method == PasteMethod::None => Ok(None),
+        None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(None),
+        Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => Ok(Some(pane_id)),
     }
 }
 
@@ -787,15 +783,14 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn none_method_remains_a_noop_even_after_targeting_failure() {
+    fn none_method_still_surfaces_targeting_failure() {
         use crate::target_binding::CaptureOutcome;
 
-        assert_eq!(
-            herdr_target(
-                Some(CaptureOutcome::Failed("missing herdr".to_string())),
-                PasteMethod::None,
-            ),
-            Ok(None)
-        );
+        let failure = herdr_target(
+            Some(CaptureOutcome::Failed("missing herdr".to_string())),
+            PasteMethod::None,
+        )
+        .unwrap_err();
+        assert!(failure.contains("missing herdr"));
     }
 }
