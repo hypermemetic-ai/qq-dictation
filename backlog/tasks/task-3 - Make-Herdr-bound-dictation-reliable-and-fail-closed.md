@@ -1,10 +1,10 @@
 ---
 id: TASK-3
 title: Make Herdr-bound dictation reliable and fail closed
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-07-24 18:39'
-updated_date: '2026-07-24 20:31'
+updated_date: '2026-07-24 20:59'
 labels: []
 dependencies: []
 documentation:
@@ -13,6 +13,8 @@ modified_files:
   - src-tauri/src/target_binding.rs
   - src-tauri/src/clipboard.rs
   - scripts/build-local.sh
+  - scripts/gen_catalog.py
+  - src-tauri/src/catalog/catalog.json
 priority: high
 type: bug
 ordinal: 3000
@@ -25,7 +27,9 @@ After a desktop login restart, qq-dictation inherits a PATH that omits Linuxbrew
 
 While building the reviewed repair, the repository's uncapped parallel native release build caused two confirmed global OOM events. Two concurrent `cc1plus` processes held roughly 5.3–6.1 GiB RSS while other interactive work exhausted 16.47 GiB RAM plus 2.15 GiB swap; Linux killed Chromium and Ghostty/Herdr collapsed. The build must be contained before it can safely deliver the runtime repair.
 
-Outcome: restore pane binding under the desktop-session environment; make every identified Herdr-targeting failure refuse OS-level keyboard fallback; and make the local release build serialize native compilation inside a hard container resource budget. Preserve current behavior for recordings genuinely started outside Herdr or with binding explicitly disabled.
+Final GitHub checks then confirmed the pre-existing catalog failure: the bundled catalog advertises MOSS, but pinned `transcribe-cpp 0.1.3` contains no `moss` architecture loader. The model must not be advertised as compatible, and adding it to `KNOWN_ARCHES` would be false.
+
+Outcome: restore pane binding under the desktop-session environment; make every identified Herdr-targeting failure refuse OS-level keyboard fallback; make the local release build serialize native compilation inside a hard container resource budget; and exclude the unsupported MOSS model from generated catalog output. Preserve current behavior for recordings genuinely started outside Herdr or with binding explicitly disabled.
 
 ## Decision ledger
 
@@ -33,6 +37,7 @@ Outcome: restore pane binding under the desktop-session environment; make every 
 - D2 Herdr failure semantics: targeting/capture/delivery failure sends no simulated keyboard input, emits the existing paste-error path, and leaves the saved history entry available — disposition: same exchange.
 - D3 compatibility boundary: non-Herdr starts and explicitly disabled binding retain legacy focus-based delivery; no generic app binding — disposition: same exchange.
 - D4 build containment and expanded boundary: serialize Cargo and CMake to one job; cap Docker at 5 GiB total memory with no container swap and 2 CPUs; include `scripts/build-local.sh` in TASK-3 rather than a separate Change — disposition: operator approval in asked-and-answered OOM realignment exchanges 2026-07-24.
+- D5 truthful green catalog: mark `moss-transcribe-diarize` hidden and remove its generated catalog entry while the pinned engine has no MOSS loader; do not falsely add `moss` to known compatible architectures; include the generator and generated catalog in TASK-3 — disposition: operator approval in asked-and-answered CI-blocker realignment exchange 2026-07-24.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -43,6 +48,7 @@ Outcome: restore pane binding under the desktop-session environment; make every 
 - [x] #4 Recording started outside Herdr or with binding disabled preserves existing focus-based delivery
 - [x] #5 Automated regression checks and fresh local acceptance checks cover the repaired and fail-closed paths
 - [x] #6 The local release build serializes Cargo and CMake inside a Docker hard limit of 5 GiB total memory with no container swap and 2 CPUs, failing locally rather than causing global OOM
+- [ ] #7 While pinned transcribe-cpp lacks a MOSS loader, generator curation hides moss-transcribe-diarize and the bundled catalog contains no unsupported moss architecture
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,8 +58,9 @@ Outcome: restore pane binding under the desktop-session environment; make every 
 2. Resolve the Herdr executable through PATH plus the standard Linuxbrew location.
 3. Carry legacy, bound-pane, and targeting-failure states through capture; fail closed before keyboard fallback for Herdr failures.
 4. Serialize Cargo/CMake in `scripts/build-local.sh` and hard-cap its Docker run at 5 GiB total memory, no container swap, and 2 CPUs.
-5. Run focused and applicable Rust/build checks, then fresh-context review of every implementation and review-fix delta.
-6. Build and install the branch under the new cap, restart it with the desktop-session environment, and verify pane-switch plus closed-pane behavior before finalizing the Task and pull request.
+5. Hide the unsupported `moss-transcribe-diarize` model in generator curation and remove its generated catalog entry while pinned transcribe-cpp lacks a MOSS loader.
+6. Run focused and full Rust/catalog/build checks, then fresh-context review of every implementation and review-fix delta.
+7. Preserve installed runtime acceptance evidence, finalize the reactivated Task, update PR #4, and require green GitHub checks before handoff.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -72,12 +79,6 @@ Scope realigned after two kernel-confirmed global OOM events during the required
 Capped-build evidence: live Docker inspect recorded Memory=5368709120, MemorySwap=5368709120, NanoCpus=2000000000, CARGO_BUILD_JOBS=1, and CMAKE_BUILD_PARALLEL_LEVEL=1. The release build completed in 7m58s, produced an AppDir marked `63806d2`, and generated no new kernel OOM lines. Fresh-context build-containment review `7dd67d07` passed with no material finding. The earlier uncapped run is not accepted and no builder remains active.
 
 Installed acceptance: branch artifact `63806d2` installed successfully, then Handy was killed and relaunched directly under the Cinnamon desktop PATH (which does not resolve `herdr`). Four subsequent recordings bound and delivered directly to Herdr panes. Operator UAT dictated in pane `w1Z:p1` and switched tabs immediately; the text returned and submitted in `w1Z:p1`, with matching bind/deliver logs. The operator explicitly accepted the result and skipped the disposable closed-pane hands-on check; the closed/missing/failing target behavior remains covered by focused policy tests and two fresh-context reviews.
+
+PR #4 final Rust CI reproduced the unchanged baseline failure after 145 passes and 2 ignored tests: catalog architecture `moss` is absent from `KNOWN_ARCHES`. Inspection of pinned `transcribe-cpp-sys 0.1.3/src/arch` confirmed no MOSS loader. The operator explicitly expanded TASK-3 to hide this unsupported model in generator curation and generated output; declaring it known is prohibited as false compatibility.
 <!-- SECTION:NOTES:END -->
-
-## Final Summary
-
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Restored reliable Herdr pane binding after desktop login by resolving the CLI from PATH or the standard Linuxbrew location and carrying explicit Legacy/Bound/Failed capture outcomes. Identified Herdr capture or delivery failures now return through paste-error before any OS keyboard path, while genuine non-Herdr/disabled starts retain legacy behavior. After two global OOM events during delivery, the approved scope expanded to serialize Cargo/CMake and cap local Docker builds at 5 GiB total memory, no container swap, and 2 CPUs.
-
-Evidence: primary Rust LSP and formatting clean; 8/8 target-binding and 5/5 clipboard focused tests pass; full library suite 145 pass with one unchanged catalog failure and two ignored; three fresh-context review passes after one repaired finding; capped release build completed with live cgroup inspection and no new OOM; installed artifact `63806d2` ran under the sanitized desktop PATH; operator pane-switch UAT bound and delivered to the original pane and was explicitly accepted.
-<!-- SECTION:FINAL_SUMMARY:END -->
