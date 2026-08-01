@@ -1,24 +1,17 @@
 # Local distribution
 
 `qq-dictation` is a private, per-user Handy distribution for QQ's Linux
-workstation. It keeps Parakeet as the fast speech recognizer and adds a tiny
-resident classifier that removes contextual speech disfluencies.
+workstation. It preserves Handy's local speech recognition while adding
+Herdr-pane target binding, a Right-Control push-to-talk bridge, and a
+reproducible user-local installation.
 
 ## Reproducible inputs
 
 - Handy upstream baseline:
   `8a362e9eba59d4057fda79b7f38f5b0d5cbabf65`
-- FDT Mini revision:
-  `677a8a0c20f23858e3c581977111a572999ee487`
 - Rust: `1.96.0`
 - Bun: `1.3.3`
 - Build image: Ubuntu `24.04`
-
-The model fetch verifies all three artifact hashes. Model weights live below
-`~/.local/share/com.pais.handy/text-cleanup/fdt-mini-11m` and are never stored
-in Git or bundled into the application. The upstream model metadata says
-Apache-2.0, but its training description includes DailyDialog data licensed
-CC BY-NC-SA 4.0; this distribution is intentionally private and local.
 
 ## Build and install
 
@@ -40,34 +33,28 @@ Installation writes only to the current user's directories:
 - application: `~/.local/opt/qq-dictation/Handy.AppDir`
 - launcher and PTT bridge: `~/.local/bin`
 - user service: `~/.config/systemd/user/handy-ptt.service`
-- model: Handy's existing app-data directory
+- models and history: Handy's existing app-data and Hugging Face cache
 
 Existing Handy app data—settings, ASR models, history, and logs—is not replaced.
 The installer backs up any launcher, bridge, service, settings file, or prior
-qq-dictation AppDir that it supersedes. It changes two distribution-owned
-settings: the overlay is set to `minimal`, and upstream update checks are
-disabled so a future stock Handy release cannot replace the tracked local
-build. Updates to qq-dictation are built and installed explicitly from Git.
+qq-dictation AppDir that it supersedes. It enables Herdr target binding and
+push-to-talk, disables API post-processing, sets the overlay to `minimal`, and
+disables upstream update checks so a stock release cannot replace the tracked
+local build. Updates to qq-dictation are built and installed explicitly from
+Git.
 
 ## Runtime policy
 
-For English output, FDT runs before custom-word correction and replaces Handy's
-unconditional filler filter. It uses 128-token windows with 32-token overlap,
-first-WordPiece predictions, and maximum-context selection for words seen in
-more than one window. A deletion run and its adjacent comma/capital repair form
-one transaction. The transaction confidence is the geometric mean of its
-action probabilities; the default acceptance threshold is `0.70`.
+The selected Handy ASR model is the only model pass. qq-dictation does not
+fetch or run a transcript-cleanup classifier, and API post-processing is
+disabled by installation policy. Handy's built-in deterministic custom-word
+and filler handling remains part of its normal transcription path.
 
-Override the threshold for calibration without rebuilding:
-
-```bash
-HANDY_FDT_MIN_SPAN_CONFIDENCE=0.75 handy --start-hidden
-```
-
-Any missing or changed artifact, inference error, invalid output shape,
-uncovered word, runtime panic, or non-English output goes through Handy's
-unchanged legacy cleanup path. The FDT session stays resident independently of
-the ASR unload policy.
+When recording begins in Herdr on X11, qq-dictation captures the focused pane
+and delivers the finished transcript directly to that pane even if focus moves.
+Non-Herdr recordings retain Handy's focus-based insertion behavior. Identified
+Herdr capture or delivery failures fail closed rather than typing into whichever
+application happens to be focused.
 
 ## Recording indicator
 
