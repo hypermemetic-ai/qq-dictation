@@ -18,8 +18,6 @@ fi
 /usr/bin/python3 -c 'import Xlib' >/dev/null
 test -x /usr/bin/setsid
 
-"${repository_root}/scripts/fetch-fdt-model.sh"
-
 mkdir -p "$install_parent" "$local_bin" "$user_units"
 staging_dir="$(mktemp -d "${install_parent}/Handy.AppDir.staging.XXXXXX")"
 cleanup() {
@@ -67,6 +65,9 @@ data = json.loads(path.read_text(encoding="utf-8"))
 settings = data.setdefault("settings", {})
 settings["overlay_style"] = "minimal"
 settings["update_checks_enabled"] = False
+settings["post_process_enabled"] = False
+settings["herdr_binding_enabled"] = True
+settings["push_to_talk"] = True
 temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 os.replace(temporary, path)

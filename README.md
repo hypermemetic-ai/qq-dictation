@@ -1,10 +1,10 @@
 # Handy
 
-> **qq-dictation** is QQ's private, Linux-local Handy distribution. It keeps
-> Parakeet's fast offline transcription, adds conservative contextual
-> disfluency cleanup, and enables Handy's native recording indicator. See
-> [the local distribution guide](docs/local-distribution.md) for the pinned
-> build, model, installation, and fallback contract, and
+> **qq-dictation** is QQ's private, Linux-local Handy distribution. It binds
+> each dictation to the Herdr pane where recording started, provides a
+> Right-Control push-to-talk bridge, and enables Handy's native recording
+> indicator. See [the local distribution guide](docs/local-distribution.md)
+> for the pinned build and installation contract, and
 > [the project concepts](docs/project-concepts.md) for its QQ-specific
 > vocabulary.
 

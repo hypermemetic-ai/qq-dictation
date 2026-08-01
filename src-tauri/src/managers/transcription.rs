@@ -1,4 +1,4 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output, DisfluencyCleaner};
+use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -267,34 +267,10 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
-    /// Small, resident transcript-cleanup model. This has its own lifecycle and
-    /// therefore survives speech-engine idle unloads.
-    disfluency_cleaner: Option<Arc<DisfluencyCleaner>>,
 }
 
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle, model_manager: Arc<ModelManager>) -> Result<Self> {
-        let cleaner_model_dir = std::env::var_os("HANDY_FDT_MODEL_DIR")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                crate::portable::app_data_dir(app_handle)
-                    .ok()
-                    .map(|path| path.join(crate::audio_toolkit::disfluency::MODEL_SUBDIR))
-            });
-        let disfluency_cleaner = cleaner_model_dir.and_then(|path| {
-            match DisfluencyCleaner::load(&path) {
-                Ok(cleaner) => Some(Arc::new(cleaner)),
-                Err(error) => {
-                    warn!(
-                        "FDT cleanup unavailable at '{}': {:#}. Transcriptions will use Handy's legacy cleanup path.",
-                        path.display(),
-                        error
-                    );
-                    None
-                }
-            }
-        });
-
         let manager = Self {
             engine: Arc::new(Mutex::new(None)),
             model_manager,
@@ -311,7 +287,6 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
-            disfluency_cleaner,
         };
 
         // Start the idle watcher
@@ -1101,23 +1076,9 @@ impl TranscriptionManager {
         };
 
         let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .current_model_id
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-            .unwrap_or_else(|| settings.selected_model.clone());
-        let effective_language =
-            effective_language_for_model(&settings, self.model_manager.as_ref(), &active_model);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
-        let filtered = post_process_transcription_text(
-            raw,
-            &settings,
-            false,
-            &effective_language,
-            self.disfluency_cleaner.as_deref(),
-        );
+        let filtered = post_process_transcription_text(raw, &settings, false);
 
         self.maybe_unload_immediately("streaming transcription");
         Ok(Some(filtered))
@@ -1437,13 +1398,7 @@ impl TranscriptionManager {
         // family). We don't pass a prompt to non-whisper models (it requires the
         // whisper-kind run extension), so they still get fuzzy correction here,
         // same as the ONNX engines.
-        let filtered_result = post_process_transcription_text(
-            result,
-            &settings,
-            model_is_whisper,
-            &validated_language,
-            self.disfluency_cleaner.as_deref(),
-        );
+        let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1654,68 +1609,24 @@ fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
     custom_words_already_prompted: bool,
-    effective_language: &str,
-    disfluency_cleaner: Option<&DisfluencyCleaner>,
 ) -> String {
     fail_open_text_transform(raw, |raw| {
-        let output_is_english = settings.translate_to_english
-            || effective_language == "en"
-            || effective_language.starts_with("en-");
-        if output_is_english {
-            if let Some(cleaner) = disfluency_cleaner {
-                match cleaner.clean(&raw) {
-                    Ok(result) => {
-                        // FDT already makes contextual filler decisions. Running
-                        // the unconditional legacy filter afterward could undo
-                        // those decisions, so successful FDT output receives only
-                        // the custom-word correction stage.
-                        return apply_custom_word_correction(
-                            result.text,
-                            settings,
-                            custom_words_already_prompted,
-                        );
-                    }
-                    Err(error) => {
-                        warn!(
-                            "FDT cleanup failed: {:#}. Using Handy's legacy cleanup path.",
-                            error
-                        );
-                    }
-                }
-            }
-        }
+        let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
+            apply_custom_words(
+                &raw,
+                &settings.custom_words,
+                settings.word_correction_threshold,
+            )
+        } else {
+            raw
+        };
 
-        legacy_post_process(raw, settings, custom_words_already_prompted)
-    })
-}
-
-fn apply_custom_word_correction(
-    raw: String,
-    settings: &AppSettings,
-    custom_words_already_prompted: bool,
-) -> String {
-    if !settings.custom_words.is_empty() && !custom_words_already_prompted {
-        apply_custom_words(
-            &raw,
-            &settings.custom_words,
-            settings.word_correction_threshold,
+        filter_transcription_output(
+            &corrected,
+            &settings.app_language,
+            &settings.custom_filler_words,
         )
-    } else {
-        raw
-    }
-}
-
-fn legacy_post_process(
-    raw: String,
-    settings: &AppSettings,
-    custom_words_already_prompted: bool,
-) -> String {
-    let corrected = apply_custom_word_correction(raw, settings, custom_words_already_prompted);
-    filter_transcription_output(
-        &corrected,
-        &settings.app_language,
-        &settings.custom_filler_words,
-    )
+    })
 }
 
 /// Optional text cleanup must never discard a successful model result. The
@@ -2110,18 +2021,6 @@ mod tests {
         });
 
         assert_eq!(result, raw);
-    }
-
-    #[test]
-    fn unavailable_disfluency_cleaner_preserves_legacy_cleanup() {
-        let settings = AppSettings::default();
-        let raw = "Uhm, I I I I think this works.".to_string();
-        let expected = legacy_post_process(raw.clone(), &settings, false);
-
-        let actual = post_process_transcription_text(raw, &settings, false, "en", None);
-
-        assert_eq!(actual, expected);
-        assert_eq!(actual, "I think this works.");
     }
 
     #[test]
