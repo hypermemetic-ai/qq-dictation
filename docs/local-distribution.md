@@ -38,7 +38,7 @@ Installation writes only to the current user's directories:
 Existing Handy app data—settings, ASR models, history, and logs—is not replaced.
 The installer backs up any launcher, bridge, service, settings file, or prior
 qq-dictation AppDir that it supersedes. It enables Herdr target binding and
-push-to-talk, disables API post-processing, sets the overlay to `minimal`, and
+push-to-talk, disables API post-processing and the recording overlay, and
 disables upstream update checks so a stock release cannot replace the tracked
 local build. Updates to qq-dictation are built and installed explicitly from
 Git.
@@ -56,8 +56,9 @@ Non-Herdr recordings retain Handy's focus-based insertion behavior. Identified
 Herdr capture or delivery failures fail closed rather than typing into whichever
 application happens to be focused.
 
-## Recording indicator
+## Recording state
 
-The installer sets Handy's existing native overlay to `minimal`. Recording
-therefore produces a small bottom-center card above Ghostty/herdr/Pi or Codex;
-the behavior belongs to Handy itself, not to a particular terminal harness.
+The installer disables Handy's recording overlay. On this Cinnamon/X11 host,
+GTK layer-shell is unavailable and the overlay otherwise becomes a normal
+bottom-of-screen window that raises the desktop panel. Handy's tray icon still
+reports idle, recording, and transcribing state.

@@ -4,7 +4,7 @@ title: Retire the custom FDT cleanup pass
 status: In Progress
 assignee: []
 created_date: '2026-08-01 18:25'
-updated_date: '2026-08-01 18:46'
+updated_date: '2026-08-01 18:55'
 labels: []
 dependencies: []
 modified_files:
@@ -57,4 +57,6 @@ Decision ledger:
 Fresh source checks: Cargo metadata accepted the exact pre-FDT lock with --locked; current runtime/docs/package search contains no FDT, disfluency, or tokenizers references; shell/Python syntax checks pass; target-binding and PTT source are unchanged.
 
 Reproducible Docker build passed under the 5 GiB/2 CPU caps. The 124 MiB AppDir records commit 6257fd9, contains no FDT-named payload, and its binary contains no FDT loader/runtime markers. Focused release tests: 8 target_binding tests passed, 0 failed.
+
+Installed-runtime UAT exposed two delivery UX defects. Saved raw Turbo transcripts contain no leading dashes; target_binding passed a standalone `--` after the pane id and Herdr inserted it literally. Handy logs also show the minimal overlay falling back to a normal bottom-screen window, which raises the Cinnamon panel. Follow-up fix removes the injected argument, adds a regression test, and disables the overlay while preserving tray state.
 <!-- SECTION:NOTES:END -->
