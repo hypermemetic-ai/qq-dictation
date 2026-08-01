@@ -4,7 +4,7 @@ title: Retire the custom FDT cleanup pass
 status: In Progress
 assignee: []
 created_date: '2026-08-01 18:25'
-updated_date: '2026-08-01 18:30'
+updated_date: '2026-08-01 18:46'
 labels: []
 dependencies: []
 modified_files:
@@ -39,7 +39,7 @@ Decision ledger:
 <!-- AC:BEGIN -->
 - [x] #1 The FDT runtime, model fetch/install path, and FDT-only dependencies are absent from current source and packaging.
 - [x] #2 Herdr pane capture/delivery and the Right-Control PTT bridge remain unchanged and covered by focused checks.
-- [ ] #3 The reproducible local build contains no FDT model and starts without attempting to load one.
+- [x] #3 The reproducible local build contains no FDT model and starts without attempting to load one.
 - [ ] #4 The installed runtime uses Whisper Large v3 Turbo with post-processing disabled.
 <!-- AC:END -->
 
@@ -55,4 +55,6 @@ Decision ledger:
 
 <!-- SECTION:NOTES:BEGIN -->
 Fresh source checks: Cargo metadata accepted the exact pre-FDT lock with --locked; current runtime/docs/package search contains no FDT, disfluency, or tokenizers references; shell/Python syntax checks pass; target-binding and PTT source are unchanged.
+
+Reproducible Docker build passed under the 5 GiB/2 CPU caps. The 124 MiB AppDir records commit 6257fd9, contains no FDT-named payload, and its binary contains no FDT loader/runtime markers. Focused release tests: 8 target_binding tests passed, 0 failed.
 <!-- SECTION:NOTES:END -->
