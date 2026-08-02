@@ -4,11 +4,12 @@ title: Investigate an LLM second pass over dictation transcripts
 status: In Progress
 assignee: []
 created_date: '2026-08-02 03:49'
-updated_date: '2026-08-02 04:41'
+updated_date: '2026-08-02 04:45'
 labels: []
 dependencies: []
 documentation:
   - doc-5
+  - doc-6
 priority: high
 type: spike
 ordinal: 6000
@@ -24,6 +25,7 @@ Decision ledger:
 - D2 do not resurrect the retired FDT system; mine its history only as evidence — explicit operator direction 2026-08-01.
 - D3 do not upload recordings or transcript history; no inspecting private transcript history without explicit operator agreement; synthetic examples and public data are the default — explicit operator direction 2026-08-01.
 - D4 do not entangle this research with the open native-overlay Change (PR 9) — explicit operator direction 2026-08-01.
+- D5 investigation plan and its recorded assumptions — operator affirmation 2026-08-01, plans doc-6.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
