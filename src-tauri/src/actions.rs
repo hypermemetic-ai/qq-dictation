@@ -59,22 +59,22 @@ const TRANSCRIPTION_FIELD: &str = "transcription";
 
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
-s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
+    s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
 /// A blank cleanup result must never replace the raw transcription: the caller
 /// pastes and auto-submits whatever this returns, so blank output fails open
 /// to the raw text instead of erasing it. Call after strip_invisible_chars.
 fn nonblank_or_none(result: String, provider_id: &str) -> Option<String> {
-if result.trim().is_empty() {
-warn!(
-"LLM post-processing for provider '{}' returned a blank result; using the raw transcription",
-provider_id
-);
-None
-} else {
-Some(result)
-}
+    if result.trim().is_empty() {
+        warn!(
+            "LLM post-processing for provider '{}' returned a blank result; using the raw transcription",
+            provider_id
+        );
+        None
+    } else {
+        Some(result)
+    }
 }
 
 /// Build a system prompt from the user's prompt template.

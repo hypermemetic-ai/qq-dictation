@@ -102,14 +102,20 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
 }
 
 /// Create an HTTP client with provider-specific headers
-fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
+fn create_client(
+    provider: &PostProcessProvider,
+    api_key: &str,
+    request_timeout: Option<std::time::Duration>,
+) -> Result<reqwest::Client, String> {
     let headers = build_headers(provider, api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
-        // Post-processing runs between transcription and paste+auto-submit: a
-        // stalled provider connection must fail open to the raw transcript
-        // (callers turn an Err into the raw text), never hang delivery.
-        .timeout(POST_PROCESS_TIMEOUT)
+    let mut builder = reqwest::Client::builder().default_headers(headers);
+    // The timeout applies only to delivery-path sends. The settings-path model
+    // fetch (fetch_models) passes None so a slow endpoint waits rather than
+    // failing after the delivery budget.
+    if let Some(timeout) = request_timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
@@ -159,7 +165,10 @@ pub async fn send_chat_completion_with_schema(
 
     debug!("Sending chat completion request to: {}", url);
 
-    let client = create_client(provider, &api_key)?;
+    // Post-processing runs between transcription and paste+auto-submit: a
+    // stalled provider connection must fail open to the raw transcript
+    // (callers turn an Err into the raw text), never hang delivery.
+    let client = create_client(provider, &api_key, Some(POST_PROCESS_TIMEOUT))?;
 
     // Build messages vector
     let mut messages = Vec::new();
@@ -237,7 +246,7 @@ pub async fn fetch_models(
 
     debug!("Fetching models from: {}", url);
 
-    let client = create_client(provider, &api_key)?;
+    let client = create_client(provider, &api_key, None)?;
 
     let response = client
         .get(&url)
