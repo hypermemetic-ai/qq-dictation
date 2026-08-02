@@ -2,6 +2,11 @@ use crate::settings::PostProcessProvider;
 use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
+
+/// Total request timeout for a post-processing call. 3s is ~6x the measured
+/// p95 of the trial provider (Cerebras gpt-oss-120b: 466ms on the Stage 0
+/// corpus) while still bounding delivery delay when a provider stalls.
+const POST_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 use serde_json::Value;
 
 #[derive(Debug, Serialize)]
@@ -101,6 +106,10 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
     let headers = build_headers(provider, api_key)?;
     reqwest::Client::builder()
         .default_headers(headers)
+        // Post-processing runs between transcription and paste+auto-submit: a
+        // stalled provider connection must fail open to the raw transcript
+        // (callers turn an Err into the raw text), never hang delivery.
+        .timeout(POST_PROCESS_TIMEOUT)
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
