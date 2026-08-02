@@ -4,7 +4,7 @@ title: Retire the custom FDT cleanup pass
 status: In Progress
 assignee: []
 created_date: '2026-08-01 18:25'
-updated_date: '2026-08-02 02:45'
+updated_date: '2026-08-02 02:55'
 labels: []
 dependencies: []
 modified_files:
@@ -45,7 +45,7 @@ Decision ledger:
 - [x] #1 The FDT runtime, model fetch/install path, and FDT-only dependencies are absent from current source and packaging.
 - [x] #2 Herdr pane capture/delivery remains intact, and Right-Control PTT cannot invert when an input arrives while transcription is processing.
 - [x] #3 The reproducible local build contains no FDT model and starts without attempting to load one.
-- [ ] #4 The installed runtime uses Whisper Large v3 Turbo with post-processing disabled.
+- [x] #4 The installed runtime uses Whisper Large v3 Turbo with post-processing disabled.
 - [ ] #5 Installed UAT produces unprefixed text without raising the desktop panel and remains synchronized across a press during processing.
 <!-- AC:END -->
 
@@ -67,4 +67,6 @@ Reproducible Docker build passed under the 5 GiB/2 CPU caps. The 124 MiB AppDir 
 Installed-runtime UAT exposed two delivery UX defects. Saved raw Turbo transcripts contain no leading dashes; target_binding passed a standalone `--` after the pane id and Herdr inserted it literally. Handy logs also show the minimal overlay falling back to a normal bottom-screen window, which raises the Cinnamon panel. Follow-up fix removes the injected argument, adds a regression test, and disables the overlay while preserving tray state.
 
 Runtime UAT then exposed a PTT state-inversion defect. At 02:15:09 Handy ignored a SIGUSR2 press while the first Turbo transcription was still Processing; the bridge still emitted its release as the same toggle at 02:15:11, which started a recording. Later press/release pairs stayed inverted, produced zero-sample recordings, and the final release left Handy recording indefinitely. The fix preserves SIGUSR1/SIGUSR2 toggle compatibility but adds Linux SIGRTMIN press and SIGRTMIN+1 release inputs routed through the coordinator’s existing push-to-talk semantics. A release from Idle or Processing is therefore harmless. The bridge now uses these explicit signals.
+
+Operator clarified that auto-submit and a visible recording indicator are required. These are packaging/runtime concerns, not Handy-binary changes: installation now enforces auto_submit=true, and the Python PTT bridge owns a small override-redirect X11 recording badge while Handy’s compositor-sensitive overlay remains disabled. The bridge and settings were deployed directly and Handy restarted; no AppDir rebuild was performed for these changes.
 <!-- SECTION:NOTES:END -->
