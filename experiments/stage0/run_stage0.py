@@ -67,6 +67,8 @@ def parse_args() -> argparse.Namespace:
         "--prompt-arm", choices=("stock", "extended", "both"), default="both"
     )
     parser.add_argument("--max-spend", type=float, default=0.90, metavar="USD")
+    parser.add_argument("--sleep", type=float, default=0.1, metavar="SECONDS",
+                        help="delay between live calls (free trial is 5 RPM/model: use >=12.5)")
     return parser.parse_args()
 
 
@@ -210,6 +212,8 @@ def live_chunks(base_url: str, api_key: str, body: dict[str, Any]) -> Iterator[d
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            # Cerebras's edge WAF rejects Python-urllib's default UA (403).
+            "User-Agent": "qq-dictation-stage0/1.0",
         },
         method="POST",
     )
@@ -414,7 +418,7 @@ def main() -> int:
                 results_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
                 results_file.flush()
                 if args.execute and call_number + 1 < len(plan):
-                    time.sleep(0.1)
+                    time.sleep(max(0.0, args.sleep))
     except SpendLimitExceeded as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
