@@ -13,6 +13,8 @@ from Xlib import X, XK, display, error
 
 HANDY = str(Path.home() / ".local" / "bin" / "handy")
 KEYSYM = "Control_R"
+PTT_START_SIGNAL = signal.SIGRTMIN
+PTT_STOP_SIGNAL = signal.SIGRTMIN + 1
 
 
 def log(message):
@@ -58,16 +60,16 @@ def ensure_handy():
     return None
 
 
-def toggle_handy():
+def signal_handy(handy_signal, action):
     pid = ensure_handy()
     if pid is None:
         log("ERROR: Handy did not become ready")
         return False
     try:
-        os.kill(pid, signal.SIGUSR2)
+        os.kill(pid, handy_signal)
         return True
     except ProcessLookupError:
-        log("ERROR: Handy exited before it could be toggled")
+        log(f"ERROR: Handy exited before it could {action}")
         return False
 
 
@@ -111,7 +113,7 @@ def main():
 
         if event.type == X.KeyPress:
             if not holding:
-                holding = toggle_handy()
+                holding = signal_handy(PTT_START_SIGNAL, "start recording")
                 if holding:
                     log("recording started")
             continue
@@ -128,7 +130,7 @@ def main():
             buffered.insert(0, following)
 
         if holding:
-            if toggle_handy():
+            if signal_handy(PTT_STOP_SIGNAL, "stop recording"):
                 log("recording stopped; transcription requested")
             holding = False
 

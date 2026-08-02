@@ -4,20 +4,25 @@ title: Retire the custom FDT cleanup pass
 status: In Progress
 assignee: []
 created_date: '2026-08-01 18:25'
-updated_date: '2026-08-01 18:55'
+updated_date: '2026-08-02 02:45'
 labels: []
 dependencies: []
 modified_files:
   - README.md
   - docs/local-distribution.md
   - docs/project-concepts.md
+  - packaging/handy-ptt-bridge.py
   - scripts/fetch-fdt-model.sh
   - scripts/install-local.sh
   - src-tauri/Cargo.lock
   - src-tauri/Cargo.toml
   - src-tauri/src/audio_toolkit/disfluency.rs
   - src-tauri/src/audio_toolkit/mod.rs
+  - src-tauri/src/lib.rs
   - src-tauri/src/managers/transcription.rs
+  - src-tauri/src/signal_handle.rs
+  - src-tauri/src/target_binding.rs
+  - src-tauri/src/transcription_coordinator.rs
   - backlog/tasks/task-5 - Retire-the-custom-FDT-cleanup-pass.md
 priority: high
 type: chore
@@ -38,9 +43,10 @@ Decision ledger:
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The FDT runtime, model fetch/install path, and FDT-only dependencies are absent from current source and packaging.
-- [x] #2 Herdr pane capture/delivery and the Right-Control PTT bridge remain unchanged and covered by focused checks.
+- [x] #2 Herdr pane capture/delivery remains intact, and Right-Control PTT cannot invert when an input arrives while transcription is processing.
 - [x] #3 The reproducible local build contains no FDT model and starts without attempting to load one.
 - [ ] #4 The installed runtime uses Whisper Large v3 Turbo with post-processing disabled.
+- [ ] #5 Installed UAT produces unprefixed text without raising the desktop panel and remains synchronized across a press during processing.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +65,6 @@ Fresh source checks: Cargo metadata accepted the exact pre-FDT lock with --locke
 Reproducible Docker build passed under the 5 GiB/2 CPU caps. The 124 MiB AppDir records commit 6257fd9, contains no FDT-named payload, and its binary contains no FDT loader/runtime markers. Focused release tests: 8 target_binding tests passed, 0 failed.
 
 Installed-runtime UAT exposed two delivery UX defects. Saved raw Turbo transcripts contain no leading dashes; target_binding passed a standalone `--` after the pane id and Herdr inserted it literally. Handy logs also show the minimal overlay falling back to a normal bottom-screen window, which raises the Cinnamon panel. Follow-up fix removes the injected argument, adds a regression test, and disables the overlay while preserving tray state.
+
+Runtime UAT then exposed a PTT state-inversion defect. At 02:15:09 Handy ignored a SIGUSR2 press while the first Turbo transcription was still Processing; the bridge still emitted its release as the same toggle at 02:15:11, which started a recording. Later press/release pairs stayed inverted, produced zero-sample recordings, and the final release left Handy recording indefinitely. The fix preserves SIGUSR1/SIGUSR2 toggle compatibility but adds Linux SIGRTMIN press and SIGRTMIN+1 release inputs routed through the coordinator’s existing push-to-talk semantics. A release from Idle or Processing is therefore harmless. The bridge now uses these explicit signals.
 <!-- SECTION:NOTES:END -->

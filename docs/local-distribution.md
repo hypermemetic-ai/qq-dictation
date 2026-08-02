@@ -56,6 +56,11 @@ Non-Herdr recordings retain Handy's focus-based insertion behavior. Identified
 Herdr capture or delivery failures fail closed rather than typing into whichever
 application happens to be focused.
 
+The Right-Control bridge sends separate realtime signals for PTT press
+(`SIGRTMIN`) and release (`SIGRTMIN+1`). It does not use Handy's toggle signal:
+an ignored press while a previous transcript is still processing therefore
+cannot invert the next release into a recording start.
+
 ## Recording state
 
 The installer disables Handy's recording overlay. On this Cinnamon/X11 host,
