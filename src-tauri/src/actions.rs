@@ -62,6 +62,21 @@ fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
+/// A blank cleanup result must never replace the raw transcription: the caller
+/// pastes and auto-submits whatever this returns, so blank output fails open
+/// to the raw text instead of erasing it. Call after strip_invisible_chars.
+fn nonblank_or_none(result: String, provider_id: &str) -> Option<String> {
+    if result.trim().is_empty() {
+        warn!(
+            "LLM post-processing for provider '{}' returned a blank result; using the raw transcription",
+            provider_id
+        );
+        None
+    } else {
+        Some(result)
+    }
+}
+
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
 fn build_system_prompt(prompt_template: &str) -> String {
@@ -272,10 +287,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 provider.id,
                                 result.len()
                             );
-                            return Some(result);
+                            return nonblank_or_none(result, &provider.id);
                         } else {
                             error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(&content));
+                            return nonblank_or_none(strip_invisible_chars(&content), &provider.id);
                         }
                     }
                     Err(e) => {
@@ -283,7 +298,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return Some(strip_invisible_chars(&content));
+                        return nonblank_or_none(strip_invisible_chars(&content), &provider.id);
                     }
                 }
             }
@@ -322,7 +337,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 provider.id,
                 content.len()
             );
-            Some(content)
+            nonblank_or_none(content, &provider.id)
         }
         Ok(None) => {
             error!("LLM API response has no content");
@@ -943,7 +958,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::{complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay};
+    use super::{
+        complete_unless_cancelled, is_blank_transcription, nonblank_or_none,
+        should_use_streaming_overlay, strip_invisible_chars,
+    };
     use crate::settings::OverlayStyle;
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -962,6 +980,26 @@ mod tests {
     fn non_blank_transcription_is_kept() {
         assert!(!is_blank_transcription("hello"));
         assert!(!is_blank_transcription("  hello  "));
+    }
+
+    #[test]
+    fn blank_cleanup_result_falls_back_to_raw() {
+        assert_eq!(nonblank_or_none(String::new(), "test"), None);
+        assert_eq!(nonblank_or_none("   \t\n".to_string(), "test"), None);
+        // Call sites strip zero-width characters before the guard, so a
+        // zero-width-only model response arrives as an empty string.
+        assert_eq!(
+            nonblank_or_none(strip_invisible_chars("\u{200b}\u{feff}"), "test"),
+            None
+        );
+    }
+
+    #[test]
+    fn nonblank_cleanup_result_is_used() {
+        assert_eq!(
+            nonblank_or_none("cleaned text".to_string(), "test"),
+            Some("cleaned text".to_string())
+        );
     }
 
     #[test]

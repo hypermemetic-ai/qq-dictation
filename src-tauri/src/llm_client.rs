@@ -2,6 +2,11 @@ use crate::settings::PostProcessProvider;
 use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
+
+/// Total request timeout for a post-processing call. 3s is ~6x the measured
+/// p95 of the trial provider (Cerebras gpt-oss-120b: 466ms on the Stage 0
+/// corpus) while still bounding delivery delay when a provider stalls.
+const POST_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 use serde_json::Value;
 
 #[derive(Debug, Serialize)]
@@ -97,10 +102,20 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
 }
 
 /// Create an HTTP client with provider-specific headers
-fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
+fn create_client(
+    provider: &PostProcessProvider,
+    api_key: &str,
+    request_timeout: Option<std::time::Duration>,
+) -> Result<reqwest::Client, String> {
     let headers = build_headers(provider, api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
+    let mut builder = reqwest::Client::builder().default_headers(headers);
+    // The timeout applies only to delivery-path sends. The settings-path model
+    // fetch (fetch_models) passes None so a slow endpoint waits rather than
+    // failing after the delivery budget.
+    if let Some(timeout) = request_timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
@@ -150,7 +165,10 @@ pub async fn send_chat_completion_with_schema(
 
     debug!("Sending chat completion request to: {}", url);
 
-    let client = create_client(provider, &api_key)?;
+    // Post-processing runs between transcription and paste+auto-submit: a
+    // stalled provider connection must fail open to the raw transcript
+    // (callers turn an Err into the raw text), never hang delivery.
+    let client = create_client(provider, &api_key, Some(POST_PROCESS_TIMEOUT))?;
 
     // Build messages vector
     let mut messages = Vec::new();
@@ -228,7 +246,7 @@ pub async fn fetch_models(
 
     debug!("Fetching models from: {}", url);
 
-    let client = create_client(provider, &api_key)?;
+    let client = create_client(provider, &api_key, None)?;
 
     let response = client
         .get(&url)
