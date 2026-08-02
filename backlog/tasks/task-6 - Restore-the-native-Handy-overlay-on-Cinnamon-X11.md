@@ -1,10 +1,10 @@
 ---
 id: TASK-6
 title: Restore the native Handy overlay on Cinnamon X11
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02 03:09'
-updated_date: '2026-08-02 03:32'
+updated_date: '2026-08-02 03:33'
 labels: []
 dependencies: []
 modified_files:
@@ -60,3 +60,9 @@ The repository-wide cargo fmt Check also exposed a pre-existing format-only devi
 
 Prettier likewise normalized the existing README signal table introduced with explicit PTT. This is formatting-only and closes the remaining code-quality gate without changing runtime behavior.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Restored Handy's native minimal recording/transcribing pill and removed the bridge-owned X11 badge. The panel regression was caused by the Linux fallback being advertised as a normal application window over fullscreen Ghostty; the fallback now uses GTK's notification type, preserving fullscreen while Cinnamon supplies above and taskbar-skip states. Explicit Right-Control press/release, Herdr pane binding, Turbo transcription, and auto-submit remain active. The production AppDir from commit 76fe322 was installed, the previous AppDir was retained as a timestamped backup, and post-install X11 evidence confirmed the native notification window without the bottom panel. The Change also makes the documented container build work with shared worktree caches and closes two pre-existing format-only CI deviations without another native rebuild.
+<!-- SECTION:FINAL_SUMMARY:END -->
