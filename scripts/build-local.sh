@@ -28,11 +28,12 @@ docker build \
     --tag "$builder_image" \
     "${repository_root}/packaging"
 
+# The 5g default protects the host desktop during builds (TASK-3). Newer
+# toolchain images can need more for ggml-vulkan's heaviest translation
+# units; override with QQ_BUILD_MEM=8g (applies to both memory and
+# memory-swap) without editing this script. NOTE: bash does not allow
+# comments inside a line-continued command — keep them above `docker run`.
 docker run --rm \
-    # The 5g default protects the host desktop during builds (TASK-3). Newer
-    # toolchain images can need more for ggml-vulkan's heaviest translation
-    # units; override with QQ_BUILD_MEM=8g (applies to both memory and
-    # memory-swap) without editing this script.
     --memory "${QQ_BUILD_MEM:-5g}" \
     --memory-swap "${QQ_BUILD_MEM:-5g}" \
     --cpus 2 \
