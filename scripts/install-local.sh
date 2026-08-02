@@ -63,7 +63,7 @@ from pathlib import Path
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 settings = data.setdefault("settings", {})
-settings["overlay_style"] = "none"
+settings["overlay_style"] = "minimal"
 settings["update_checks_enabled"] = False
 settings["post_process_enabled"] = False
 settings["herdr_binding_enabled"] = True
@@ -100,4 +100,4 @@ if [[ "$actual_executable" != "$expected_executable" ]]; then
 fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
-printf 'The right-Control bridge is active; recording state remains available in the tray.\n'
+printf "The right-Control bridge and Handy's native recording overlay are active.\n"

@@ -2,8 +2,8 @@
 
 > **qq-dictation** is QQ's private, Linux-local Handy distribution. It binds
 > each dictation to the Herdr pane where recording started, provides a
-> Right-Control push-to-talk bridge, and suppresses Handy's recording overlay
-> so it cannot raise the desktop panel. See
+> Right-Control push-to-talk bridge, and preserves Handy's native recording and
+> transcribing overlay. See
 > [the local distribution guide](docs/local-distribution.md) for the pinned
 > build and installation contract, and
 > [the project concepts](docs/project-concepts.md) for its QQ-specific
@@ -205,12 +205,12 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
 
 - You can also manage global shortcuts outside of Handy via Unix signals, which lets Wayland window managers or other hotkey daemons keep ownership of keybindings:
 
-  | Signal    | Action                                    | Example                |
-  | --------- | ----------------------------------------- | ---------------------- |
-  | `SIGUSR2` | Toggle transcription                      | `pkill -USR2 -n handy` |
-  | `SIGUSR1` | Toggle transcription with post-processing | `pkill -USR1 -n handy` |
-  | `SIGRTMIN` | Start push-to-talk recording              | `pkill -RTMIN -n handy` |
-  | `SIGRTMIN+1` | Stop push-to-talk and transcribe       | `pkill -RTMIN+1 -n handy` |
+  | Signal       | Action                                    | Example                   |
+  | ------------ | ----------------------------------------- | ------------------------- |
+  | `SIGUSR2`    | Toggle transcription                      | `pkill -USR2 -n handy`    |
+  | `SIGUSR1`    | Toggle transcription with post-processing | `pkill -USR1 -n handy`    |
+  | `SIGRTMIN`   | Start push-to-talk recording              | `pkill -RTMIN -n handy`   |
+  | `SIGRTMIN+1` | Stop push-to-talk and transcribe          | `pkill -RTMIN+1 -n handy` |
 
   Example Sway config:
 

@@ -14,6 +14,15 @@ if ! git -C "$repository_root" diff --quiet \
 fi
 
 mkdir -p "$cache_dir" "$output_dir"
+
+# Change worktrees share the primary checkout's expensive build cache through
+# symlinks. Mount that resolved cache root over /work/.docker-cache so those
+# links do not point outside the container's filesystem.
+container_cache_dir="$cache_dir"
+if [[ -L "${cache_dir}/cargo" ]]; then
+    container_cache_dir="$(dirname "$(readlink -f "${cache_dir}/cargo")")"
+fi
+
 docker build \
     --file "${repository_root}/packaging/Dockerfile" \
     --tag "$builder_image" \
@@ -25,6 +34,7 @@ docker run --rm \
     --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
+    --volume "${container_cache_dir}:/work/.docker-cache" \
     --workdir /work \
     --env HOME=/tmp/qq-builder \
     --env CARGO_HOME=/work/.docker-cache/cargo \
