@@ -4,7 +4,7 @@ title: Restore the native Handy overlay on Cinnamon X11
 status: In Progress
 assignee: []
 created_date: '2026-08-02 03:09'
-updated_date: '2026-08-02 03:30'
+updated_date: '2026-08-02 03:32'
 labels: []
 dependencies: []
 modified_files:
@@ -14,6 +14,7 @@ modified_files:
   - scripts/build-local.sh
   - scripts/install-local.sh
   - src-tauri/src/overlay.rs
+  - src-tauri/src/target_binding.rs
 priority: high
 type: bug
 ordinal: 6000
@@ -54,4 +55,8 @@ Fresh Cinnamon/X11 evidence: the active Ghostty Herdr window was fullscreen. Han
 The first container invocation stopped before compilation because this Change worktree shares cargo, target, and ORT caches through host symlinks whose targets were outside the /work mount. scripts/build-local.sh now detects the shared cargo symlink and mounts its resolved cache root over /work/.docker-cache. This preserves the cache and makes the documented build command work from methodology-required Change worktrees.
 
 Post-install Check against built commit 76fe322: the rebuilt overlay had a new X11 window ID and was viewable during an actual Right-Control recording as NET_WM_WINDOW_TYPE_NOTIFICATION with SKIP_PAGER, SKIP_TASKBAR, and ABOVE. The active Ghostty window remained FULLSCREEN and FOCUSED; a bottom-strip capture showed only fullscreen terminal content and no Cinnamon panel. The bridge then logged the matching release and transcription request. The installer retained the previous AppDir at Handy.AppDir.backup.20260802T032949Z. A stale installer completion sentence that mentioned only the tray was corrected afterward as a packaging-only change; it does not require another native build.
+
+The repository-wide cargo fmt Check also exposed a pre-existing format-only deviation in src-tauri/src/target_binding.rs on origin/main. Because code-quality CI runs the full formatter, this Change applies rustfmt's single-line normalization. It has no semantic or installed-binary effect and therefore does not justify rebuilding Handy.
+
+Prettier likewise normalized the existing README signal table introduced with explicit PTT. This is formatting-only and closes the remaining code-quality gate without changing runtime behavior.
 <!-- SECTION:NOTES:END -->

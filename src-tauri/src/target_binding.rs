@@ -253,11 +253,7 @@ pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
     let text = collapse_newlines(text);
     let herdr = resolve_herdr()?;
     let args = send_text_args(pane_id, &text);
-    let output = run_with_timeout(
-        &herdr,
-        &args,
-        Duration::from_secs(2),
-    )?;
+    let output = run_with_timeout(&herdr, &args, Duration::from_secs(2))?;
     if !output.status.success() {
         return Err(format!(
             "herdr pane send-text failed: {}",

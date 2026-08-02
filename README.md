@@ -205,12 +205,12 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
 
 - You can also manage global shortcuts outside of Handy via Unix signals, which lets Wayland window managers or other hotkey daemons keep ownership of keybindings:
 
-  | Signal    | Action                                    | Example                |
-  | --------- | ----------------------------------------- | ---------------------- |
-  | `SIGUSR2` | Toggle transcription                      | `pkill -USR2 -n handy` |
-  | `SIGUSR1` | Toggle transcription with post-processing | `pkill -USR1 -n handy` |
-  | `SIGRTMIN` | Start push-to-talk recording              | `pkill -RTMIN -n handy` |
-  | `SIGRTMIN+1` | Stop push-to-talk and transcribe       | `pkill -RTMIN+1 -n handy` |
+  | Signal       | Action                                    | Example                   |
+  | ------------ | ----------------------------------------- | ------------------------- |
+  | `SIGUSR2`    | Toggle transcription                      | `pkill -USR2 -n handy`    |
+  | `SIGUSR1`    | Toggle transcription with post-processing | `pkill -USR1 -n handy`    |
+  | `SIGRTMIN`   | Start push-to-talk recording              | `pkill -RTMIN -n handy`   |
+  | `SIGRTMIN+1` | Stop push-to-talk and transcribe          | `pkill -RTMIN+1 -n handy` |
 
   Example Sway config:
 
