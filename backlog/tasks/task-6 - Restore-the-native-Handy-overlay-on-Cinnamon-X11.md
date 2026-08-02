@@ -4,7 +4,7 @@ title: Restore the native Handy overlay on Cinnamon X11
 status: In Progress
 assignee: []
 created_date: '2026-08-02 03:09'
-updated_date: '2026-08-02 03:23'
+updated_date: '2026-08-02 03:30'
 labels: []
 dependencies: []
 modified_files:
@@ -33,7 +33,7 @@ Decision ledger:
 <!-- AC:BEGIN -->
 - [x] #1 The bridge-owned recording indicator is absent from source and the deployed bridge.
 - [x] #2 Handy native overlay is enabled and visibly reports recording and transcribing.
-- [ ] #3 Right-Control dictation does not open or raise the Cinnamon panel.
+- [x] #3 Right-Control dictation does not open or raise the Cinnamon panel.
 - [x] #4 Auto-submit and explicit PTT press/release behavior remain working.
 <!-- AC:END -->
 
@@ -52,4 +52,6 @@ Decision ledger:
 Fresh Cinnamon/X11 evidence: the active Ghostty Herdr window was fullscreen. Handy's hidden native overlay was a non-focusable NORMAL window with no EWMH state, despite the Tauri builder flags. During an operator-confirmed recording, mapping that window raised the bottom panel. A reversible live probe changed only the overlay type to NOTIFICATION; Cinnamon then supplied ABOVE, SKIP_TASKBAR, and SKIP_PAGER. During the next real dictation, the overlay was viewable as NOTIFICATION, Ghostty remained FULLSCREEN and FOCUSED, and a before/during comparison of the bottom 40-pixel strip changed zero pixels. This reproduces the failure and validates the smallest native fix before rebuilding. Host cargo is intentionally absent; the pinned container build is the compile Check.
 
 The first container invocation stopped before compilation because this Change worktree shares cargo, target, and ORT caches through host symlinks whose targets were outside the /work mount. scripts/build-local.sh now detects the shared cargo symlink and mounts its resolved cache root over /work/.docker-cache. This preserves the cache and makes the documented build command work from methodology-required Change worktrees.
+
+Post-install Check against built commit 76fe322: the rebuilt overlay had a new X11 window ID and was viewable during an actual Right-Control recording as NET_WM_WINDOW_TYPE_NOTIFICATION with SKIP_PAGER, SKIP_TASKBAR, and ABOVE. The active Ghostty window remained FULLSCREEN and FOCUSED; a bottom-strip capture showed only fullscreen terminal content and no Cinnamon panel. The bridge then logged the matching release and transcription request. The installer retained the previous AppDir at Handy.AppDir.backup.20260802T032949Z. A stale installer completion sentence that mentioned only the tray was corrected afterward as a packaging-only change; it does not require another native build.
 <!-- SECTION:NOTES:END -->

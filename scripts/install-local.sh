@@ -100,4 +100,4 @@ if [[ "$actual_executable" != "$expected_executable" ]]; then
 fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
-printf 'The right-Control bridge is active; recording state remains available in the tray.\n'
+printf "The right-Control bridge and Handy's native recording overlay are active.\n"
