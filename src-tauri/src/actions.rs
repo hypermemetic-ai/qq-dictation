@@ -187,7 +187,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     // - custom: top-level reasoning_effort (works for local OpenAI-compat servers)
     // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
     //   out of the response so it can't pollute structured-output JSON parsing
+    // - cerebras: gpt-oss-120b defaults to medium reasoning; "low" matches the
+    //   Stage 0 smoke configuration (p50 245ms) and keeps the 3s timeout safe
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
+        "cerebras" => (Some("low".to_string()), None),
         "custom" => (Some("none".to_string()), None),
         "openrouter" => (
             None,
