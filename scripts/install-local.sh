@@ -63,7 +63,7 @@ from pathlib import Path
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 settings = data.setdefault("settings", {})
-settings["overlay_style"] = "minimal"
+settings["overlay_style"] = "none"
 settings["update_checks_enabled"] = False
 settings["post_process_enabled"] = False
 settings["herdr_binding_enabled"] = True

@@ -252,10 +252,10 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
 pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
     let text = collapse_newlines(text);
     let herdr = resolve_herdr()?;
-    // `--` guards transcriptions that start with a dash from clap's flag parser.
+    let args = send_text_args(pane_id, &text);
     let output = run_with_timeout(
         &herdr,
-        &["pane", "send-text", pane_id, "--", &text],
+        &args,
         Duration::from_secs(2),
     )?;
     if !output.status.success() {
@@ -265,6 +265,13 @@ pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_text_args<'a>(pane_id: &'a str, text: &'a str) -> [&'a str; 4] {
+    // Herdr accepts leading dashes in the TEXT positional directly. Supplying
+    // a standalone `--` after PANE_ID makes it literal transcript content.
+    ["pane", "send-text", pane_id, text]
 }
 
 /// Sends Enter to the pane (auto-submit on the herdr path). Enter is the
@@ -363,6 +370,15 @@ mod tests {
         assert_eq!(collapse_newlines("hello\nworld"), "hello world");
         assert_eq!(collapse_newlines("a\r\nb\nc"), "a  b c");
         assert_eq!(collapse_newlines("no newlines"), "no newlines");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn send_text_args_do_not_inject_an_option_terminator() {
+        assert_eq!(
+            send_text_args("wM:p8P", "-leading dash is valid text"),
+            ["pane", "send-text", "wM:p8P", "-leading dash is valid text"]
+        );
     }
 
     /// Single test for all map behavior: the map is process-global and tests
