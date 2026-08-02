@@ -21,6 +21,9 @@ use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel, S
 use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 #[cfg(target_os = "linux")]
+use gtk::prelude::GtkWindowExt;
+
+#[cfg(target_os = "linux")]
 use std::env;
 
 #[cfg(target_os = "macos")]
@@ -135,6 +138,16 @@ fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool 
         return true;
     }
     false
+}
+
+/// Configures the regular GTK fallback as an overlay rather than an application
+/// window. On X11, a normal always-on-top window makes Cinnamon raise its panel
+/// over fullscreen applications when the recording overlay is shown.
+#[cfg(target_os = "linux")]
+fn configure_gtk_fallback_overlay(overlay_window: &tauri::webview::WebviewWindow) {
+    if let Ok(gtk_window) = overlay_window.gtk_window() {
+        gtk_window.set_type_hint(gtk::gdk::WindowTypeHint::Notification);
+    }
 }
 
 /// Forces a window to be topmost using Win32 API (Windows only)
@@ -408,7 +421,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
                 if init_gtk_layer_shell(&window) {
                     debug!("GTK layer shell initialized for overlay window");
                 } else {
-                    debug!("GTK layer shell not available, falling back to regular window");
+                    configure_gtk_fallback_overlay(&window);
+                    debug!("GTK layer shell not available, using notification-window fallback");
                 }
             }
 

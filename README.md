@@ -2,8 +2,8 @@
 
 > **qq-dictation** is QQ's private, Linux-local Handy distribution. It binds
 > each dictation to the Herdr pane where recording started, provides a
-> Right-Control push-to-talk bridge, and suppresses Handy's recording overlay
-> so it cannot raise the desktop panel. See
+> Right-Control push-to-talk bridge, and preserves Handy's native recording and
+> transcribing overlay. See
 > [the local distribution guide](docs/local-distribution.md) for the pinned
 > build and installation contract, and
 > [the project concepts](docs/project-concepts.md) for its QQ-specific

@@ -38,10 +38,10 @@ Installation writes only to the current user's directories:
 Existing Handy app data—settings, ASR models, history, and logs—is not replaced.
 The installer backs up any launcher, bridge, service, settings file, or prior
 qq-dictation AppDir that it supersedes. It enables Herdr target binding and
-push-to-talk, disables API post-processing and the recording overlay, and
-disables upstream update checks so a stock release cannot replace the tracked
-local build. Updates to qq-dictation are built and installed explicitly from
-Git.
+push-to-talk, disables API post-processing, enables the native minimal overlay,
+and disables upstream update checks so a stock release cannot replace the
+tracked local build. Updates to qq-dictation are built and installed explicitly
+from Git.
 
 ## Runtime policy
 
@@ -63,12 +63,13 @@ cannot invert the next release into a recording start.
 
 ## Recording state
 
-The installer disables Handy's recording overlay. On this Cinnamon/X11 host,
-GTK layer-shell is unavailable and the overlay otherwise becomes a normal
-bottom-of-screen window that raises the desktop panel. Handy's tray icon still
-reports idle, recording, and transcribing state. The Right-Control bridge draws
-its own small X11 recording badge as an override-redirect window, so recording
-remains visible without creating a taskbar entry or taking focus.
+The installer enables Handy's native minimal overlay for recording and
+transcribing state. On this Cinnamon/X11 host, GTK layer-shell is installed but
+unsupported because layer-shell is a Wayland protocol; Handy therefore uses its
+transparent Tauri window with a GTK notification-window hint. Cinnamon can keep
+that non-focusable, always-on-top overlay above fullscreen applications without
+treating it as a normal application window and raising the desktop panel. The
+Right-Control bridge does not draw a second indicator.
 
 The installer also enables auto-submit. Herdr-bound transcripts are followed by
 Enter in their captured pane after successful delivery.
