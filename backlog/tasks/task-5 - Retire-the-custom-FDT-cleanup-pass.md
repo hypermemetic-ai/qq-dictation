@@ -1,10 +1,10 @@
 ---
 id: TASK-5
 title: Retire the custom FDT cleanup pass
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-01 18:25'
-updated_date: '2026-08-02 02:55'
+updated_date: '2026-08-02 02:56'
 labels: []
 dependencies: []
 modified_files:
@@ -46,7 +46,7 @@ Decision ledger:
 - [x] #2 Herdr pane capture/delivery remains intact, and Right-Control PTT cannot invert when an input arrives while transcription is processing.
 - [x] #3 The reproducible local build contains no FDT model and starts without attempting to load one.
 - [x] #4 The installed runtime uses Whisper Large v3 Turbo with post-processing disabled.
-- [ ] #5 Installed UAT produces unprefixed text without raising the desktop panel and remains synchronized across a press during processing.
+- [x] #5 Installed UAT produces unprefixed text without raising the desktop panel and remains synchronized across a press during processing.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,4 +69,12 @@ Installed-runtime UAT exposed two delivery UX defects. Saved raw Turbo transcrip
 Runtime UAT then exposed a PTT state-inversion defect. At 02:15:09 Handy ignored a SIGUSR2 press while the first Turbo transcription was still Processing; the bridge still emitted its release as the same toggle at 02:15:11, which started a recording. Later press/release pairs stayed inverted, produced zero-sample recordings, and the final release left Handy recording indefinitely. The fix preserves SIGUSR1/SIGUSR2 toggle compatibility but adds Linux SIGRTMIN press and SIGRTMIN+1 release inputs routed through the coordinator’s existing push-to-talk semantics. A release from Idle or Processing is therefore harmless. The bridge now uses these explicit signals.
 
 Operator clarified that auto-submit and a visible recording indicator are required. These are packaging/runtime concerns, not Handy-binary changes: installation now enforces auto_submit=true, and the Python PTT bridge owns a small override-redirect X11 recording badge while Handy’s compositor-sensitive overlay remains disabled. The bridge and settings were deployed directly and Handy restarted; no AppDir rebuild was performed for these changes.
+
+Final operator UAT passed: the override-redirect recording badge appeared during Right-Control hold, the transcript arrived without a prefix, and auto-submit sent the message on release. The explicit-release path had already remained harmless after the pipeline returned to Idle, proving the prior toggle inversion is gone.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Retired the custom FDT second pass and installed Whisper Large v3 Turbo as the sole ASR pass with API post-processing disabled. Preserved Herdr-pane delivery, corrected the literal `--` prefix, replaced toggle-based Right-Control control with explicit PTT press/release signals, kept Handy’s taskbar-raising overlay disabled, restored a bridge-owned recording badge, and enabled auto-submit. Final operator UAT confirmed the badge and automatic sending.
+<!-- SECTION:FINAL_SUMMARY:END -->
