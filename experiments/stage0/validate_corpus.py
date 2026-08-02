@@ -33,6 +33,17 @@ REQUIRED_FIELDS = {"id", "category", "input", "must_keep", "must_drop", "expect"
 VALID_EXPECTATIONS = {"cleanup", "keep_both", "no_injection"}
 
 
+def span_present(text: str, span: str) -> bool:
+    """Case-insensitive literal span check with boundaries for alphanumeric edges.
+
+    Mirrors score_stage0.span_present; keep the two implementations identical.
+    """
+    escaped = re.escape(span)
+    prefix = r"(?<!\w)" if span[0].isalnum() else ""
+    suffix = r"(?!\w)" if span[-1].isalnum() else ""
+    return re.search(prefix + escaped + suffix, text, flags=re.IGNORECASE) is not None
+
+
 def load_and_validate(path: Path) -> list[dict[str, Any]]:
     """Return validated items, or raise ValueError with all discovered issues."""
     errors: list[str] = []
@@ -109,6 +120,18 @@ def load_and_validate(path: Path) -> list[dict[str, Any]]:
             errors.append(
                 f"line {line_number}: expect must be one of {sorted(VALID_EXPECTATIONS)}"
             )
+
+        keep_spans = item.get("must_keep")
+        drop_spans = item.get("must_drop")
+        if isinstance(keep_spans, list) and isinstance(drop_spans, list):
+            for keep_span in keep_spans:
+                for drop_span in drop_spans:
+                    if isinstance(keep_span, str) and isinstance(drop_span, str):
+                        if span_present(keep_span, drop_span):
+                            errors.append(
+                                f"line {line_number}: must_drop {drop_span!r} collides with "
+                                f"must_keep {keep_span!r} (a faithful output would always trip it)"
+                            )
         items.append(item)
 
     if not 96 <= len(items) <= 120:

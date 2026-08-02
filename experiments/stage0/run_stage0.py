@@ -23,7 +23,12 @@ HERE = Path(__file__).resolve().parent
 ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\ufeff]")
 SCHEMA = {
     "type": "object",
-    "properties": {"transcription": {"type": "string"}},
+    "properties": {
+        "transcription": {
+            "type": "string",
+            "description": "The cleaned and processed transcription text",
+        }
+    },
     "required": ["transcription"],
     "additionalProperties": False,
 }
