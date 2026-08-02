@@ -29,8 +29,12 @@ docker build \
     "${repository_root}/packaging"
 
 docker run --rm \
-    --memory 5g \
-    --memory-swap 5g \
+    # The 5g default protects the host desktop during builds (TASK-3). Newer
+    # toolchain images can need more for ggml-vulkan's heaviest translation
+    # units; override with QQ_BUILD_MEM=8g (applies to both memory and
+    # memory-swap) without editing this script.
+    --memory "${QQ_BUILD_MEM:-5g}" \
+    --memory-swap "${QQ_BUILD_MEM:-5g}" \
     --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
