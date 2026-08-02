@@ -44,6 +44,21 @@ enum Stage {
     Processing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PttLifecycleAction {
+    Start,
+    Stop,
+    Ignore,
+}
+
+fn classify_ptt_lifecycle(stage: &Stage, binding_id: &str, is_pressed: bool) -> PttLifecycleAction {
+    match (stage, is_pressed) {
+        (Stage::Idle, true) => PttLifecycleAction::Start,
+        (Stage::Recording(id), false) if id == binding_id => PttLifecycleAction::Stop,
+        _ => PttLifecycleAction::Ignore,
+    }
+}
+
 fn classify_ptt_event(
     pending_release_binding: Option<&str>,
     is_pressed: bool,
@@ -167,12 +182,14 @@ impl TranscriptionCoordinator {
                             }
 
                             if push_to_talk {
-                                if is_pressed && matches!(stage, Stage::Idle) {
-                                    start(&app, &mut stage, &binding_id, &hotkey_string);
-                                } else if !is_pressed
-                                    && matches!(&stage, Stage::Recording(id) if id == &binding_id)
-                                {
-                                    stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                match classify_ptt_lifecycle(&stage, &binding_id, is_pressed) {
+                                    PttLifecycleAction::Start => {
+                                        start(&app, &mut stage, &binding_id, &hotkey_string)
+                                    }
+                                    PttLifecycleAction::Stop => {
+                                        stop(&app, &mut stage, &binding_id, &hotkey_string)
+                                    }
+                                    PttLifecycleAction::Ignore => {}
                                 }
                             } else if is_pressed {
                                 match &stage {
@@ -344,6 +361,27 @@ mod tests {
         assert_eq!(
             classify_ptt_event(Some("transcribe"), true, true, "transcribe", None),
             PttAction::CancelRelease
+        );
+    }
+
+    #[test]
+    fn ptt_press_and_release_are_both_harmless_while_processing() {
+        let stage = Stage::Processing;
+        assert_eq!(
+            classify_ptt_lifecycle(&stage, "transcribe", true),
+            PttLifecycleAction::Ignore
+        );
+        assert_eq!(
+            classify_ptt_lifecycle(&stage, "transcribe", false),
+            PttLifecycleAction::Ignore
+        );
+    }
+
+    #[test]
+    fn ptt_release_cannot_start_a_recording_from_idle() {
+        assert_eq!(
+            classify_ptt_lifecycle(&Stage::Idle, "transcribe", false),
+            PttLifecycleAction::Ignore
         );
     }
 

@@ -68,6 +68,7 @@ settings["update_checks_enabled"] = False
 settings["post_process_enabled"] = False
 settings["herdr_binding_enabled"] = True
 settings["push_to_talk"] = True
+settings["auto_submit"] = True
 temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 os.replace(temporary, path)
@@ -99,4 +100,4 @@ if [[ "$actual_executable" != "$expected_executable" ]]; then
 fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
-printf 'The right-Control bridge and native minimal recording overlay are active.\n'
+printf 'The right-Control bridge is active; recording state remains available in the tray.\n'

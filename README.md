@@ -209,6 +209,8 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
   | --------- | ----------------------------------------- | ---------------------- |
   | `SIGUSR2` | Toggle transcription                      | `pkill -USR2 -n handy` |
   | `SIGUSR1` | Toggle transcription with post-processing | `pkill -USR1 -n handy` |
+  | `SIGRTMIN` | Start push-to-talk recording              | `pkill -RTMIN -n handy` |
+  | `SIGRTMIN+1` | Stop push-to-talk and transcribe       | `pkill -RTMIN+1 -n handy` |
 
   Example Sway config:
 
@@ -218,6 +220,9 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
   ```
 
   `pkill` here simply delivers the signal—it does not terminate the process.
+  The qq-dictation Right-Control bridge uses the two realtime signals so a
+  press ignored while another transcript is finishing cannot turn its release
+  into a new recording.
 
 **Overlay & Pasting Issues (Linux):**
 

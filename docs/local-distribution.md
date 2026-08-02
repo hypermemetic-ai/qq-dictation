@@ -56,9 +56,19 @@ Non-Herdr recordings retain Handy's focus-based insertion behavior. Identified
 Herdr capture or delivery failures fail closed rather than typing into whichever
 application happens to be focused.
 
+The Right-Control bridge sends separate realtime signals for PTT press
+(`SIGRTMIN`) and release (`SIGRTMIN+1`). It does not use Handy's toggle signal:
+an ignored press while a previous transcript is still processing therefore
+cannot invert the next release into a recording start.
+
 ## Recording state
 
 The installer disables Handy's recording overlay. On this Cinnamon/X11 host,
 GTK layer-shell is unavailable and the overlay otherwise becomes a normal
 bottom-of-screen window that raises the desktop panel. Handy's tray icon still
-reports idle, recording, and transcribing state.
+reports idle, recording, and transcribing state. The Right-Control bridge draws
+its own small X11 recording badge as an override-redirect window, so recording
+remains visible without creating a taskbar entry or taking focus.
+
+The installer also enables auto-submit. Herdr-bound transcripts are followed by
+Enter in their captured pane after successful delivery.

@@ -8,11 +8,79 @@ import sys
 import time
 from pathlib import Path
 
-from Xlib import X, XK, display, error
+from Xlib import X, XK, Xatom, Xutil, display, error
 
 
 HANDY = str(Path.home() / ".local" / "bin" / "handy")
 KEYSYM = "Control_R"
+PTT_START_SIGNAL = signal.SIGRTMIN
+PTT_STOP_SIGNAL = signal.SIGRTMIN + 1
+
+
+class RecordingIndicator:
+    """Small X11 recording badge that never becomes a managed taskbar window."""
+
+    WIDTH = 220
+    HEIGHT = 48
+    BOTTOM_MARGIN = 76
+
+    def __init__(self, dpy):
+        self.dpy = dpy
+        screen = dpy.screen()
+        colormap = screen.default_colormap
+        self.background = colormap.alloc_named_color("#202124").pixel
+        self.foreground = colormap.alloc_named_color("#f1f3f4").pixel
+        self.recording = colormap.alloc_named_color("#ef4444").pixel
+        x = max(0, (screen.width_in_pixels - self.WIDTH) // 2)
+        y = max(0, screen.height_in_pixels - self.HEIGHT - self.BOTTOM_MARGIN)
+        self.window = screen.root.create_window(
+            x,
+            y,
+            self.WIDTH,
+            self.HEIGHT,
+            0,
+            X.CopyFromParent,
+            X.InputOutput,
+            X.CopyFromParent,
+            background_pixel=self.background,
+            override_redirect=True,
+            save_under=True,
+            event_mask=X.ExposureMask,
+        )
+        self.window.set_wm_name("qq-dictation recording")
+        self.window.set_wm_hints(flags=Xutil.InputHint, input=0)
+        window_type = dpy.intern_atom("_NET_WM_WINDOW_TYPE")
+        notification_type = dpy.intern_atom("_NET_WM_WINDOW_TYPE_NOTIFICATION")
+        self.window.change_property(window_type, Xatom.ATOM, 32, [notification_type])
+        self.font = dpy.open_font("fixed")
+        self.gc = self.window.create_gc(
+            foreground=self.foreground,
+            background=self.background,
+            font=self.font,
+        )
+
+    def redraw(self):
+        self.window.fill_rectangle(
+            self.gc,
+            0,
+            0,
+            self.WIDTH,
+            self.HEIGHT,
+        )
+        self.gc.change(foreground=self.recording)
+        self.window.fill_arc(self.gc, 18, 15, 18, 18, 0, 360 * 64)
+        self.gc.change(foreground=self.foreground)
+        self.window.draw_text(self.gc, 52, 30, "Recording - release to send")
+
+    def show(self):
+        self.window.map()
+        self.window.configure(stack_mode=X.Above)
+        self.redraw()
+        self.dpy.sync()
+
+    def hide(self):
+        self.window.unmap()
+        self.dpy.sync()
 
 
 def log(message):
@@ -58,22 +126,23 @@ def ensure_handy():
     return None
 
 
-def toggle_handy():
+def signal_handy(handy_signal, action):
     pid = ensure_handy()
     if pid is None:
         log("ERROR: Handy did not become ready")
         return False
     try:
-        os.kill(pid, signal.SIGUSR2)
+        os.kill(pid, handy_signal)
         return True
     except ProcessLookupError:
-        log("ERROR: Handy exited before it could be toggled")
+        log(f"ERROR: Handy exited before it could {action}")
         return False
 
 
 def main():
     dpy = display.Display()
     root = dpy.screen().root
+    indicator = RecordingIndicator(dpy)
     keycode = dpy.keysym_to_keycode(XK.string_to_keysym(KEYSYM))
     if keycode == 0:
         log(f"FATAL: {KEYSYM} is not present in the active X11 keymap")
@@ -104,6 +173,9 @@ def main():
 
     while True:
         event = next_event()
+        if event.type == X.Expose and event.window == indicator.window:
+            indicator.redraw()
+            continue
         if event.type not in (X.KeyPress, X.KeyRelease):
             continue
         if event.detail != keycode:
@@ -111,8 +183,9 @@ def main():
 
         if event.type == X.KeyPress:
             if not holding:
-                holding = toggle_handy()
+                holding = signal_handy(PTT_START_SIGNAL, "start recording")
                 if holding:
+                    indicator.show()
                     log("recording started")
             continue
 
@@ -128,7 +201,8 @@ def main():
             buffered.insert(0, following)
 
         if holding:
-            if toggle_handy():
+            indicator.hide()
+            if signal_handy(PTT_STOP_SIGNAL, "stop recording"):
                 log("recording stopped; transcription requested")
             holding = False
 
