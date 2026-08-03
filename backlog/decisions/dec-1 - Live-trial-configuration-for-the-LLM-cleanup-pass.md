@@ -29,18 +29,21 @@ next to the settings file):
 - `reasoning_effort=low` for Cerebras (source: PR #16), matching the smoke
   configuration.
 - PTT routes through post-processing when the setting is on (source: PR #17).
-- ASR model: **stays on Q8_0.** A Q4_K_M swap was tried on 2026-08-02 and
-  reverted the same day after an on-host A/B (transcribe-bench, Vulkan,
-  flash, 6 real dictations 2.7s–53.8s): Q4_K_M was *slower* everywhere
-  (0.82x overall, 0.64x on the 53.8s clip). RADV/Vulkan has an optimized
-  path for Q8_0's simple int8 blocks, while K-quant dequantization overhead
-  exceeds the bandwidth savings on this backend. Word-level output was
-  nearly identical (one disagreement in six clips, otherwise punctuation
-  cadence only). The vendor WER table (equal WER across quants, measured on
-  CUDA/L4) did not predict RADV speed. Re-test on the RX 6400 (TASK-9),
-  where bandwidth is plentiful and the tradeoff may flip; the Q4_K_M file
-  remains in the HF cache, and the bench harness used for the A/B is the
-  same one TASK-9 will use.
+- ASR model: **Parakeet Unified EN 0.6B (Q8_0)** as of 2026-08-02. A bench
+  sweep on six real dictations showed it ~5x faster than whisper turbo Q8_0
+  with no word-level losses (its verbatim filler retention is absorbed by
+  the cleanup pass), and it corrected one real turbo mishearing
+  ("merged", not "emerged"). small.en was measured at 2.65x but dropped
+  with a real name error ("V3" -> "P3"). Q4_K_M whisper was tried and
+  reverted (0.82x — K-quant dequant overhead exceeds RADV bandwidth
+  savings). Re-bench on the RX 6400 (TASK-9) with the same harness.
+- Prompt: extended arm updated for the parakeet era — rule 4 now always
+  drops empty hesitation markers but protects stance openers (yes/no/
+  yeah-as-agreement); new rule 5 clause normalizes colloquial contractions
+  (gonna -> going to) per operator preference for the more formal output.
+- Ops note: pre-seeding a model into Handy's HF cache requires the real
+  repo revision and a refs/main file with NO trailing newline (hf-hub
+  resolves refs literally); a fabricated snapshot dir fails is_downloaded.
 
 ## Consequences
 
