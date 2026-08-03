@@ -29,12 +29,18 @@ next to the settings file):
 - `reasoning_effort=low` for Cerebras (source: PR #16), matching the smoke
   configuration.
 - PTT routes through post-processing when the setting is on (source: PR #17).
-- ASR model swapped from Q8_0 to **Q4_K_M**
-  (`handy-computer/whisper-large-v3-turbo-gguf`): identical 2.00%
-  LibriSpeech WER across all quants in the model card, 40% fewer bytes on a
-  bandwidth-bound iGPU. Revert = restore the Q8_0 `selected_model` string.
-  Re-evaluate Q4 vs Q8 on the RX 6400 (TASK-9) — the tradeoff shifts when
-  bandwidth is plentiful.
+- ASR model: **stays on Q8_0.** A Q4_K_M swap was tried on 2026-08-02 and
+  reverted the same day after an on-host A/B (transcribe-bench, Vulkan,
+  flash, 6 real dictations 2.7s–53.8s): Q4_K_M was *slower* everywhere
+  (0.82x overall, 0.64x on the 53.8s clip). RADV/Vulkan has an optimized
+  path for Q8_0's simple int8 blocks, while K-quant dequantization overhead
+  exceeds the bandwidth savings on this backend. Word-level output was
+  nearly identical (one disagreement in six clips, otherwise punctuation
+  cadence only). The vendor WER table (equal WER across quants, measured on
+  CUDA/L4) did not predict RADV speed. Re-test on the RX 6400 (TASK-9),
+  where bandwidth is plentiful and the tradeoff may flip; the Q4_K_M file
+  remains in the HF cache, and the bench harness used for the A/B is the
+  same one TASK-9 will use.
 
 ## Consequences
 
