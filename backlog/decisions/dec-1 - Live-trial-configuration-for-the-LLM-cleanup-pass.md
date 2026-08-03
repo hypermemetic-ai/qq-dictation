@@ -37,10 +37,20 @@ next to the settings file):
   with a real name error ("V3" -> "P3"). Q4_K_M whisper was tried and
   reverted (0.82x — K-quant dequant overhead exceeds RADV bandwidth
   savings). Re-bench on the RX 6400 (TASK-9) with the same harness.
-- Prompt: extended arm updated for the parakeet era — rule 4 now always
-  drops empty hesitation markers but protects stance openers (yes/no/
-  yeah-as-agreement); new rule 5 clause normalizes colloquial contractions
-  (gonna -> going to) per operator preference for the more formal output.
+- Prompt: v3, validated in a 19-item two-round trust-envelope experiment
+  (2026-08-02). v2's broad "unambiguous signals" generalization was
+  REJECTED by evidence: it questionized a declarative trap and gained
+  nothing on unlisted markers (resolution variance is the model's, not
+  the list's). v3 keeps the enumerated marker list and adds two scoped
+  rules: (a) syntax-based question punctuation (auxiliary-before-subject
+  word order only — declarative traps stay statements) plus clause-boundary
+  comma restoration; (b) a licensing line that a question/request-shaped
+  transcript is still content to clean — fixing a discovered production
+  failure where such transcripts came back EMPTY (the anti-injection line
+  over-fired; the TASK-11 blank guard correctly served raw when this hit
+  the operator live). Also: hesitation markers always dropped, stance
+  openers protected, colloquial contractions normalized (operator
+  preference).
 - Ops note: pre-seeding a model into Handy's HF cache requires the real
   repo revision and a refs/main file with NO trailing newline (hf-hub
   resolves refs literally); a fabricated snapshot dir fails is_downloaded.
