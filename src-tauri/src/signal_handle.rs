@@ -44,9 +44,30 @@ pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str)
 }
 
 #[cfg(target_os = "linux")]
+fn ptt_binding_id(post_process_enabled: bool) -> &'static str {
+    if post_process_enabled {
+        "transcribe_with_post_process"
+    } else {
+        "transcribe"
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
-        c.send_input("transcribe", source, is_pressed, true);
+        // PTT follows the post-processing setting: enabled routes hold-to-talk
+        // through the cleanup pass, disabled keeps raw transcription. Settings
+        // are read per press so the toggle takes effect immediately — it is
+        // the single switch for every dictation path (SIGUSR1/2 hardcode their
+        // actions; the keyboard bindings are user-configurable).
+        let post_process_enabled =
+            crate::settings::load_or_create_app_settings(app).post_process_enabled;
+        c.send_input(
+            ptt_binding_id(post_process_enabled),
+            source,
+            is_pressed,
+            true,
+        );
     } else {
         warn!("TranscriptionCoordinator not initialized");
     }
@@ -105,5 +126,11 @@ mod tests {
         assert_eq!(ptt_stop_signal(), libc::SIGRTMIN() + 1);
         assert_ne!(ptt_start_signal(), ptt_stop_signal());
         assert!(ptt_stop_signal() <= libc::SIGRTMAX());
+    }
+
+    #[test]
+    fn ptt_binding_follows_post_process_setting() {
+        assert_eq!(ptt_binding_id(true), "transcribe_with_post_process");
+        assert_eq!(ptt_binding_id(false), "transcribe");
     }
 }
