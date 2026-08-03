@@ -1,9 +1,10 @@
 ---
 id: TASK-12
 title: Route push-to-talk through post-processing when enabled
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-03 00:46'
+updated_date: '2026-08-03 01:26'
 labels: []
 dependencies: []
 priority: high

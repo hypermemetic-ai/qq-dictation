@@ -1,9 +1,10 @@
 ---
 id: TASK-11
 title: Enable the Cerebras cleanup trial safely in Handy
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-02 16:58'
+updated_date: '2026-08-03 01:26'
 labels: []
 dependencies: []
 priority: high
