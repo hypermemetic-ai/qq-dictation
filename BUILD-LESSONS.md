@@ -66,6 +66,18 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Source:** PR #15 and commit `4ac0015`.
 
+## 2026-08-05 — The build script could not reach Docker after `sudo -v`
+
+**Stage:** final clean release build, before the builder image ran.
+
+**Observed failure:** `sudo -v` succeeded, but `scripts/build-local.sh` invokes plain `docker`. The current operator account does not have direct access to `/var/run/docker.sock`, so Docker failed with `permission denied while trying to connect to the docker API`.
+
+**Cause:** Caching sudo authorization does not change the permissions of a later unprivileged `docker` process. Running the entire build script under sudo is not an equivalent repair because the script derives the container UID/GID from its caller and would produce root-owned worktree outputs.
+
+**Safeguard:** Keep the build script under the operator’s normal UID and narrowly wrap only its `docker` executable as `sudo /usr/bin/docker` for this host. Do not sudo the whole script and do not change Docker group membership as part of a release build.
+
+**Green evidence:** The script completes through its final artifact checks, the embedded commit matches the clean source HEAD, and all generated worktree artifacts remain owned by the operator.
+
 ## 2026-08-05 — Git worktree metadata was outside the container mount
 
 **Stage:** owner verification after container-side rustfmt, before compilation.
