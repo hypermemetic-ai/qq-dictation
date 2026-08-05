@@ -753,6 +753,10 @@ impl ShortcutAction for TranscribeAction {
                     // Save WAV concurrently with transcription
                     let sample_count = samples.len();
                     let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
+                    // Register before publishing the file. Orphan cleanup holds
+                    // the same registry lock while scanning, so it cannot
+                    // mistake this in-flight recording for an abandoned WAV.
+                    let _pending_audio_guard = hm.protect_pending_audio_file(&file_name);
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
                     let samples_for_wav = samples.clone();

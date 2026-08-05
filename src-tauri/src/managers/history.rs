@@ -5,9 +5,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
@@ -98,10 +101,25 @@ pub struct HistoryEntry {
     pub audio_available: bool,
 }
 
+pub(crate) struct PendingAudioGuard<'a> {
+    pending_audio_files: &'a Mutex<HashSet<OsString>>,
+    file_name: OsString,
+}
+
+impl Drop for PendingAudioGuard<'_> {
+    fn drop(&mut self) {
+        self.pending_audio_files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.file_name);
+    }
+}
+
 pub struct HistoryManager {
     app_handle: AppHandle,
     recordings_dir: PathBuf,
     db_path: PathBuf,
+    pending_audio_files: Mutex<HashSet<OsString>>,
 }
 
 impl HistoryManager {
@@ -121,6 +139,7 @@ impl HistoryManager {
             app_handle: app_handle.clone(),
             recordings_dir,
             db_path,
+            pending_audio_files: Mutex::new(HashSet::new()),
         };
 
         // Initialize database, migrate and reconcile in place, then enforce the
@@ -283,22 +302,147 @@ impl HistoryManager {
         Ok(())
     }
 
-    fn cleanup_tolerating_filesystem_error(&self, context: &str) -> Result<()> {
-        match self.cleanup_old_entries() {
-            Ok(()) => Ok(()),
-            Err(cleanup_error)
-                if cleanup_error
-                    .downcast_ref::<CleanupFilesystemError>()
-                    .is_some() =>
-            {
-                error!(
-                    "History cleanup could not remove retained audio during {}: {}. Cleanup will retry later.",
-                    context, cleanup_error
-                );
-                Ok(())
-            }
-            Err(cleanup_error) => Err(cleanup_error),
+    pub(crate) fn protect_pending_audio_file(&self, file_name: &str) -> PendingAudioGuard<'_> {
+        let file_name = OsString::from(file_name);
+        self.pending_audio_files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(file_name.clone());
+        PendingAudioGuard {
+            pending_audio_files: &self.pending_audio_files,
+            file_name,
         }
+    }
+
+    fn cleanup_orphaned_wav_files_with_conn(
+        conn: &Connection,
+        recordings_dir: &Path,
+        pending_audio_files: &Mutex<HashSet<OsString>>,
+    ) -> Result<()> {
+        // Registration uses the same lock before publishing a WAV, so a scan
+        // can never observe a new file without also observing its pending name.
+        let pending_audio_files = pending_audio_files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stmt = conn.prepare("SELECT file_name FROM transcription_history")?;
+        let tracked_files = stmt
+            .query_map([], |row| row.get::<_, String>(0).map(OsString::from))?
+            .collect::<std::result::Result<HashSet<_>, _>>()?;
+        drop(stmt);
+
+        let directory_entries = fs::read_dir(recordings_dir).map_err(|error| {
+            anyhow!(CleanupFilesystemError {
+                failures: vec![format!("{}: {}", recordings_dir.display(), error)],
+            })
+        })?;
+        let mut failures = Vec::new();
+
+        for entry_result in directory_entries {
+            let entry = match entry_result {
+                Ok(entry) => entry,
+                Err(error) => {
+                    failures.push(format!("{}: {}", recordings_dir.display(), error));
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    failures.push(format!("{}: {}", entry.path().display(), error));
+                    continue;
+                }
+            };
+            if !file_type.is_file()
+                || tracked_files.contains(&entry.file_name())
+                || pending_audio_files.contains(&entry.file_name())
+            {
+                continue;
+            }
+
+            let is_wav = entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"));
+            if !is_wav {
+                continue;
+            }
+
+            // Recheck immediately before unlinking in case another SQLite
+            // connection committed a row after the initial query snapshot.
+            let tracked_now = entry
+                .file_name()
+                .to_str()
+                .map(|file_name| {
+                    conn.query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM transcription_history WHERE file_name = ?1
+                         )",
+                        params![file_name],
+                        |row| row.get::<_, bool>(0),
+                    )
+                })
+                .transpose()?
+                .unwrap_or(false);
+            if tracked_now {
+                continue;
+            }
+
+            match fs::remove_file(entry.path()) {
+                Ok(()) => debug!("Deleted untracked WAV file: {}", entry.path().display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    error!(
+                        "Failed to delete untracked WAV file {}: {}",
+                        entry.path().display(),
+                        error
+                    );
+                    failures.push(format!("{}: {}", entry.path().display(), error));
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(CleanupFilesystemError { failures }))
+        }
+    }
+
+    fn cleanup_tolerating_filesystem_error(&self, context: &str) -> Result<()> {
+        let conn = self.get_connection()?;
+        let mut filesystem_failures = Vec::new();
+        let mut collect_cleanup_result = |result: Result<()>| -> Result<()> {
+            match result {
+                Ok(()) => Ok(()),
+                Err(cleanup_error) => match cleanup_error.downcast::<CleanupFilesystemError>() {
+                    Ok(cleanup_error) => {
+                        filesystem_failures.extend(cleanup_error.failures);
+                        Ok(())
+                    }
+                    Err(cleanup_error) => Err(cleanup_error),
+                },
+            }
+        };
+
+        collect_cleanup_result(Self::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            &self.recordings_dir,
+            &self.pending_audio_files,
+        ))?;
+        collect_cleanup_result(self.cleanup_old_entries())?;
+
+        if !filesystem_failures.is_empty() {
+            let cleanup_error = CleanupFilesystemError {
+                failures: filesystem_failures,
+            };
+            error!(
+                "History cleanup could not remove retained audio during {}: {}. Cleanup will retry later.",
+                context, cleanup_error
+            );
+        }
+
+        Ok(())
     }
 
     fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
@@ -1175,6 +1319,126 @@ mod tests {
             recordings_dir,
             "../synthetic-present.wav"
         ));
+    }
+
+    #[test]
+    fn orphan_cleanup_removes_only_untracked_regular_wav_files() {
+        let conn = setup_conn();
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let recordings_dir = temp_dir.path();
+        let tracked_id = insert_pair(&conn, Some(recordings_dir), 1);
+        let tracked_file = HistoryManager::get_entry_by_id_with_conn(&conn, tracked_id)
+            .expect("read tracked row")
+            .expect("tracked row exists")
+            .file_name;
+        let orphan = recordings_dir.join("synthetic-orphan.WAV");
+        let non_wav = recordings_dir.join("synthetic-note.txt");
+        let wav_directory = recordings_dir.join("synthetic-directory.wav");
+        fs::write(&orphan, b"synthetic orphan audio").expect("write orphan WAV");
+        fs::write(&non_wav, b"synthetic note").expect("write non-WAV file");
+        fs::create_dir(&wav_directory).expect("create WAV-named directory");
+
+        #[cfg(unix)]
+        let wav_symlink = {
+            let wav_symlink = recordings_dir.join("synthetic-symlink.wav");
+            std::os::unix::fs::symlink(&orphan, &wav_symlink).expect("create WAV symlink");
+            wav_symlink
+        };
+
+        let pending_audio_files = Mutex::new(HashSet::new());
+        HistoryManager::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            recordings_dir,
+            &pending_audio_files,
+        )
+        .expect("clean orphaned WAV files");
+
+        assert!(recordings_dir.join(tracked_file).is_file());
+        assert!(!orphan.exists());
+        assert!(non_wav.is_file());
+        assert!(wav_directory.is_dir());
+        #[cfg(unix)]
+        assert!(wav_symlink.is_symlink());
+    }
+
+    #[test]
+    fn pending_audio_is_ignored_until_its_history_row_exists() {
+        let conn = setup_conn();
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let recordings_dir = temp_dir.path();
+        let file_name = "synthetic-pending.wav";
+        let pending_file = recordings_dir.join(file_name);
+        let pending_audio_files = Mutex::new(HashSet::from([OsString::from(file_name)]));
+        fs::write(&pending_file, b"synthetic pending audio").expect("publish pending WAV");
+
+        HistoryManager::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            recordings_dir,
+            &pending_audio_files,
+        )
+        .expect("skip pending WAV");
+        assert!(pending_file.is_file());
+
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name, timestamp, saved, title, transcription_text,
+                post_processed_text, post_process_prompt, post_process_model,
+                post_process_requested, audio_available
+             ) VALUES (?1, 1, 0, 'Synthetic pending recording',
+                       'synthetic pending raw', 'synthetic pending processed',
+                       'synthetic pending prompt', 'synthetic-provider/synthetic-model', 1, 1)",
+            params![file_name],
+        )
+        .expect("commit pending history row");
+        pending_audio_files
+            .lock()
+            .expect("lock pending registry")
+            .clear();
+
+        HistoryManager::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            recordings_dir,
+            &pending_audio_files,
+        )
+        .expect("retain newly tracked WAV after pending release");
+        assert!(pending_file.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_cleanup_reports_removal_failure_and_retries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let conn = setup_conn();
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let recordings_dir = temp_dir.path();
+        let orphan = recordings_dir.join("synthetic-blocked-orphan.wav");
+        fs::write(&orphan, b"synthetic blocked orphan audio").expect("write orphan WAV");
+
+        fs::set_permissions(recordings_dir, fs::Permissions::from_mode(0o555))
+            .expect("block orphan removal");
+        let pending_audio_files = Mutex::new(HashSet::new());
+        let cleanup_result = HistoryManager::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            recordings_dir,
+            &pending_audio_files,
+        );
+        fs::set_permissions(recordings_dir, fs::Permissions::from_mode(0o755))
+            .expect("restore recordings permissions");
+
+        let cleanup_error = cleanup_result.expect_err("surface orphan removal failure");
+        assert!(cleanup_error
+            .downcast_ref::<CleanupFilesystemError>()
+            .is_some());
+        assert!(orphan.is_file());
+
+        HistoryManager::cleanup_orphaned_wav_files_with_conn(
+            &conn,
+            recordings_dir,
+            &pending_audio_files,
+        )
+        .expect("retry orphan removal");
+        assert!(!orphan.exists());
     }
 
     #[test]

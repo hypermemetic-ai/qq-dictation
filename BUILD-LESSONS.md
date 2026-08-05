@@ -66,6 +66,18 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Source:** PR #15 and commit `4ac0015`.
 
+## 2026-08-05 — Git worktree metadata was outside the container mount
+
+**Stage:** owner verification after container-side rustfmt, before compilation.
+
+**Observed failure:** Rustfmt completed, then an ad hoc container command ran `git diff --check` inside `/work`. Git failed with `fatal: not a git repository` because the worktree’s `.git` file points to the primary checkout’s `.git/worktrees/...` metadata outside the mounted worktree. The fail-fast chain stopped, so compilation/tests did not start.
+
+**Cause:** A Git worktree’s `.git` entry is a pointer file, not self-contained repository metadata. Symlink inventory does not reveal this outside-mount dependency.
+
+**Safeguard:** Run Git cleanliness and `git diff --check` on the host before or after the container, where the worktree’s common Git directory exists. Keep the container phase to formatter/compiler/test/build commands unless the common Git metadata is deliberately mounted. Do not place a host-dependent Git check between container-side rustfmt and tests.
+
+**Green evidence:** Host Git checks exit zero against the exact worktree, followed separately by container rustfmt check, compilation, and final test results.
+
 ## 2026-08-05 — The delegate substrate had no usable Rust runner
 
 **Stage:** toolchain discovery before TASK-14 Rust checks.
