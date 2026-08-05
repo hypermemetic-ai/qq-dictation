@@ -38,19 +38,19 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Green evidence:** Focused catalog tests and the full suite both pass against the truthful generated catalog. Report pass, fail, and ignored counts separately.
 
-## 2026-08-01 — Change-worktree cache symlinks were outside the container mount
+## 2026-08-01 and 2026-08-05 — Worktree symlinks were not visible inside the build container
 
-**Stage:** container setup before compilation.
+**Stage:** container setup and dependency installation before compilation.
 
-**Observed failure:** The first TASK-6 build from an isolated Change worktree stopped before compilation because Cargo, target, and ORT cache symlinks resolved outside `/work`, where the container could not see them.
+**Observed failure:** The first TASK-6 build from an isolated Change worktree stopped because Cargo, target, and ORT cache symlinks resolved outside `/work`, where the container could not see them. TASK-14 then exposed two variants. First, its worktree had a root-owned empty `.docker-cache/` instead of the expected shared-cache symlinks, so the user-mapped container could not create `cargo`, `target`, or `ort`. After those links were repaired, `bun install` failed with `ENOENT` because worktree `node_modules` was another absolute symlink to the primary checkout, also outside the container mount. In every case the Docker image built, but application compilation never started.
 
-**Cause:** Methodology-required worktrees shared the primary checkout's expensive cache through host symlinks, but the build mounted only the worktree path.
+**Cause:** Methodology-required worktrees contain machine-local inputs and absolute symlinks that Git does not carry into the container. `build-local.sh` can resolve and mount a shared cache **only when** `.docker-cache/cargo` is already a symlink; it does not provision missing links, repair ownership, or make any other outside-worktree symlink visible.
 
-**Safeguard:** Use current `scripts/build-local.sh`, which detects a shared Cargo cache symlink and mounts its resolved cache root over `/work/.docker-cache`. An ad hoc container command must resolve and mount that same cache root rather than assuming the worktree-local symlink target exists inside the container.
+**Safeguard:** Before any worktree build, inventory **all** symlinks with `find <worktree> -xdev -type l`, resolve each complete link chain with `readlink -f`, flag broken links, and classify every canonical destination as inside or outside the mounted worktree. This includes relative links whose chain ends at an absolute outside path. The only supported build-relevant outside links are `.docker-cache/cargo`, `.docker-cache/target`, and `.docker-cache/ort`: require them to resolve to the primary checkout's corresponding writable cache directories, which current `scripts/build-local.sh` mounts through their resolved parent. Require `node_modules` to be a real, user-owned, writable worktree directory so container-side `bun install --frozen-lockfile` can populate it; do not point or bind it to the primary checkout's mutable dependencies. Documentation/Backlog links may resolve outside because they are not build inputs.
 
-**Green evidence:** Container setup reaches the requested Rust/build stage using the shared cache. Starting Docker alone or failing before compilation is not a build result.
+**Green evidence:** The preflight lists every worktree symlink, including relative/chained/broken links, and shows that each build-relevant path is either a real writable worktree directory or one of the three script-supported cache links. Container setup reaches Bun, Rust, and packaging in sequence. Starting Docker, building the toolchain image, failing at cache creation, or failing at dependency-directory access is not a Rust/application build result.
 
-**Source:** completed TASK-6 implementation notes and commit `76fe322`.
+**Sources:** completed TASK-6 implementation notes and commit `76fe322`; TASK-14 release output showing cache-directory permission errors before Bun/Cargo; the next TASK-14 release output showing cache preflight pass followed by `bun install ... ENOENT: could not open the "node_modules" directory` before Tauri/Cargo.
 
 ## 2026-08-02 — A comment broke a continued `docker run` command
 
