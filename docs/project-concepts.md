@@ -25,10 +25,13 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
   it stores each pair's timestamp, exact prompt, and provider-qualified model
   (reported as unknown when the row predates model capture). WAV retention is
   independent and defaults to the latest five recordings under the live
-  PreserveLimit policy. `/dictation-review [count]` reads these rows in place and
-  permits only the explicitly requested rows to enter the current Pi session and
-  its current model provider for that review; it creates no corpus export or
-  persisted transcript artifact and sends the rows nowhere else. A text-only row
-  can evaluate cleanup behavior but cannot prove ASR fidelity after its WAV is
-  deleted, and subjective writing quality remains agent/operator judgment from
-  cited evidence rather than a mechanical score.
+  PreserveLimit policy. `/dictation-review` accepts no arguments. It censuses all
+  qualifying retained pairs in place through a read-only local process, exposing
+  only aggregate census observations and up to 30 distinct close-review pairs: 12
+  stratified-random, 10 diverse risk-flagged, and 8 latest consecutive pairs from
+  the current exact prompt/model cohort. Only those selected pairs may enter the
+  current Pi session and its current model provider; the workflow creates no corpus
+  export or persisted transcript artifact and sends rows nowhere else. A text-only
+  row can evaluate cleanup behavior but cannot prove ASR fidelity after its WAV is
+  deleted, mechanical census signals are triage rather than quality proof, and
+  subjective writing quality remains agent/operator judgment from cited evidence.
