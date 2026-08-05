@@ -2,6 +2,14 @@
 
 This guide covers how to set up the development environment and build Handy from source across different platforms.
 
+> [!IMPORTANT]
+> QQ maintainers and agents must read [`BUILD-LESSONS.md`](BUILD-LESSONS.md)
+> before running Rust checks or local packaging. It records this distribution's
+> prior build failures, the safeguards they established, and the evidence needed
+> before calling a build or test gate successful. The current QQ workstation
+> build uses `QQ_BUILD_MEM=8g scripts/build-local.sh`; the older 5 GiB limit was
+> later OOM-killed by the rebuilt toolchain.
+
 ## Prerequisites
 
 ### All Platforms

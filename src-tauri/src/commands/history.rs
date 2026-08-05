@@ -73,6 +73,10 @@ pub async fn retry_history_entry_transcription(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
 
+    if !entry.audio_available {
+        return Err("Audio is no longer available for this history entry".to_string());
+    }
+
     let audio_path = history_manager.get_audio_file_path(&entry.file_name);
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
         .map_err(|e| format!("Failed to load audio: {}", e))?;
@@ -101,6 +105,7 @@ pub async fn retry_history_entry_transcription(
             transcription,
             processed.post_processed_text,
             processed.post_process_prompt,
+            processed.post_process_model,
         )
         .map(|_| ())
         .map_err(|e| e.to_string())

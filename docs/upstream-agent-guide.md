@@ -9,6 +9,14 @@ This file provides guidance to AI coding assistants working with code in this re
 - [Rust](https://rustup.rs/) (latest stable)
 - [Bun](https://bun.sh/) package manager
 
+**QQ local-build history:** Before running Rust checks or local packaging in
+this distribution, read [`../BUILD-LESSONS.md`](../BUILD-LESSONS.md). It records
+prior failure stages and the safeguards they established. The current QQ
+workstation build requires the documented 8 GiB container allowance; do not
+substitute the older 5 GiB limit. Rust delegation briefs must link the ledger;
+an unavailable delegate toolchain leaves an explicit owner-run gate rather than
+an inferred pass.
+
 **Core Development:**
 
 ```bash

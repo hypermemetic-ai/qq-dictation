@@ -19,3 +19,16 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
 - **Local package**: The AppDir, push-to-talk bridge, service, and settings
   migration installed only for the current Linux user. Handy's ASR models and
   history remain in their standard shared user-data locations.
+- **Dictation pair corpus**: The existing `transcription_history` table in
+  `${XDG_DATA_HOME:-$HOME/.local/share}/com.pais.handy/history.db` is the sole
+  source of truth for the latest 1,000 successful raw-to-second-pass text pairs;
+  it stores each pair's timestamp, exact prompt, and provider-qualified model
+  (reported as unknown when the row predates model capture). WAV retention is
+  independent and defaults to the latest five recordings under the live
+  PreserveLimit policy. `/dictation-review [count]` reads these rows in place and
+  permits only the explicitly requested rows to enter the current Pi session and
+  its current model provider for that review; it creates no corpus export or
+  persisted transcript artifact and sends the rows nowhere else. A text-only row
+  can evaluate cleanup behavior but cannot prove ASR fidelity after its WAV is
+  deleted, and subjective writing quality remains agent/operator judgment from
+  cited evidence rather than a mechanical score.

@@ -77,6 +77,25 @@ fn nonblank_or_none(result: String, provider_id: &str) -> Option<String> {
     }
 }
 
+struct PostProcessResult {
+    text: String,
+    prompt: String,
+    model: String,
+}
+
+fn bind_post_process_metadata(
+    text: Option<String>,
+    provider_id: &str,
+    model: &str,
+    prompt: &str,
+) -> Option<PostProcessResult> {
+    text.map(|text| PostProcessResult {
+        text,
+        prompt: prompt.to_string(),
+        model: format!("{provider_id}/{model}"),
+    })
+}
+
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
 fn build_system_prompt(prompt_template: &str) -> String {
@@ -116,7 +135,10 @@ fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool
     style == OverlayStyle::Live && is_streaming
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+) -> Option<PostProcessResult> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
@@ -235,7 +257,12 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 "Apple Intelligence post-processing succeeded. Output length: {} chars",
                                 result.len()
                             );
-                            Some(result)
+                            bind_post_process_metadata(
+                                nonblank_or_none(result, &provider.id),
+                                &provider.id,
+                                &model,
+                                &prompt,
+                            )
                         }
                     }
                     Err(err) => {
@@ -290,10 +317,20 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 provider.id,
                                 result.len()
                             );
-                            return nonblank_or_none(result, &provider.id);
+                            return bind_post_process_metadata(
+                                nonblank_or_none(result, &provider.id),
+                                &provider.id,
+                                &model,
+                                &prompt,
+                            );
                         } else {
                             error!("Structured output response missing 'transcription' field");
-                            return nonblank_or_none(strip_invisible_chars(&content), &provider.id);
+                            return bind_post_process_metadata(
+                                nonblank_or_none(strip_invisible_chars(&content), &provider.id),
+                                &provider.id,
+                                &model,
+                                &prompt,
+                            );
                         }
                     }
                     Err(e) => {
@@ -301,7 +338,12 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return nonblank_or_none(strip_invisible_chars(&content), &provider.id);
+                        return bind_post_process_metadata(
+                            nonblank_or_none(strip_invisible_chars(&content), &provider.id),
+                            &provider.id,
+                            &model,
+                            &prompt,
+                        );
                     }
                 }
             }
@@ -340,7 +382,12 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 provider.id,
                 content.len()
             );
-            nonblank_or_none(content, &provider.id)
+            bind_post_process_metadata(
+                nonblank_or_none(content, &provider.id),
+                &provider.id,
+                &model,
+                &prompt,
+            )
         }
         Ok(None) => {
             error!("LLM API response has no content");
@@ -409,6 +456,7 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    pub post_process_model: Option<String>,
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -441,6 +489,7 @@ pub(crate) async fn process_transcription_output(
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
+    let mut post_process_model: Option<String> = None;
 
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
@@ -453,19 +502,11 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
-            post_processed_text = Some(processed_text.clone());
-            final_text = processed_text;
-
-            if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                if let Some(prompt) = settings
-                    .post_process_prompts
-                    .iter()
-                    .find(|prompt| &prompt.id == prompt_id)
-                {
-                    post_process_prompt = Some(prompt.prompt.clone());
-                }
-            }
+        if let Some(result) = post_process_transcription(&settings, &final_text).await {
+            post_processed_text = Some(result.text.clone());
+            final_text = result.text;
+            post_process_prompt = Some(result.prompt);
+            post_process_model = Some(result.model);
         }
     } else if final_text != transcription {
         post_processed_text = Some(final_text.clone());
@@ -475,6 +516,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        post_process_model,
     }
 }
 
@@ -807,6 +849,7 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
+                                    processed.post_process_model.clone(),
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -872,6 +915,7 @@ impl ShortcutAction for TranscribeAction {
                                     file_name,
                                     String::new(),
                                     post_process,
+                                    None,
                                     None,
                                     None,
                                 ) {
@@ -962,8 +1006,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, nonblank_or_none,
-        should_use_streaming_overlay, strip_invisible_chars,
+        bind_post_process_metadata, complete_unless_cancelled, is_blank_transcription,
+        nonblank_or_none, should_use_streaming_overlay, strip_invisible_chars,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -1003,6 +1047,21 @@ mod tests {
             nonblank_or_none("cleaned text".to_string(), "test"),
             Some("cleaned text".to_string())
         );
+    }
+
+    #[test]
+    fn successful_cleanup_binds_exact_request_metadata() {
+        let result = bind_post_process_metadata(
+            Some("synthetic processed text".to_string()),
+            "synthetic-provider",
+            "synthetic/model",
+            "synthetic exact prompt ${output}",
+        )
+        .expect("bind successful cleanup metadata");
+
+        assert_eq!(result.text, "synthetic processed text");
+        assert_eq!(result.prompt, "synthetic exact prompt ${output}");
+        assert_eq!(result.model, "synthetic-provider/synthetic/model");
     }
 
     #[test]

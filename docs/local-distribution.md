@@ -16,9 +16,15 @@ reproducible user-local installation.
 ## Build and install
 
 ```bash
-scripts/build-local.sh
+QQ_BUILD_MEM=8g scripts/build-local.sh
 scripts/install-local.sh
 ```
+
+Read [`../BUILD-LESSONS.md`](../BUILD-LESSONS.md) before building. The 8 GiB
+allowance is the current proven value for this machine's rebuilt toolchain
+image; the older 5 GiB default was later OOM-killed by ggml-vulkan compilation.
+It remains contained with no additional container swap, two CPUs, and one
+Cargo/CMake job.
 
 The build runs in a pinned Docker environment because the host intentionally
 does not carry the full GTK/WebKit development stack. Cargo and bundle output
