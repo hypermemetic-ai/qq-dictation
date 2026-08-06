@@ -35,7 +35,13 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
   distinct snapshot pairs: 12 stratified-random, 10 diverse risk-flagged, and 8
   latest consecutive pairs from the current exact prompt/model cohort. Sampling
   keeps the close review manageable rather than enforcing a confidentiality
-  boundary. The command leaves Handy's database and application state unchanged
+  boundary. The command also mines the complete snapshot for custom-words
+  dictionary candidates: distinctive terms appearing in at least 3 distinct
+  rows, each reported with frequency, benefit evidence from raw-text variants,
+  and a measured false-positive count from a simulation of Handy's fuzzy
+  custom-word matcher at the live threshold; measured risk flags but never
+  excludes a candidate, and the live settings store is read, never written.
+  The command leaves Handy's database and application state unchanged
   and does not review audio. Mechanical census signals are triage rather than
   quality proof, text pairs alone cannot prove ASR fidelity, and subjective writing
   quality remains agent/operator judgment from cited evidence.
