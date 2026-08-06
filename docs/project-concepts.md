@@ -25,13 +25,17 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
   it stores each pair's timestamp, exact prompt, and provider-qualified model
   (reported as unknown when the row predates model capture). WAV retention is
   independent and defaults to the latest five recordings under the live
-  PreserveLimit policy. `/dictation-review` accepts no arguments. It uses read-only
-  access to census all qualifying retained pairs, report aggregate observations,
-  and closely review up to 30 distinct pairs: 12 stratified-random, 10 diverse
-  risk-flagged, and 8 latest consecutive pairs from the current exact prompt/model
-  cohort. Rows are available to the command as needed; sampling keeps the close
-  review manageable rather than enforcing a confidentiality boundary. The command
-  leaves Handy's database and application state unchanged and does not review
-  audio. Mechanical census signals are triage rather than quality proof, text pairs
-  alone cannot prove ASR fidelity, and subjective writing quality remains
-  agent/operator judgment from cited evidence.
+  PreserveLimit policy. `/dictation-review` accepts no arguments, and a valid
+  invocation authorizes immediate execution without a confirmation round. It
+  materializes every qualifying pair visible in one short-lived, read-only SQLite
+  snapshot, closes the database connection, and computes all census observations,
+  cohort definitions, sampling, and shortfalls from that fixed result set. Handy
+  may keep writing concurrently; later commits remain outside that run rather than
+  causing a restart or count-drift failure. The command closely reviews up to 30
+  distinct snapshot pairs: 12 stratified-random, 10 diverse risk-flagged, and 8
+  latest consecutive pairs from the current exact prompt/model cohort. Sampling
+  keeps the close review manageable rather than enforcing a confidentiality
+  boundary. The command leaves Handy's database and application state unchanged
+  and does not review audio. Mechanical census signals are triage rather than
+  quality proof, text pairs alone cannot prove ASR fidelity, and subjective writing
+  quality remains agent/operator judgment from cited evidence.
