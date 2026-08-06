@@ -93,3 +93,21 @@ Give every selected pair a concise, evidence-based judgment, then synthesize rec
 Do not modify the database, prompts, settings, or application state. Do not read or play audio; this command reviews text cleanup rather than ASR fidelity. When `audio_available` is false, note that the WAV is unavailable. Because audio is not reviewed, no selected text pair can by itself prove ASR fidelity.
 
 Within those boundaries, use practical local tools and intermediate analysis as needed. The history data is available to this command; sampling bounds the close review, not access to the corpus.
+
+## Implementation handoff
+
+Finish the evidence report before offering implementation. The review remains read-only through this handoff; do not perform any implementation action unless the operator selects the implementation option.
+
+If the evidence supports no change, say so plainly and stop. Do not manufacture an implementation scope.
+
+If the evidence supports an actionable change:
+
+1. Consolidate the smallest evidence-backed recommended scope.
+2. Immediately call `operator_ask` with `moment: "alignment"` and exactly one question. This must be an active operator decision, not a recommendation left in prose.
+3. In that question, restate the exact recommended scope, every live side effect, the proof that will establish done, and anything that cannot be proven. Offer exactly these two choices:
+   - **Implement the recommended change**
+   - **Leave as review only**
+
+Selecting **Implement the recommended change** authorizes immediate continuation in this same session within the stated scope. Do not restate the plan or ask for confirmation again unless a real new ambiguity or reopening appears. Selecting **Leave as review only** ends the command without changes.
+
+When the recommended scope changes a cleanup prompt, the decision's done proof must include all of the following: the repository Change lands through GitHub Flow; the selected live Handy prompt matches the landed source; Handy is reloaded or restarted as needed; and source/live hashes plus active-process health are verified. A patch, commit, or pull request alone is not done. Never make a paid inference call without separate spend authority.
