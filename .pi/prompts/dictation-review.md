@@ -51,6 +51,7 @@ Compute mechanical signals locally for triage, not as quality scores or proof of
 
 - unusually large additions, deletions, or overall rewrite distance;
 - changed question form, negation, or stance and uncertainty markers;
+- likely questions with no question mark: interrogative word order (wh-fronting, subject-auxiliary inversion) or a question tag, where neither the transcription nor the post-processed text carries `?`;
 - changed technical literals such as identifiers, commands, paths, URLs, numbers, versions, symbols, and mechanically detectable proper nouns;
 - remaining filler, immediate repetition, or abandoned-start patterns.
 
@@ -84,6 +85,7 @@ Compare every selected `transcription_text` with its `post_processed_text` close
 - clause, qualification, or constraint loss;
 - invented content;
 - changed speech act, uncertainty, ambiguity, or stance;
+- question-mark reasonableness in both directions: where the output carries no `?`, judge whether the utterance probably was a question — interrogative grammar, an open or asking frame, or omission creating riskier ambiguity than addition; where a `?` was added, judge whether the source justifies it. Judge what best serves the reader or agent that receives the text, not literal fidelity to the audio;
 - damage to technical literals such as identifiers, commands, paths, numbers, symbols, and proper nouns.
 
 Give every selected pair a concise, evidence-based judgment, then synthesize recurring patterns and prompt recommendations. Keep census observations, mechanical flags, and review judgment visibly separate. Do not assign a mechanical quality score, claim subjective quality as mechanically proven, or present this selected sample as a precise prevalence estimate.
