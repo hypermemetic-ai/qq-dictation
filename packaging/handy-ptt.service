@@ -1,5 +1,5 @@
 [Unit]
-Description=qq-dictation right-Control push-to-talk bridge
+Description=qq-dictation Right-Control dictation-mode bridge
 After=graphical-session.target
 
 [Service]

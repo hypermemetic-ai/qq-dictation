@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,11 +13,23 @@ import type {
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 
-type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
+type OverlayState =
+  | "armed"
+  | "recording"
+  | "streaming"
+  | "transcribing"
+  | "processing";
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
 const WAVE_BARS = 9;
+
+// Armed dictation-mode legend (qq-dictation local Space mode). Deliberately
+// English-only constants rather than i18n keys: the mode ships solely in the
+// qq-dictation local distribution, so its legend does not mint an upstream-wide
+// translation commitment across every Handy locale.
+const ARMED_TITLE = "DICTATION MODE";
+const ARMED_KEYS = "SPACE STARTS/STOPS · DELETE CANCELS · RIGHT CTRL EXITS";
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -104,6 +117,11 @@ const RecordingOverlay: React.FC = () => {
         if (payload.kind) setWorkKind(payload.kind);
       });
 
+      // The X11 bridge waits for this per-process marker before sending its
+      // realtime mode signals or grabbing Space/Delete. Publishing only after
+      // every listener is installed prevents a startup signal from being lost.
+      await invoke("mark_dictation_overlay_ready");
+
       return () => {
         unlistenShow();
         unlistenHide();
@@ -148,6 +166,25 @@ const RecordingOverlay: React.FC = () => {
 
   const fmtTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  // ---- Armed dictation-mode legend (qq-dictation) ----
+  // Persistent indicator while the mode is armed and no work is active.
+  if (state === "armed") {
+    return (
+      <div
+        dir={direction}
+        className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
+      >
+        <div className="scard compact armed">
+          <div className="sarmed-title">
+            <span className="sdot" />
+            {ARMED_TITLE}
+          </div>
+          <div className="sarmed-keys">{ARMED_KEYS}</div>
+        </div>
+      </div>
+    );
+  }
 
   // ---- Shared building blocks (one visual language for every overlay form) ----
   const waveform = (

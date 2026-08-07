@@ -24,7 +24,7 @@ use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use gtk::prelude::GtkWindowExt;
 
 #[cfg(target_os = "linux")]
-use std::env;
+use std::{env, fs, path::PathBuf};
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
@@ -53,17 +53,89 @@ const OVERLAY_HEIGHT: f64 = 46.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
+// Armed dictation-mode legend (qq-dictation Space mode): wider than the compact
+// pill so the key map fits, and a little taller for the two-line legend. Keep in
+// sync with --ov-armed-w and the .scard.compact.armed geometry in
+// RecordingOverlay.css.
+const OVERLAY_ARMED_WIDTH: f64 = 360.0;
+const OVERLAY_ARMED_HEIGHT: f64 = 60.0;
+
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if state == "streaming" {
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    match state {
+        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
+        "armed" => (OVERLAY_ARMED_WIDTH, OVERLAY_ARMED_HEIGHT),
+        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
 const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
+
+#[cfg(target_os = "linux")]
+const DICTATION_READY_FILE: &str = "qq-dictation-handy-ready";
+
+#[cfg(target_os = "linux")]
+fn dictation_ready_path() -> Result<PathBuf, String> {
+    let runtime_dir = env::var_os("XDG_RUNTIME_DIR")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "XDG_RUNTIME_DIR is unavailable".to_string())?;
+    Ok(PathBuf::from(runtime_dir).join(DICTATION_READY_FILE))
+}
+
+/// Remove any previous process's readiness marker before signal registration.
+pub fn clear_dictation_overlay_ready() {
+    #[cfg(target_os = "linux")]
+    if let Ok(path) = dictation_ready_path() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn publish_dictation_state(state: &str) -> Result<(), String> {
+    let path = dictation_ready_path()?;
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&temporary, format!("{} {state}\n", std::process::id()))
+        .map_err(|error| format!("failed to write dictation readiness: {error}"))?;
+    fs::rename(&temporary, &path)
+        .map_err(|error| format!("failed to publish dictation readiness: {error}"))
+}
+
+/// Publish readiness only after the overlay frontend has installed every event
+/// listener. Later prepared/armed acknowledgements make the bridge/app mode
+/// transition explicit rather than relying on a timing delay.
+#[tauri::command]
+#[specta::specta]
+pub fn mark_dictation_overlay_ready() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    publish_dictation_state("ready")?;
+    Ok(())
+}
+
+pub fn mark_dictation_mode_prepared() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    publish_dictation_state("prepared")?;
+    Ok(())
+}
+
+pub fn mark_dictation_mode_armed() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    publish_dictation_state("armed")?;
+    Ok(())
+}
+
+pub fn mark_dictation_mode_off() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    publish_dictation_state("ready")?;
+    Ok(())
+}
+
+// Monotonic epoch bumped every time an overlay state is shown. `hide_recording_overlay`
+// sleeps ~300ms (for the fade-out) before actually hiding the window; it captures the
+// epoch at schedule time and only hides if the epoch is unchanged. Without this, a state
+// shown right after a hide was scheduled — most importantly the armed legend re-shown
+// immediately after a cancellation — would be hidden by the stale delayed hide.
+static OVERLAY_SHOW_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
 const OVERLAY_TOP_OFFSET: f64 = 46.0;
@@ -530,6 +602,9 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
         }
 
         let _ = overlay_window.emit("show-overlay", state);
+        // A fresh state is now showing; invalidate any delayed hide scheduled
+        // before this point (see OVERLAY_SHOW_EPOCH).
+        OVERLAY_SHOW_EPOCH.fetch_add(1, Ordering::SeqCst);
         log::debug!(
             "overlay '{}': set_size={:?} pos_calc={:?} set_pos={:?} show={:?}",
             state,
@@ -544,6 +619,13 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
 /// Shows the recording overlay window with fade-in animation
 pub fn show_recording_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "recording");
+}
+
+/// Shows the armed dictation-mode indicator: a persistent legend stating that
+/// Space starts/stops, Delete cancels, and Right-Control exits. Shown while the
+/// mode is armed and no recording/working state is active.
+pub fn show_armed_overlay(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "armed");
 }
 
 /// Shows the larger streaming overlay that displays live transcription text
@@ -603,11 +685,16 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
+        // Capture the show epoch so the delayed hide is skipped if a new overlay
+        // state (e.g. the armed legend) is shown before the fade-out completes.
+        let epoch = OVERLAY_SHOW_EPOCH.load(Ordering::SeqCst);
         // Hide the window after a short delay to allow animation to complete
         let window_clone = overlay_window.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
-            let _ = window_clone.hide();
+            if OVERLAY_SHOW_EPOCH.load(Ordering::SeqCst) == epoch {
+                let _ = window_clone.hide();
+            }
         });
     }
 }
@@ -677,6 +764,30 @@ mod tests {
         assert!(is_mouse_within_monitor((-1, 1239), &position, &size));
         assert!(!is_mouse_within_monitor((0, 0), &position, &size));
         assert!(!is_mouse_within_monitor((-1, 1240), &position, &size));
+    }
+
+    #[test]
+    fn overlay_dimensions_cover_every_visible_state() {
+        assert_eq!(
+            overlay_dimensions("streaming"),
+            (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("armed"),
+            (OVERLAY_ARMED_WIDTH, OVERLAY_ARMED_HEIGHT)
+        );
+        // Compact states share one size.
+        for state in ["recording", "transcribing", "processing"] {
+            assert_eq!(overlay_dimensions(state), (OVERLAY_WIDTH, OVERLAY_HEIGHT));
+        }
+    }
+
+    #[test]
+    fn armed_overlay_window_is_wide_enough_for_the_legend() {
+        // The armed card (--ov-armed-w in RecordingOverlay.css) must fit inside
+        // the native window or the key-map legend gets clipped.
+        assert!(OVERLAY_ARMED_WIDTH >= 344.0);
+        assert!(OVERLAY_ARMED_HEIGHT >= 56.0);
     }
 
     #[cfg(target_os = "windows")]

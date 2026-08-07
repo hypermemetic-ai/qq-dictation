@@ -146,6 +146,10 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) {
+    // A previous process's marker must never make a new Handy instance appear
+    // ready before its signal handlers and overlay listeners exist.
+    overlay::clear_dictation_overlay_ready();
+
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -659,6 +663,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
             show_main_window_command,
+            overlay::mark_dictation_overlay_ready,
             commands::cancel_operation,
             commands::is_portable,
             commands::get_app_dir_path,

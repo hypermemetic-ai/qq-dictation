@@ -52,9 +52,13 @@ install -m 0644 \
     "${repository_root}/packaging/handy-ptt.service" \
     "${user_units}/handy-ptt.service"
 
+mkdir -p "$(dirname "$settings_path")"
 if [[ -f "$settings_path" ]]; then
     cp -a "$settings_path" "${settings_path}.before-qq-dictation.${timestamp}"
-    /usr/bin/python3 - "$settings_path" <<'PY'
+else
+    (umask 077; printf '{"settings": {}}\n' >"$settings_path")
+fi
+/usr/bin/python3 - "$settings_path" <<'PY'
 import json
 import os
 import sys
@@ -73,7 +77,6 @@ temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 os.replace(temporary, path)
 PY
-fi
 
 systemctl --user daemon-reload
 systemctl --user enable --now handy-ptt.service
@@ -100,4 +103,5 @@ if [[ "$actual_executable" != "$expected_executable" ]]; then
 fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
-printf "The right-Control bridge and Handy's native recording overlay are active.\n"
+printf '%s\n' \
+    'The dictation-mode bridge is active: Right-Control arms/exits; Space starts/stops; Delete cancels.'
