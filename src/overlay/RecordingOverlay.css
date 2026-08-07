@@ -31,6 +31,9 @@
   --ov-work-w: 216px; /* working pill (transcribing / polishing) -- wide enough to
                          center longer labels; shared by Live (collapsed) + minimal */
   --ov-open-w: 392px; /* Live panel, expanded */
+  --ov-armed-w: 344px; /* armed dictation-mode legend (qq-dictation Space mode);
+                          overlay.rs sizes the native window (OVERLAY_ARMED_*)
+                          from this — keep them in sync */
   --ov-base-h: 40px; /* control-row height (.sbase) */
   --ov-cap-max-h: 64px; /* max height of the scrolling live-text region */
 }
@@ -172,6 +175,34 @@
 }
 .scard.compact.cworking {
   width: var(--ov-work-w);
+}
+
+/* Armed dictation-mode indicator (qq-dictation local Space mode): a persistent
+   two-line legend — mode title over the Space/Delete/Right-Control key map.
+   Fixed width so the English legend fits on one line; the native window size
+   lives in overlay.rs (OVERLAY_ARMED_*). English-only on purpose: the mode
+   ships only in the local distribution, so no upstream-wide translation
+   commitment is minted for it. */
+.scard.compact.armed {
+  width: var(--ov-armed-w);
+  border-radius: 16px;
+  padding: 8px 16px;
+  gap: 2px;
+}
+.sarmed-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--color-text) 92%, transparent);
+}
+.sarmed-keys {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--s-muted);
+  white-space: nowrap;
 }
 
 /* text region — auto-height open via grid-rows trick; region fades as a whole */

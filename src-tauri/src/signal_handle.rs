@@ -21,11 +21,49 @@ pub fn ptt_stop_signal() -> i32 {
     libc::SIGRTMIN() + 1
 }
 
+// Visible Space dictation mode (qq-dictation). Realtime signal numbers
+// preserve safety ordering when several are pending: prepare, commit, off,
+// Space, then Delete.
+#[cfg(target_os = "linux")]
+pub fn mode_prepare_signal() -> i32 {
+    libc::SIGRTMIN() + 2
+}
+
+#[cfg(target_os = "linux")]
+pub fn mode_on_signal() -> i32 {
+    libc::SIGRTMIN() + 3
+}
+
+#[cfg(target_os = "linux")]
+pub fn mode_off_signal() -> i32 {
+    libc::SIGRTMIN() + 4
+}
+
+#[cfg(target_os = "linux")]
+pub fn mode_space_signal() -> i32 {
+    libc::SIGRTMIN() + 5
+}
+
+#[cfg(target_os = "linux")]
+pub fn mode_delete_signal() -> i32 {
+    libc::SIGRTMIN() + 6
+}
+
 #[cfg(unix)]
 pub fn transcription_signals() -> Vec<i32> {
     #[cfg(target_os = "linux")]
     {
-        vec![SIGUSR1, SIGUSR2, ptt_start_signal(), ptt_stop_signal()]
+        vec![
+            SIGUSR1,
+            SIGUSR2,
+            ptt_start_signal(),
+            ptt_stop_signal(),
+            mode_prepare_signal(),
+            mode_on_signal(),
+            mode_off_signal(),
+            mode_space_signal(),
+            mode_delete_signal(),
+        ]
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -73,6 +111,39 @@ fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
     }
 }
 
+/// Route a dictation-mode command to the coordinator. Mode signals are commands
+/// (not raw key events), so the signal thread never calls pipeline actions
+/// directly — the coordinator serialises them with every other input.
+#[cfg(target_os = "linux")]
+fn send_mode_input(app: &AppHandle, command: ModeCommand) {
+    if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
+        match command {
+            ModeCommand::Prepare => c.mode_prepare(),
+            ModeCommand::On => c.mode_on(),
+            ModeCommand::Off => c.mode_off(),
+            ModeCommand::Space => {
+                // Mode Space follows the same single post-processing switch as
+                // PTT, read per press.
+                let post_process_enabled =
+                    crate::settings::load_or_create_app_settings(app).post_process_enabled;
+                c.mode_space(ptt_binding_id(post_process_enabled));
+            }
+            ModeCommand::Delete => c.mode_delete(),
+        }
+    } else {
+        warn!("TranscriptionCoordinator not initialized");
+    }
+}
+
+#[cfg(target_os = "linux")]
+enum ModeCommand {
+    Prepare,
+    On,
+    Off,
+    Space,
+    Delete,
+}
+
 #[cfg(unix)]
 pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
     #[cfg(target_os = "linux")]
@@ -80,8 +151,19 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
     #[cfg(target_os = "linux")]
     let ptt_stop = ptt_stop_signal();
     #[cfg(target_os = "linux")]
+    let mode_prepare = mode_prepare_signal();
+    #[cfg(target_os = "linux")]
+    let mode_on = mode_on_signal();
+    #[cfg(target_os = "linux")]
+    let mode_off = mode_off_signal();
+    #[cfg(target_os = "linux")]
+    let mode_space = mode_space_signal();
+    #[cfg(target_os = "linux")]
+    let mode_delete = mode_delete_signal();
+    #[cfg(target_os = "linux")]
     debug!(
-        "Signal handlers registered (SIGUSR1, SIGUSR2, SIGRTMIN={ptt_start}, SIGRTMIN+1={ptt_stop})"
+        "Signal handlers registered (SIGUSR1, SIGUSR2, SIGRTMIN={ptt_start}, SIGRTMIN+1={ptt_stop}, \
+         mode prepare={mode_prepare}, mode on={mode_on}, mode off={mode_off}, mode space={mode_space}, mode delete={mode_delete})"
     );
     #[cfg(not(target_os = "linux"))]
     debug!("Signal handlers registered (SIGUSR1, SIGUSR2)");
@@ -110,6 +192,31 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
                     debug!("Received SIGRTMIN+1 (PTT release)");
                     send_ptt_input(&app_handle, "SIGRTMIN+1", false);
                 }
+                #[cfg(target_os = "linux")]
+                sig if sig == mode_prepare => {
+                    debug!("Received SIGRTMIN+2 (dictation mode prepare)");
+                    send_mode_input(&app_handle, ModeCommand::Prepare);
+                }
+                #[cfg(target_os = "linux")]
+                sig if sig == mode_on => {
+                    debug!("Received SIGRTMIN+3 (dictation mode on)");
+                    send_mode_input(&app_handle, ModeCommand::On);
+                }
+                #[cfg(target_os = "linux")]
+                sig if sig == mode_off => {
+                    debug!("Received SIGRTMIN+4 (dictation mode off)");
+                    send_mode_input(&app_handle, ModeCommand::Off);
+                }
+                #[cfg(target_os = "linux")]
+                sig if sig == mode_space => {
+                    debug!("Received SIGRTMIN+5 (dictation mode Space)");
+                    send_mode_input(&app_handle, ModeCommand::Space);
+                }
+                #[cfg(target_os = "linux")]
+                sig if sig == mode_delete => {
+                    debug!("Received SIGRTMIN+6 (dictation mode Delete)");
+                    send_mode_input(&app_handle, ModeCommand::Delete);
+                }
                 _ => continue,
             }
         }
@@ -126,6 +233,51 @@ mod tests {
         assert_eq!(ptt_stop_signal(), libc::SIGRTMIN() + 1);
         assert_ne!(ptt_start_signal(), ptt_stop_signal());
         assert!(ptt_stop_signal() <= libc::SIGRTMAX());
+    }
+
+    #[test]
+    fn all_handled_realtime_signals_are_distinct_and_in_bounds() {
+        let signals = [
+            ptt_start_signal(),
+            ptt_stop_signal(),
+            mode_prepare_signal(),
+            mode_on_signal(),
+            mode_off_signal(),
+            mode_space_signal(),
+            mode_delete_signal(),
+        ];
+        for (index, signal) in signals.iter().enumerate() {
+            assert!(
+                *signal >= libc::SIGRTMIN() && *signal <= libc::SIGRTMAX(),
+                "signal {signal} outside the realtime range"
+            );
+            for other in &signals[index + 1..] {
+                assert_ne!(signal, other, "duplicate realtime signal {signal}");
+            }
+        }
+        assert!(mode_prepare_signal() < mode_on_signal());
+        assert!(mode_on_signal() < mode_off_signal());
+        assert!(mode_off_signal() < mode_space_signal());
+        assert!(mode_space_signal() < mode_delete_signal());
+    }
+
+    #[test]
+    fn transcription_signals_cover_every_handled_input() {
+        let handled = transcription_signals();
+        for signal in [
+            SIGUSR1,
+            SIGUSR2,
+            ptt_start_signal(),
+            ptt_stop_signal(),
+            mode_prepare_signal(),
+            mode_on_signal(),
+            mode_off_signal(),
+            mode_space_signal(),
+            mode_delete_signal(),
+        ] {
+            assert!(handled.contains(&signal), "missing signal {signal}");
+        }
+        assert_eq!(handled.len(), 9);
     }
 
     #[test]

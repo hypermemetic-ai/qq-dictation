@@ -720,7 +720,7 @@ impl ShortcutAction for TranscribeAction {
         let target_token = crate::target_binding::latest_token();
 
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let finish_guard = FinishGuard(ah.clone());
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
@@ -868,6 +868,12 @@ impl ShortcutAction for TranscribeAction {
                                 let final_text = processed.final_text;
                                 let rm_for_paste = Arc::clone(&rm);
                                 ah.run_on_main_thread(move || {
+                                    // Processing remains active until delivery/teardown has
+                                    // actually run on the main thread. Moving the guard here
+                                    // keeps Delete/Right-Control cancellation effective while
+                                    // this closure is queued and restores armed state only after
+                                    // its final overlay hide.
+                                    let _finish_guard = finish_guard;
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
                                         utils::hide_recording_overlay(&ah_clone);

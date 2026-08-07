@@ -2,7 +2,7 @@
 
 `qq-dictation` is a private, per-user Handy distribution for QQ's Linux
 workstation. It preserves Handy's local speech recognition while adding
-Herdr-pane target binding, a Right-Control push-to-talk bridge, and a
+Herdr-pane target binding, a Right-Control armed dictation-mode bridge, and a
 reproducible user-local installation.
 
 ## Reproducible inputs
@@ -37,17 +37,18 @@ a dirty source tree and writes the exact Git commit into the AppDir as
 Installation writes only to the current user's directories:
 
 - application: `~/.local/opt/qq-dictation/Handy.AppDir`
-- launcher and PTT bridge: `~/.local/bin`
+- launcher and dictation-mode bridge: `~/.local/bin`
 - user service: `~/.config/systemd/user/handy-ptt.service`
 - models and history: Handy's existing app-data and Hugging Face cache
 
 Existing Handy app data—settings, ASR models, history, and logs—is not replaced.
 The installer backs up any launcher, bridge, service, settings file, or prior
-qq-dictation AppDir that it supersedes. It enables Herdr target binding and
-push-to-talk, disables API post-processing, enables the native minimal overlay,
-and disables upstream update checks so a stock release cannot replace the
-tracked local build. Updates to qq-dictation are built and installed explicitly
-from Git.
+qq-dictation AppDir that it supersedes. On a fresh profile it creates the minimal
+settings store before applying the same policy. It enables Herdr target binding
+and push-to-talk, disables API post-processing, enables the native minimal
+overlay, and disables upstream update checks so a stock release cannot replace
+the tracked local build. Updates to qq-dictation are built and installed
+explicitly from Git.
 
 ## Runtime policy
 
@@ -62,10 +63,24 @@ Non-Herdr recordings retain Handy's focus-based insertion behavior. Identified
 Herdr capture or delivery failures fail closed rather than typing into whichever
 application happens to be focused.
 
-The Right-Control bridge sends separate realtime signals for PTT press
-(`SIGRTMIN`) and release (`SIGRTMIN+1`). It does not use Handy's toggle signal:
-an ignored press while a previous transcript is still processing therefore
-cannot invert the next release into a recording start.
+The Right-Control bridge implements a visible system-wide dictation mode.
+Right-Control arms the mode and exits it; while armed, each distinct plain Space
+press starts or stops a recording and each plain Delete press cancels the
+active recording or in-flight transcription without delivery, staying armed.
+Space/Delete used with Ctrl, Alt, or Super retain their existing behavior. The
+bridge uses an explicit two-phase realtime contract: prepare (`SIGRTMIN+2`),
+mode-on (`SIGRTMIN+3`), mode-off (`SIGRTMIN+4`), Space (`SIGRTMIN+5`), and
+Delete (`SIGRTMIN+6`). The legacy push-to-talk pair remains on `SIGRTMIN` and
+`SIGRTMIN+1`. The bridge grabs plain Space/Delete across Caps Lock and Num Lock
+states without disturbing existing modified-key shortcuts. The armed overlay
+appears only after both bridge and app commit the mode. The bridge never uses
+Handy's toggle signal, so an
+ignored press while a previous transcript is still processing cannot invert a
+later action into a recording start. If the Handy process disappears or is
+replaced while the mode is armed, the bridge resets to mode off, releases the
+Space and Delete grabs, and the
+next explicit arm re-establishes the mode with the current Handy process;
+bridge or Handy restarts therefore always return to mode off.
 
 ## Recording state
 
@@ -74,7 +89,10 @@ transcribing state. On this Cinnamon/X11 host, GTK layer-shell is installed but
 unsupported because layer-shell is a Wayland protocol; Handy therefore uses its
 transparent Tauri window with a GTK notification-window hint. Cinnamon can keep
 that non-focusable, always-on-top overlay above fullscreen applications without
-treating it as a normal application window and raising the desktop panel. The
+treating it as a normal application window and raising the desktop panel. While
+the mode is armed and no work is active, the same overlay window shows a
+persistent armed legend (Space starts/stops, Delete cancels, Right-Control
+exits); recording and working states replace it until the work settles. The
 Right-Control bridge does not draw a second indicator.
 
 The installer also enables auto-submit. Herdr-bound transcripts are followed by

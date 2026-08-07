@@ -10,6 +10,10 @@ use tauri::{AppHandle, Manager};
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
 
+/// Descriptive hotkey string for dictation-mode recordings; appears only in
+/// logs, never in shortcut registration.
+const MODE_HOTKEY: &str = "Dictation mode (Space)";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
     Passthrough,
@@ -35,6 +39,15 @@ enum Command {
         recording_was_active: bool,
     },
     ProcessingFinished,
+    // Visible Space dictation mode (qq-dictation). Right-Control arms/exits;
+    // while armed, Space toggles recording and Delete cancels active work.
+    ModePrepare,
+    ModeOn,
+    ModeOff,
+    ModeSpace {
+        binding_id: String,
+    },
+    ModeDelete,
 }
 
 /// Pipeline lifecycle, owned exclusively by the coordinator thread.
@@ -83,6 +96,33 @@ fn classify_ptt_event(
     }
 }
 
+/// What a dictation-mode Space press does, given the armed flag and the
+/// pipeline stage owned by the coordinator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModeSpaceAction {
+    Start,
+    Stop,
+    Ignore,
+}
+
+fn classify_mode_space(armed: bool, stage: &Stage) -> ModeSpaceAction {
+    if !armed {
+        return ModeSpaceAction::Ignore;
+    }
+    match stage {
+        Stage::Idle => ModeSpaceAction::Start,
+        Stage::Recording(_) => ModeSpaceAction::Stop,
+        // Presses while a transcript is still in flight are ignored; they must
+        // never invert into a start once processing ends.
+        Stage::Processing => ModeSpaceAction::Ignore,
+    }
+}
+
+/// Delete cancels only when the mode is armed and there is active work.
+fn mode_delete_is_active(armed: bool, stage: &Stage) -> bool {
+    armed && matches!(stage, Stage::Recording(_) | Stage::Processing)
+}
+
 /// Serialises all transcription lifecycle events through a single thread
 /// to eliminate race conditions between keyboard shortcuts, signals, and
 /// the async transcribe-paste pipeline.
@@ -103,6 +143,11 @@ impl TranscriptionCoordinator {
                 let mut stage = Stage::Idle;
                 let mut last_press: Option<Instant> = None;
                 let mut pending_release: Option<PendingRelease> = None;
+                // Visible Space dictation mode (qq-dictation). Defaults to off
+                // on every start so a bridge or Handy restart never leaves the
+                // mode armed.
+                let mut prepared = false;
+                let mut armed = false;
 
                 loop {
                     let cmd = if let Some(pending) = &pending_release {
@@ -215,9 +260,109 @@ impl TranscriptionCoordinator {
                             {
                                 stage = Stage::Idle;
                             }
+                            // Once the stage has settled to idle, restore the armed
+                            // legend if the mode is still on. (During Processing the
+                            // restore happens on ProcessingFinished instead, after the
+                            // pipeline's own teardown has hidden the overlay.)
+                            if armed && matches!(stage, Stage::Idle) {
+                                crate::overlay::show_armed_overlay(&app);
+                            }
                         }
                         Command::ProcessingFinished => {
                             stage = Stage::Idle;
+                            if armed {
+                                crate::overlay::show_armed_overlay(&app);
+                            }
+                        }
+                        Command::ModePrepare => {
+                            if !prepared && !armed {
+                                if let Err(error) = crate::overlay::mark_dictation_mode_prepared() {
+                                    warn!("Cannot acknowledge prepared dictation mode: {error}");
+                                    continue;
+                                }
+                                prepared = true;
+                                debug!("Dictation mode prepared");
+                            }
+                        }
+                        Command::ModeOn => {
+                            if prepared && !armed {
+                                prepared = false;
+                                armed = true;
+                                // Show the armed legend without starting a recording.
+                                // If work somehow is already active it keeps its own
+                                // overlay; the legend returns when that work settles.
+                                if matches!(stage, Stage::Idle) {
+                                    crate::overlay::show_armed_overlay(&app);
+                                }
+                                if let Err(error) = crate::overlay::mark_dictation_mode_armed() {
+                                    warn!("Cannot acknowledge armed dictation mode: {error}");
+                                }
+                                debug!("Dictation mode armed");
+                            }
+                        }
+                        Command::ModeOff => {
+                            if prepared || armed {
+                                let was_armed = armed;
+                                prepared = false;
+                                armed = false;
+                                if let Err(error) = crate::overlay::mark_dictation_mode_off() {
+                                    warn!("Cannot acknowledge disarmed dictation mode: {error}");
+                                }
+                                if was_armed
+                                    && matches!(stage, Stage::Recording(_) | Stage::Processing)
+                                {
+                                    // Cancel active work. The cancellation path hides
+                                    // the overlay and notifies us via Command::Cancel;
+                                    // with armed=false that notification will not
+                                    // re-show the legend.
+                                    crate::utils::cancel_current_operation(&app);
+                                } else if was_armed {
+                                    // Idle: just hide the armed legend.
+                                    crate::utils::hide_recording_overlay(&app);
+                                }
+                                debug!("Dictation mode disarmed");
+                            }
+                        }
+                        Command::ModeSpace { binding_id } => {
+                            if !armed {
+                                debug!("Ignoring mode Space press: mode off");
+                                continue;
+                            }
+                            let recording_binding = match &stage {
+                                Stage::Recording(id) => Some(id.clone()),
+                                _ => None,
+                            };
+                            match classify_mode_space(armed, &stage) {
+                                ModeSpaceAction::Start => {
+                                    start(&app, &mut stage, &binding_id, MODE_HOTKEY);
+                                    if matches!(stage, Stage::Idle) {
+                                        // The action hides its recording overlay when microphone
+                                        // startup fails. The mode remains armed, so restore its
+                                        // persistent indicator immediately.
+                                        crate::overlay::show_armed_overlay(&app);
+                                    }
+                                }
+                                ModeSpaceAction::Stop => {
+                                    // Stop with the binding that started the recording.
+                                    if let Some(rec) = recording_binding {
+                                        stop(&app, &mut stage, &rec, MODE_HOTKEY);
+                                    }
+                                }
+                                ModeSpaceAction::Ignore => {
+                                    debug!("Ignoring mode Space press: pipeline busy")
+                                }
+                            }
+                        }
+                        Command::ModeDelete => {
+                            if mode_delete_is_active(armed, &stage) {
+                                // Existing cancellation path; it hides the overlay and
+                                // notifies us via Command::Cancel, which restores the
+                                // armed legend once the stage settles to idle.
+                                crate::utils::cancel_current_operation(&app);
+                            } else if !armed {
+                                debug!("Ignoring mode Delete press: mode off");
+                            }
+                            // Armed but idle: nothing to cancel, stay armed.
                         }
                     }
                 }
@@ -268,6 +413,47 @@ impl TranscriptionCoordinator {
 
     pub fn notify_processing_finished(&self) {
         if self.tx.send(Command::ProcessingFinished).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Prepare the visible mode by releasing conflicting Handy shortcuts.
+    pub fn mode_prepare(&self) {
+        if self.tx.send(Command::ModePrepare).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Commit the prepared visible Space dictation mode.
+    pub fn mode_on(&self) {
+        if self.tx.send(Command::ModeOn).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// Disarm the dictation mode, cancelling any active work.
+    pub fn mode_off(&self) {
+        if self.tx.send(Command::ModeOff).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// A distinct Space press while armed: toggle recording.
+    pub fn mode_space(&self, binding_id: &str) {
+        if self
+            .tx
+            .send(Command::ModeSpace {
+                binding_id: binding_id.to_string(),
+            })
+            .is_err()
+        {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// A Delete press while armed: cancel active work and stay armed.
+    pub fn mode_delete(&self) {
+        if self.tx.send(Command::ModeDelete).is_err() {
             warn!("Transcription coordinator channel closed");
         }
     }
@@ -383,6 +569,53 @@ mod tests {
             classify_ptt_lifecycle(&Stage::Idle, "transcribe", false),
             PttLifecycleAction::Ignore
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Visible Space dictation-mode classification.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn mode_space_toggles_only_while_armed() {
+        assert_eq!(
+            classify_mode_space(true, &Stage::Idle),
+            ModeSpaceAction::Start
+        );
+        assert_eq!(
+            classify_mode_space(true, &Stage::Recording("transcribe".into())),
+            ModeSpaceAction::Stop
+        );
+        // A disarmed Space press never starts or stops.
+        assert_eq!(
+            classify_mode_space(false, &Stage::Idle),
+            ModeSpaceAction::Ignore
+        );
+        assert_eq!(
+            classify_mode_space(false, &Stage::Recording("transcribe".into())),
+            ModeSpaceAction::Ignore
+        );
+    }
+
+    #[test]
+    fn mode_space_is_ignored_while_processing() {
+        assert_eq!(
+            classify_mode_space(true, &Stage::Processing),
+            ModeSpaceAction::Ignore
+        );
+    }
+
+    #[test]
+    fn mode_delete_cancels_only_when_armed_with_active_work() {
+        assert!(mode_delete_is_active(
+            true,
+            &Stage::Recording("transcribe".into())
+        ));
+        assert!(mode_delete_is_active(true, &Stage::Processing));
+        // Armed but idle: nothing to cancel.
+        assert!(!mode_delete_is_active(true, &Stage::Idle));
+        // Disarmed: never cancels.
+        assert!(!mode_delete_is_active(false, &Stage::Recording("t".into())));
+        assert!(!mode_delete_is_active(false, &Stage::Processing));
     }
 
     // ---------------------------------------------------------------------

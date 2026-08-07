@@ -4,7 +4,8 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
 
 - **qq-dictation**: QQ's private, Linux-focused local distribution of Handy. It
   retains Handy's on-device ASR while adding Herdr pane targeting and a
-  reproducible installation around QQ's Right-Control push-to-talk workflow.
+  reproducible installation around QQ's Right-Control armed dictation-mode
+  workflow (Right-Control arms/exits; Space starts/stops; Delete cancels).
 - **Upstream baseline**: Handy commit
   `8a362e9eba59d4057fda79b7f38f5b0d5cbabf65`. The repository has a read-only
   conceptual relationship with `https://github.com/cjpais/Handy.git` through
@@ -16,7 +17,7 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
 - **Legacy delivery**: Handy's focus-based text insertion, retained for
   recordings that genuinely start outside Herdr or when Herdr binding is
   explicitly disabled.
-- **Local package**: The AppDir, push-to-talk bridge, service, and settings
+- **Local package**: The AppDir, dictation-mode bridge, service, and settings
   migration installed only for the current Linux user. Handy's ASR models and
   history remain in their standard shared user-data locations.
 - **Dictation pair corpus**: The existing `transcription_history` table in
