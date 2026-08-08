@@ -49,13 +49,33 @@ pub enum VadPolicy {
 /// concurrently, so one detector is reconfigured per session (see `Cmd::Start`)
 /// rather than kept as two resident engines.
 #[derive(Clone)]
-struct VadConfig {
+pub(crate) struct VadConfig {
     detector: Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>,
     offline_hangover_frames: usize,
     streaming_hangover_frames: usize,
 }
 
 impl VadConfig {
+    pub(crate) fn new(
+        detector: Box<dyn vad::VoiceActivityDetector>,
+        offline_hangover_frames: usize,
+        streaming_hangover_frames: usize,
+    ) -> Self {
+        Self {
+            detector: Arc::new(Mutex::new(detector)),
+            offline_hangover_frames,
+            streaming_hangover_frames,
+        }
+    }
+
+    pub(crate) fn prepare(&self, policy: VadPolicy) {
+        if policy != VadPolicy::Disabled {
+            let mut detector = self.detector.lock().unwrap();
+            detector.set_hangover_frames(self.hangover_for(policy));
+            detector.reset();
+        }
+    }
+
     /// Post-speech hangover tail (in 30 ms frames) for the given policy.
     /// `Disabled` never reaches the detector, so it maps to the offline value.
     fn hangover_for(&self, policy: VadPolicy) -> usize {
@@ -103,16 +123,20 @@ impl AudioRecorder {
     /// streaming hangover tail. The two policies are mutually exclusive within a
     /// recording, so one engine covers both instead of two resident instances.
     pub fn with_vad(
-        mut self,
+        self,
         detector: Box<dyn VoiceActivityDetector>,
         offline_hangover_frames: usize,
         streaming_hangover_frames: usize,
     ) -> Self {
-        self.vad = Some(VadConfig {
-            detector: Arc::new(Mutex::new(detector)),
+        self.with_vad_config(VadConfig::new(
+            detector,
             offline_hangover_frames,
             streaming_hangover_frames,
-        });
+        ))
+    }
+
+    pub(crate) fn with_vad_config(mut self, config: VadConfig) -> Self {
+        self.vad = Some(config);
         self
     }
 
@@ -513,6 +537,44 @@ mod tests {
     }
 }
 
+pub(crate) fn accept_16khz_frame(
+    samples: &[f32],
+    recording: bool,
+    vad_policy: VadPolicy,
+    vad: &Option<VadConfig>,
+    audio_cb: &Option<AudioFrameCallback>,
+    out_buf: &mut Vec<f32>,
+) {
+    if !recording {
+        return;
+    }
+
+    let mut emit = |buf: &[f32]| {
+        out_buf.extend_from_slice(buf);
+        if let Some(cb) = audio_cb {
+            cb(buf);
+        }
+    };
+
+    if vad_policy == VadPolicy::Disabled {
+        emit(samples);
+        return;
+    }
+
+    if let Some(config) = vad {
+        let mut detector = config.detector.lock().unwrap();
+        match detector
+            .push_frame(samples)
+            .unwrap_or(VadFrame::Speech(samples))
+        {
+            VadFrame::Speech(buf) => emit(buf),
+            VadFrame::Noise => {}
+        }
+    } else {
+        emit(samples);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_consumer(
     in_sample_rate: u32,
@@ -562,41 +624,6 @@ fn run_consumer(
         4000.0, // vocal_max_hz
     );
 
-    fn handle_frame(
-        samples: &[f32],
-        recording: bool,
-        vad_policy: VadPolicy,
-        vad: &Option<VadConfig>,
-        audio_cb: &Option<AudioFrameCallback>,
-        out_buf: &mut Vec<f32>,
-    ) {
-        if !recording {
-            return;
-        }
-
-        let mut emit = |buf: &[f32]| {
-            out_buf.extend_from_slice(buf);
-            if let Some(cb) = audio_cb {
-                cb(buf);
-            }
-        };
-
-        if vad_policy == VadPolicy::Disabled {
-            emit(samples);
-            return;
-        }
-
-        if let Some(cfg) = vad {
-            let mut det = cfg.detector.lock().unwrap();
-            match det.push_frame(samples).unwrap_or(VadFrame::Speech(samples)) {
-                VadFrame::Speech(buf) => emit(buf),
-                VadFrame::Noise => {}
-            }
-        } else {
-            emit(samples);
-        }
-    }
-
     // Runs until the stream closes and `recv` returns `Err`.
     while let Ok(chunk) = sample_rx.recv() {
         // Handle pending commands BEFORE the in-flight chunk so a Start
@@ -621,12 +648,8 @@ fn run_consumer(
                     // Reconfigure the single VAD engine for this session's policy
                     // and clear its smoothing + recurrent state before it sees
                     // any frames.
-                    if vad_policy != VadPolicy::Disabled {
-                        if let Some(cfg) = &vad {
-                            let mut det = cfg.detector.lock().unwrap();
-                            det.set_hangover_frames(cfg.hangover_for(vad_policy));
-                            det.reset();
-                        }
+                    if let Some(config) = &vad {
+                        config.prepare(vad_policy);
                     }
                 }
                 Cmd::Stop(reply_tx) => {
@@ -637,7 +660,7 @@ fn run_consumer(
                     // the recording, so feed it ahead of the drain below.
                     if let Some(AudioChunk::Samples(raw)) = pending.take() {
                         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                            handle_frame(
+                            accept_16khz_frame(
                                 frame,
                                 true,
                                 vad_policy,
@@ -656,7 +679,7 @@ fn run_consumer(
                         match sample_rx.recv_timeout(Duration::from_secs(2)) {
                             Ok(AudioChunk::Samples(remaining)) => {
                                 frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                                    handle_frame(
+                                    accept_16khz_frame(
                                         frame,
                                         true,
                                         vad_policy,
@@ -675,7 +698,7 @@ fn run_consumer(
                     }
 
                     frame_resampler.finish(&mut |frame: &[f32]| {
-                        handle_frame(
+                        accept_16khz_frame(
                             frame,
                             true,
                             vad_policy,
@@ -723,7 +746,7 @@ fn run_consumer(
 
         // ---------- existing pipeline ------------------------------------ //
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(
+            accept_16khz_frame(
                 frame,
                 recording,
                 vad_policy,

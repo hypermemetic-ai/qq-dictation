@@ -609,6 +609,21 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 }
 
 #[cfg(target_os = "linux")]
+fn deliver_bound_herdr(
+    pane_id: &str,
+    text: &str,
+    auto_submit: bool,
+    mut deliver: impl FnMut(&str, &str) -> Result<(), String>,
+    mut send_enter: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    deliver(pane_id, text)?;
+    if auto_submit {
+        send_enter(pane_id)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn herdr_target(
     capture: Option<crate::target_binding::CaptureOutcome>,
     paste_method: PasteMethod,
@@ -655,15 +670,23 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
     {
         let capture = target_token.map(crate::target_binding::take_for_recording);
         if let Some(pane_id) = herdr_target(capture, paste_method)? {
-            crate::target_binding::deliver(&pane_id, &text)
-                .map_err(|e| format!("Failed to deliver to herdr pane {}: {}", pane_id, e))?;
+            deliver_bound_herdr(
+                &pane_id,
+                &text,
+                settings.auto_submit,
+                |pane_id, text| {
+                    crate::target_binding::deliver(pane_id, text).map_err(|error| {
+                        format!("Failed to deliver to herdr pane {pane_id}: {error}")
+                    })
+                },
+                |pane_id| {
+                    std::thread::sleep(Duration::from_millis(50));
+                    crate::target_binding::send_enter(pane_id).map_err(|error| {
+                        format!("Failed to send Enter to herdr pane {pane_id}: {error}")
+                    })
+                },
+            )?;
             info!("Delivered transcription to herdr pane {}", pane_id);
-            if settings.auto_submit {
-                std::thread::sleep(Duration::from_millis(50));
-                crate::target_binding::send_enter(&pane_id).map_err(|e| {
-                    format!("Failed to send Enter to herdr pane {}: {}", pane_id, e)
-                })?;
-            }
             if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
                 let clipboard = app_handle.clipboard();
                 clipboard
@@ -779,6 +802,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(failure.contains("snapshot timed out"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_keeps_exact_pane_and_orders_auto_submit_after_text() {
+        use std::cell::RefCell;
+
+        let calls = RefCell::new(Vec::new());
+        deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            true,
+            |pane, text| {
+                calls.borrow_mut().push(format!("text:{pane}:{text}"));
+                Ok(())
+            },
+            |pane| {
+                calls.borrow_mut().push(format!("enter:{pane}"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            calls.into_inner(),
+            ["text:wRemote:pBound:synthetic text", "enter:wRemote:pBound",]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_failure_prevents_auto_submit() {
+        let enter_called = std::cell::Cell::new(false);
+        let result = deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            true,
+            |_pane, _text| Err("synthetic delivery failure".to_string()),
+            |_pane| {
+                enter_called.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!enter_called.get());
     }
 
     #[cfg(target_os = "linux")]

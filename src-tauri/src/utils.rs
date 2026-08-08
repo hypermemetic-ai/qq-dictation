@@ -1,5 +1,6 @@
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
+use crate::operation::OperationOwner;
 use crate::shortcut;
 use crate::TranscriptionCoordinator;
 use log::info;
@@ -71,36 +72,49 @@ fn native_windows_machine() -> Option<u16> {
     }
 }
 
-/// Centralized cancellation function that can be called from anywhere in the app.
-/// Handles cancelling both recording and transcription operations and updates UI state.
+/// Request cancellation from a workstation-local control. The coordinator
+/// applies it only when a local source owns the current operation; it cannot
+/// cancel a remote request merely because that request happens to be active.
 pub fn cancel_current_operation(app: &AppHandle) {
-    info!("Initiating operation cancellation...");
-
-    // Unregister the cancel shortcut asynchronously
-    shortcut::unregister_cancel_shortcut(app);
-
-    // Cancel any ongoing recording
-    let audio_manager = app.state::<Arc<AudioRecordingManager>>();
-    let recording_was_active = audio_manager.is_recording();
-    audio_manager.cancel_recording();
-
-    // Abandon any live streaming transcription
-    let tm = app.state::<Arc<TranscriptionManager>>();
-    tm.cancel_stream();
-
-    // Update tray icon and hide overlay
-    change_tray_icon(app, crate::tray::TrayIconState::Idle);
-    hide_recording_overlay(app);
-
-    // Unload model if immediate unload is enabled
-    tm.maybe_unload_immediately("cancellation");
-
-    // Notify coordinator so it can keep lifecycle state coherent.
     if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-        coordinator.notify_cancel(recording_was_active);
+        coordinator.request_local_cancel();
+    } else {
+        log::warn!("Ignoring cancellation before TranscriptionCoordinator initialization");
+    }
+}
+
+/// Execute cancellation after the coordinator has authenticated `owner`.
+/// `recording_stage` distinguishes live capture from processing, where the
+/// recorder has already returned to Idle but its cancellation generation still
+/// gates post-processing and delivery.
+pub(crate) fn cancel_owned_operation(
+    app: &AppHandle,
+    owner: &OperationOwner,
+    recording_stage: bool,
+) {
+    info!("Cancelling operation owned by {owner}");
+
+    if owner.is_local() {
+        shortcut::unregister_cancel_shortcut(app);
     }
 
-    info!("Operation cancellation completed - returned to idle state");
+    let audio_manager = app.state::<Arc<AudioRecordingManager>>();
+    if recording_stage {
+        if !audio_manager.cancel_owned(owner) {
+            log::warn!("Cancellation owner no longer matches audio capture: {owner}");
+            return;
+        }
+    } else {
+        audio_manager.cancel_processing();
+    }
+
+    let transcription = app.state::<Arc<TranscriptionManager>>();
+    transcription.cancel_stream();
+    change_tray_icon(app, crate::tray::TrayIconState::Idle);
+    hide_recording_overlay(app);
+    transcription.maybe_unload_immediately("cancellation");
+
+    info!("Operation cancellation completed for {owner}");
 }
 
 /// Check if using the Wayland display server protocol

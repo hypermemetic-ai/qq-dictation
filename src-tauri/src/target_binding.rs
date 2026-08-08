@@ -92,12 +92,27 @@ pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
     token
 }
 
-/// The token of the most recently started recording; read at `stop` time.
+/// The token of the most recently started local recording; read at local stop.
 pub fn latest_token() -> u64 {
     LATEST_TOKEN.load(Ordering::SeqCst)
 }
 
-#[cfg(target_os = "linux")]
+/// Bind a remotely supplied, already-validated pane without consulting X11 or
+/// Herdr's session-global focus. The returned token is immutable delivery
+/// authority for this operation.
+pub(crate) fn bind_explicit(pane_id: String) -> u64 {
+    let token = NEXT_TOKEN.fetch_add(1, Ordering::SeqCst);
+    store_capture(token, CaptureOutcome::Bound(pane_id));
+    token
+}
+
+pub(crate) fn discard(token: u64) {
+    let mut captures = CAPTURES.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(captures) = captures.as_mut() {
+        captures.remove(&token);
+    }
+}
+
 fn store_capture(token: u64, capture: CaptureOutcome) {
     // into_inner: a poisoned map must remain usable so paste can still see an
     // explicit outcome (or fail closed on timeout).
@@ -245,6 +260,61 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
+    if pane_id.is_empty() || pane_id.len() > 64 || !pane_id.is_ascii() {
+        return false;
+    }
+    let Some((workspace, pane)) = pane_id.split_once(':') else {
+        return false;
+    };
+    pane_id.matches(':').count() == 1
+        && workspace.strip_prefix('w').is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        && pane.strip_prefix('p').is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn require_live_pane(
+    pane_id: &str,
+    probe: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    if !validate_pane_id(pane_id) {
+        return Err("malformed Herdr pane id".to_string());
+    }
+    probe(pane_id)
+}
+
+/// Verify that an exact pane id still resolves in the live Herdr server. This
+/// command addresses the supplied pane directly and never reads global focus.
+#[cfg(target_os = "linux")]
+pub(crate) fn pane_is_live(pane_id: &str) -> Result<(), String> {
+    require_live_pane(pane_id, |pane_id| {
+        let herdr = resolve_herdr()?;
+        let output = run_with_timeout(&herdr, &["pane", "get", pane_id], Duration::from_secs(2))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Herdr pane is not live: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Herdr pane response was malformed: {error}"))?;
+        let returned = value
+            .get("result")
+            .and_then(|result| result.get("pane"))
+            .and_then(|pane| pane.get("pane_id"))
+            .and_then(serde_json::Value::as_str);
+        if returned != Some(pane_id) {
+            return Err("Herdr pane response did not name the claimed pane".to_string());
+        }
+        Ok(())
+    })
+}
+
 /// Types `text` into the pane's PTY. Newlines are collapsed to spaces: a raw
 /// PTY write is not bracketed paste, so a literal newline would act as Enter
 /// and submit a half-delivered message.
@@ -370,6 +440,37 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn remote_pane_ids_are_strict_and_bounded() {
+        for valid in ["w2H:p13", "wM:pEC", "w1:p2"] {
+            assert!(validate_pane_id(valid), "expected valid pane id {valid}");
+        }
+        for invalid in [
+            "",
+            "w2H",
+            "w2H:p13:extra",
+            "focused_pane_id",
+            "w2H:p-13",
+            "../w2H:p13",
+            "w:p",
+        ] {
+            assert!(
+                !validate_pane_id(invalid),
+                "accepted malformed pane id {invalid}"
+            );
+        }
+        assert!(!validate_pane_id(&format!("w{}:p1", "a".repeat(64))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_claim_requires_a_live_exact_pane() {
+        assert_eq!(require_live_pane("w2H:p13", |_| Ok(())), Ok(()));
+        assert!(require_live_pane("malformed", |_| Ok(())).is_err());
+        assert!(require_live_pane("w2H:p13", |_| Err("not live".into())).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn send_text_args_do_not_inject_an_option_terminator() {
         assert_eq!(
             send_text_args("wM:p8P", "-leading dash is valid text"),
@@ -400,6 +501,17 @@ mod tests {
             take_for_recording(902),
             CaptureOutcome::Bound("wB:p2".to_string())
         );
+
+        let explicit = bind_explicit("wRemote:pBound".to_string());
+        assert_eq!(
+            take_for_recording(explicit),
+            CaptureOutcome::Bound("wRemote:pBound".to_string())
+        );
+        // Explicit tokens are one-shot and cannot be replayed into a later paste.
+        assert!(matches!(
+            take_for_recording(explicit),
+            CaptureOutcome::Failed(_)
+        ));
 
         for token in 1000..1012 {
             store_capture(token, CaptureOutcome::Bound(format!("wX:p{}", token)));

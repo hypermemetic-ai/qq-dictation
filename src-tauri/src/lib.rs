@@ -11,8 +11,11 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod operation;
 mod overlay;
 pub mod portable;
+#[cfg(target_os = "linux")]
+mod remote;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -184,6 +187,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
+
+    #[cfg(target_os = "linux")]
+    match remote::RemoteIngress::start(app_handle.clone()) {
+        Ok(ingress) => {
+            app_handle.manage(ingress);
+        }
+        Err(error) => {
+            log::error!("Remote dictation ingress is unavailable: {error}");
+        }
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -992,6 +1005,10 @@ pub fn run(cli_args: CliArgs) {
             }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
+                #[cfg(target_os = "linux")]
+                if let Some(ingress) = app.try_state::<Arc<remote::RemoteIngress>>() {
+                    ingress.shutdown();
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }
