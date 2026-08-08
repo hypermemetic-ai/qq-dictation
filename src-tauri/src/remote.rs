@@ -4,7 +4,9 @@
 //! request/connection identity, the owner-only Unix socket, and dispatch into
 //! the app's single [`TranscriptionCoordinator`] authority.
 
-use crate::transcription_coordinator::{RemoteStatus, TranscriptionCoordinator};
+use crate::transcription_coordinator::{
+    RemoteCancelStatus, RemoteStatus, TranscriptionCoordinator,
+};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -141,9 +143,10 @@ struct ConnectionSession {
 impl ConnectionSession {
     fn begin(&mut self, request_id: String) -> Result<(), String> {
         if self.request_id.is_some() {
-            return Err("A helper connection may own only one request".to_string());
+            return Err("A helper connection may own only one active request".to_string());
         }
         self.request_id = Some(request_id);
+        self.bound_acknowledged = false;
         Ok(())
     }
 
@@ -162,6 +165,17 @@ impl ConnectionSession {
         } else {
             Err("Audio is forbidden before exact-pane acknowledgement".to_string())
         }
+    }
+
+    fn retire(&mut self, request_id: &str) -> Result<(), String> {
+        self.authorize(request_id)?;
+        self.request_id = None;
+        self.bound_acknowledged = false;
+        Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
+        self.request_id.is_none()
     }
 }
 
@@ -402,7 +416,12 @@ fn handle_connection(app: AppHandle, mut stream: UnixStream) -> Result<(), Strin
     let mut session = ConnectionSession::default();
 
     let result = (|| {
-        while let Some(payload) = read_frame(&mut stream)? {
+        loop {
+            let payload = match read_frame(&mut stream, session.is_idle())? {
+                FrameRead::Payload(payload) => payload,
+                FrameRead::IdleTimeout => continue,
+                FrameRead::Eof => break,
+            };
             let request: WireRequest = serde_json::from_slice(&payload)
                 .map_err(|error| format!("Malformed protocol message: {error}"))?;
             if request.version() != PROTOCOL_VERSION {
@@ -474,36 +493,94 @@ fn dispatch_request(
         }
         WireRequest::Cancel { request_id, .. } => {
             session.authorize(&request_id)?;
-            coordinator.remote_cancel(connection_id, request_id.clone())?;
-            Ok(WireResponse::status("cancelled", Some(&request_id), None))
+            let status = coordinator.remote_cancel(connection_id, request_id.clone())?;
+            cancel_response(session, &request_id, status)
         }
         WireRequest::Status { request_id, .. } => {
             session.authorize(&request_id)?;
             let status = coordinator.remote_status(connection_id, request_id.clone())?;
-            let (status, pane_id) = match &status {
-                RemoteStatus::Pending => ("pending", None),
-                RemoteStatus::Bound { pane_id } => {
-                    session.bound_acknowledged = true;
-                    ("bound", Some(pane_id.as_str()))
-                }
-                RemoteStatus::Processing => ("processing", None),
-                RemoteStatus::Succeeded => ("succeeded", None),
-                RemoteStatus::Failed => ("failed", None),
-                RemoteStatus::Cancelled => ("cancelled", None),
-            };
-            Ok(WireResponse::status(status, Some(&request_id), pane_id))
+            status_response(session, &request_id, status)
         }
     }
 }
 
-fn read_frame(reader: &mut impl Read) -> Result<Option<Vec<u8>>, String> {
+fn cancel_response(
+    session: &mut ConnectionSession,
+    request_id: &str,
+    status: RemoteCancelStatus,
+) -> Result<WireResponse, String> {
+    let wire_status = match status {
+        RemoteCancelStatus::Cancelled => {
+            session.retire(request_id)?;
+            "cancelled"
+        }
+        RemoteCancelStatus::Cancelling => "cancelling",
+    };
+    Ok(WireResponse::status(wire_status, Some(request_id), None))
+}
+
+fn status_response(
+    session: &mut ConnectionSession,
+    request_id: &str,
+    status: RemoteStatus,
+) -> Result<WireResponse, String> {
+    let terminal = matches!(
+        status,
+        RemoteStatus::Succeeded | RemoteStatus::Failed | RemoteStatus::Cancelled
+    );
+    let (wire_status, pane_id) = match &status {
+        RemoteStatus::Pending => ("pending", None),
+        RemoteStatus::Bound { pane_id } => {
+            session.bound_acknowledged = true;
+            ("bound", Some(pane_id.as_str()))
+        }
+        RemoteStatus::Processing => ("processing", None),
+        RemoteStatus::Cancelling => ("cancelling", None),
+        RemoteStatus::Succeeded => ("succeeded", None),
+        RemoteStatus::Failed => ("failed", None),
+        RemoteStatus::Cancelled => ("cancelled", None),
+    };
+    let response = WireResponse::status(wire_status, Some(request_id), pane_id);
+    if terminal {
+        session.retire(request_id)?;
+    }
+    Ok(response)
+}
+
+#[derive(Debug, PartialEq)]
+enum FrameRead {
+    Payload(Vec<u8>),
+    IdleTimeout,
+    Eof,
+}
+
+fn read_frame(reader: &mut impl Read, idle_timeout_allowed: bool) -> Result<FrameRead, String> {
     let mut header = [0u8; 4];
-    match reader.read(&mut header[..1]) {
-        Ok(0) => return Ok(None),
-        Ok(1) => {}
-        Ok(_) => unreachable!(),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => return read_frame(reader),
-        Err(error) => return Err(format!("Failed to read protocol frame: {error}")),
+    loop {
+        match reader.read(&mut header[..1]) {
+            Ok(0) => return Ok(FrameRead::Eof),
+            Ok(1) => break,
+            Ok(_) => unreachable!(),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error)
+                if idle_timeout_allowed
+                    && matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                return Ok(FrameRead::IdleTimeout)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                return Err("Active remote request timed out".to_string())
+            }
+            Err(error) => return Err(format!("Failed to read protocol frame: {error}")),
+        }
     }
     reader
         .read_exact(&mut header[1..])
@@ -516,7 +593,7 @@ fn read_frame(reader: &mut impl Read) -> Result<Option<Vec<u8>>, String> {
     reader
         .read_exact(&mut payload)
         .map_err(|error| format!("Truncated protocol frame payload: {error}"))?;
-    Ok(Some(payload))
+    Ok(FrameRead::Payload(payload))
 }
 
 fn write_response(writer: &mut impl Write, response: &WireResponse) -> Result<(), String> {
@@ -590,13 +667,14 @@ mod tests {
 
     #[test]
     fn frame_reader_rejects_empty_oversized_and_truncated_frames() {
-        assert!(read_frame(&mut Cursor::new(0u32.to_be_bytes())).is_err());
-        assert!(read_frame(&mut Cursor::new(
-            ((MAX_PROTOCOL_FRAME_BYTES + 1) as u32).to_be_bytes()
-        ))
+        assert!(read_frame(&mut Cursor::new(0u32.to_be_bytes()), true).is_err());
+        assert!(read_frame(
+            &mut Cursor::new(((MAX_PROTOCOL_FRAME_BYTES + 1) as u32).to_be_bytes()),
+            true,
+        )
         .is_err());
-        assert!(read_frame(&mut Cursor::new(vec![0, 0, 0])).is_err());
-        assert!(read_frame(&mut Cursor::new(framed(b"short")[..7].to_vec())).is_err());
+        assert!(read_frame(&mut Cursor::new(vec![0, 0, 0]), true).is_err());
+        assert!(read_frame(&mut Cursor::new(framed(b"short")[..7].to_vec()), true).is_err());
     }
 
     #[test]
@@ -604,22 +682,108 @@ mod tests {
         let bytes = framed(br#"{"type":"status"}"#);
         let mut cursor = Cursor::new(bytes);
         assert_eq!(
-            read_frame(&mut cursor).unwrap(),
-            Some(br#"{"type":"status"}"#.to_vec())
+            read_frame(&mut cursor, true).unwrap(),
+            FrameRead::Payload(br#"{"type":"status"}"#.to_vec())
         );
-        assert_eq!(read_frame(&mut cursor).unwrap(), None);
+        assert_eq!(read_frame(&mut cursor, true).unwrap(), FrameRead::Eof);
+    }
+
+    struct TimeoutReader {
+        bytes: Cursor<Vec<u8>>,
+    }
+
+    impl TimeoutReader {
+        fn after(bytes: impl Into<Vec<u8>>) -> Self {
+            Self {
+                bytes: Cursor::new(bytes.into()),
+            }
+        }
+    }
+
+    impl Read for TimeoutReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.bytes.position() < self.bytes.get_ref().len() as u64 {
+                self.bytes.read(buffer)
+            } else {
+                Err(io::Error::new(io::ErrorKind::TimedOut, "synthetic timeout"))
+            }
+        }
     }
 
     #[test]
-    fn connection_session_refuses_replay_and_cross_request_control() {
+    fn read_timeout_is_tolerated_only_between_idle_session_frames() {
+        let mut idle_timeout = TimeoutReader::after([]);
+        assert_eq!(
+            read_frame(&mut idle_timeout, true).unwrap(),
+            FrameRead::IdleTimeout
+        );
+
+        let mut active_timeout = TimeoutReader::after([]);
+        assert!(read_frame(&mut active_timeout, false)
+            .unwrap_err()
+            .contains("Active remote request timed out"));
+
+        let mut partial_header_timeout = TimeoutReader::after([0]);
+        assert!(read_frame(&mut partial_header_timeout, true)
+            .unwrap_err()
+            .contains("Truncated protocol frame header"));
+
+        let mut partial_payload_timeout = TimeoutReader::after(framed(b"short")[..7].to_vec());
+        assert!(read_frame(&mut partial_payload_timeout, true)
+            .unwrap_err()
+            .contains("Truncated protocol frame payload"));
+    }
+
+    #[test]
+    fn connection_session_retires_only_terminal_request_then_accepts_the_next() {
         let mut session = ConnectionSession::default();
         session.begin("request-a".into()).unwrap();
         assert_eq!(session.authorize("request-a"), Ok(()));
         assert!(session.authorize_audio("request-a").is_err());
-        session.bound_acknowledged = true;
-        assert_eq!(session.authorize_audio("request-a"), Ok(()));
         assert!(session.authorize("request-b").is_err());
         assert!(session.begin("request-b".into()).is_err());
+
+        status_response(&mut session, "request-a", RemoteStatus::Pending).unwrap();
+        status_response(
+            &mut session,
+            "request-a",
+            RemoteStatus::Bound {
+                pane_id: "wA:p1".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(session.authorize_audio("request-a"), Ok(()));
+        status_response(&mut session, "request-a", RemoteStatus::Processing).unwrap();
+        assert!(!session.is_idle());
+
+        status_response(&mut session, "request-a", RemoteStatus::Succeeded).unwrap();
+        assert!(session.is_idle());
+        assert!(session.authorize("request-a").is_err());
+        assert!(session.retire("request-a").is_err());
+        session.begin("request-b".into()).unwrap();
+        assert_eq!(session.authorize("request-b"), Ok(()));
+        assert!(session.authorize("request-a").is_err());
+    }
+
+    #[test]
+    fn cancellation_in_progress_retains_session_until_terminal_status() {
+        let mut session = ConnectionSession::default();
+        session.begin("request-a".into()).unwrap();
+        let response =
+            cancel_response(&mut session, "request-a", RemoteCancelStatus::Cancelling).unwrap();
+        assert_eq!(response.status, "cancelling");
+        assert!(!session.is_idle());
+
+        status_response(&mut session, "request-a", RemoteStatus::Cancelling).unwrap();
+        assert!(!session.is_idle());
+        status_response(&mut session, "request-a", RemoteStatus::Cancelled).unwrap();
+        assert!(session.is_idle());
+
+        session.begin("request-b".into()).unwrap();
+        let response =
+            cancel_response(&mut session, "request-b", RemoteCancelStatus::Cancelled).unwrap();
+        assert_eq!(response.status, "cancelled");
+        assert!(session.is_idle());
     }
 
     #[test]

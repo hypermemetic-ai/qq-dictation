@@ -43,9 +43,16 @@ pub(crate) enum RemoteStatus {
     Pending,
     Bound { pane_id: String },
     Processing,
+    Cancelling,
     Succeeded,
     Failed,
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteCancelStatus {
+    Cancelled,
+    Cancelling,
 }
 
 struct PendingRemote {
@@ -148,7 +155,7 @@ enum Command {
     RemoteCancel {
         connection_id: u64,
         request_id: String,
-        reply: Sender<Result<(), String>>,
+        reply: Sender<Result<RemoteCancelStatus, String>>,
     },
     RemoteStatus {
         connection_id: u64,
@@ -257,6 +264,25 @@ fn active_local_binding(stage: &Stage) -> Option<&str> {
 
 fn remote_matches(remote: &ActiveRemote, connection_id: u64, request_id: &str) -> bool {
     remote.connection_id() == connection_id && remote.request_id() == request_id
+}
+
+fn active_remote_status(remote: &ActiveRemote) -> RemoteStatus {
+    match remote {
+        ActiveRemote::Pending(_) => RemoteStatus::Pending,
+        ActiveRemote::Bound(remote) => RemoteStatus::Bound {
+            pane_id: remote.pane_id.clone(),
+        },
+        ActiveRemote::Processing(remote) if remote.cancelled => RemoteStatus::Cancelling,
+        ActiveRemote::Processing(_) => RemoteStatus::Processing,
+    }
+}
+
+fn processing_finish_status(remote: &ProcessingRemote, outcome: OperationOutcome) -> RemoteStatus {
+    if remote.cancelled {
+        RemoteStatus::Cancelled
+    } else {
+        finish_status(outcome)
+    }
 }
 
 fn remote_slot_available(stage: &Stage, active_remote: &Option<ActiveRemote>) -> bool {
@@ -508,16 +534,13 @@ impl TranscriptionCoordinator {
                                 if let Some(ActiveRemote::Processing(remote)) = active_remote.take()
                                 {
                                     if owner.remote_request_id() == Some(&remote.request_id) {
+                                        let status = processing_finish_status(&remote, outcome);
                                         crate::target_binding::discard(remote.target_token);
                                         push_terminal(
                                             &mut terminals,
                                             remote.request_id,
                                             remote.connection_id,
-                                            if remote.cancelled {
-                                                RemoteStatus::Cancelled
-                                            } else {
-                                                finish_status(outcome)
-                                            },
+                                            status,
                                             Instant::now(),
                                         );
                                     } else {
@@ -785,16 +808,7 @@ impl TranscriptionCoordinator {
                                 Some(remote)
                                     if remote_matches(remote, connection_id, &request_id) =>
                                 {
-                                    Ok(match remote {
-                                        ActiveRemote::Pending(_) => RemoteStatus::Pending,
-                                        ActiveRemote::Bound(remote) => RemoteStatus::Bound {
-                                            pane_id: remote.pane_id.clone(),
-                                        },
-                                        ActiveRemote::Processing(remote) if remote.cancelled => {
-                                            RemoteStatus::Cancelled
-                                        }
-                                        ActiveRemote::Processing(_) => RemoteStatus::Processing,
-                                    })
+                                    Ok(active_remote_status(remote))
                                 }
                                 _ => {
                                     terminal_status(&mut terminals, connection_id, &request_id, now)
@@ -935,7 +949,7 @@ impl TranscriptionCoordinator {
         &self,
         connection_id: u64,
         request_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<RemoteCancelStatus, String> {
         self.request(|reply| Command::RemoteCancel {
             connection_id,
             request_id,
@@ -992,7 +1006,7 @@ fn cancel_remote(
     active_remote: &mut Option<ActiveRemote>,
     connection_id: u64,
     request_id: &str,
-) -> Result<(), String> {
+) -> Result<RemoteCancelStatus, String> {
     let Some(remote) = active_remote.as_mut() else {
         return Err("No remote request is active".to_string());
     };
@@ -1004,6 +1018,7 @@ fn cancel_remote(
         ActiveRemote::Pending(_) => {
             *active_remote = None;
             *stage = Stage::Idle;
+            Ok(RemoteCancelStatus::Cancelled)
         }
         ActiveRemote::Bound(remote) => {
             let owner = OperationOwner::remote(&remote.request_id);
@@ -1011,15 +1026,19 @@ fn cancel_remote(
             crate::target_binding::discard(remote.plan.target_token);
             *active_remote = None;
             *stage = Stage::Idle;
+            Ok(RemoteCancelStatus::Cancelled)
+        }
+        ActiveRemote::Processing(remote) if remote.cancelled => {
+            Err("Remote request is already cancelling".to_string())
         }
         ActiveRemote::Processing(remote) => {
             let owner = OperationOwner::remote(&remote.request_id);
             crate::utils::cancel_owned_operation(app, &owner, false);
             crate::target_binding::discard(remote.target_token);
             remote.cancelled = true;
+            Ok(RemoteCancelStatus::Cancelling)
         }
     }
-    Ok(())
 }
 
 fn start_local(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
@@ -1152,6 +1171,35 @@ mod tests {
         }));
         assert!(!remote_slot_available(&stage, &active));
         assert_eq!(active.as_ref().unwrap().request_id(), "request-a");
+    }
+
+    #[test]
+    fn processing_cancel_stays_busy_until_completion_records_cancelled() {
+        let mut stage = Stage::Processing(OperationOwner::remote("request-a"));
+        let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
+            request_id: "request-a".into(),
+            connection_id: 7,
+            request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
+            target_token: 41,
+            cancelled: true,
+        }));
+
+        assert_eq!(
+            active_remote_status(active.as_ref().unwrap()),
+            RemoteStatus::Cancelling
+        );
+        assert!(!remote_slot_available(&stage, &active));
+        let ActiveRemote::Processing(processing) = active.as_ref().unwrap() else {
+            panic!("expected processing remote")
+        };
+        assert_eq!(
+            processing_finish_status(processing, OperationOutcome::Succeeded),
+            RemoteStatus::Cancelled
+        );
+
+        active = None;
+        stage = Stage::Idle;
+        assert!(remote_slot_available(&stage, &active));
     }
 
     #[test]

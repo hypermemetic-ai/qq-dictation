@@ -163,13 +163,30 @@ def command_entries(document: dict) -> list[dict]:
     return commands
 
 
+def binding_contains_chord(value: object) -> bool:
+    return value == BINDER_CHORD or (
+        isinstance(value, list) and any(item == BINDER_CHORD for item in value)
+    )
+
+
 def check_unmarked_conflicts(document: dict, binder: Path) -> None:
     keys = document.get("keys", {})
     if not isinstance(keys, dict):
         raise PolicyError("Herdr [keys] value is not a table")
     for name, value in keys.items():
-        if name not in {"command", "prefix", "indexed"} and value == BINDER_CHORD:
+        if name not in {"command", "prefix", "indexed"} and binding_contains_chord(
+            value
+        ):
             raise PolicyError(f"Herdr chord {BINDER_CHORD} is occupied by keys.{name}")
+
+    indexed = keys.get("indexed", {})
+    if not isinstance(indexed, dict):
+        raise PolicyError("Herdr [keys.indexed] value is not a table")
+    for name, value in indexed.items():
+        if name == BINDER_CHORD or binding_contains_chord(value):
+            raise PolicyError(
+                f"Herdr chord {BINDER_CHORD} is occupied by keys.indexed.{name}"
+            )
 
     for command in command_entries(document):
         if command.get("key") == BINDER_CHORD:
@@ -384,22 +401,27 @@ def configure(configured_path: Path, binder_path: Path, herdr: Path) -> Path | N
         verify_source_unchanged(target, original)
         os.replace(candidate, target.target_path)
         replaced = True
-        verify_identity(target)
         try:
-            reload_and_check(herdr)
-        except PolicyError as install_error:
-            materialize(target.target_path, original, target.metadata)
             verify_identity(target)
-            rollback_error = None
+            reload_and_check(herdr)
+        except (OSError, PolicyError, shutil.Error) as install_error:
+            rollback_errors: list[str] = []
+            try:
+                materialize(target.target_path, original, target.metadata)
+                verify_identity(target)
+            except (OSError, PolicyError, shutil.Error) as error:
+                rollback_errors.append(f"target rollback failed: {error}")
             try:
                 reload_and_check(herdr)
-            except PolicyError as error:
-                rollback_error = error
-            if rollback_error is not None:
+            except (OSError, PolicyError, shutil.Error) as error:
+                rollback_errors.append(f"running-config rollback failed: {error}")
+            if rollback_errors:
                 raise PolicyError(
-                    f"{install_error}; target rolled back but running-config rollback failed: {rollback_error}"
+                    f"{install_error}; " + "; ".join(rollback_errors)
                 ) from install_error
-            raise PolicyError(f"{install_error}; target and running config rolled back") from install_error
+            raise PolicyError(
+                f"{install_error}; target and running config rolled back"
+            ) from install_error
         return backup
     finally:
         if not replaced:

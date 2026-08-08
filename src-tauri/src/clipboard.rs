@@ -613,14 +613,9 @@ fn deliver_bound_herdr(
     pane_id: &str,
     text: &str,
     auto_submit: bool,
-    mut deliver: impl FnMut(&str, &str) -> Result<(), String>,
-    mut send_enter: impl FnMut(&str) -> Result<(), String>,
+    mut deliver: impl FnMut(&str, &str, bool) -> Result<(), String>,
 ) -> Result<(), String> {
-    deliver(pane_id, text)?;
-    if auto_submit {
-        send_enter(pane_id)?;
-    }
-    Ok(())
+    deliver(pane_id, text, auto_submit)
 }
 
 #[cfg(target_os = "linux")]
@@ -674,15 +669,9 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
                 &pane_id,
                 &text,
                 settings.auto_submit,
-                |pane_id, text| {
-                    crate::target_binding::deliver(pane_id, text).map_err(|error| {
+                |pane_id, text, auto_submit| {
+                    crate::target_binding::deliver(pane_id, text, auto_submit).map_err(|error| {
                         format!("Failed to deliver to herdr pane {pane_id}: {error}")
-                    })
-                },
-                |pane_id| {
-                    std::thread::sleep(Duration::from_millis(50));
-                    crate::target_binding::send_enter(pane_id).map_err(|error| {
-                        format!("Failed to send Enter to herdr pane {pane_id}: {error}")
                     })
                 },
             )?;
@@ -806,7 +795,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn bound_delivery_keeps_exact_pane_and_orders_auto_submit_after_text() {
+    fn bound_delivery_is_one_exact_pane_call_with_auto_submit_policy() {
         use std::cell::RefCell;
 
         let calls = RefCell::new(Vec::new());
@@ -814,12 +803,10 @@ mod tests {
             "wRemote:pBound",
             "synthetic text",
             true,
-            |pane, text| {
-                calls.borrow_mut().push(format!("text:{pane}:{text}"));
-                Ok(())
-            },
-            |pane| {
-                calls.borrow_mut().push(format!("enter:{pane}"));
+            |pane, text, auto_submit| {
+                calls
+                    .borrow_mut()
+                    .push((pane.to_string(), text.to_string(), auto_submit));
                 Ok(())
             },
         )
@@ -827,26 +814,47 @@ mod tests {
 
         assert_eq!(
             calls.into_inner(),
-            ["text:wRemote:pBound:synthetic text", "enter:wRemote:pBound",]
+            [("wRemote:pBound".into(), "synthetic text".into(), true)]
         );
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn bound_delivery_failure_prevents_auto_submit() {
-        let enter_called = std::cell::Cell::new(false);
+    fn bound_delivery_failure_has_no_second_call_or_fallback() {
+        let calls = std::cell::Cell::new(0);
         let result = deliver_bound_herdr(
             "wRemote:pBound",
             "synthetic text",
             true,
-            |_pane, _text| Err("synthetic delivery failure".to_string()),
-            |_pane| {
-                enter_called.set(true);
-                Ok(())
+            |_pane, _text, _auto_submit| {
+                calls.set(calls.get() + 1);
+                Err("synthetic delivery failure".to_string())
             },
         );
         assert!(result.is_err());
-        assert!(!enter_called.get());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_without_auto_submit_keeps_text_unchanged() {
+        let observed = std::cell::RefCell::new(None);
+        deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            false,
+            |pane, text, auto_submit| {
+                observed
+                    .borrow_mut()
+                    .replace((pane.to_string(), text.to_string(), auto_submit));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            observed.into_inner(),
+            Some(("wRemote:pBound".into(), "synthetic text".into(), false))
+        );
     }
 
     #[cfg(target_os = "linux")]

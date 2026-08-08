@@ -9,7 +9,7 @@ The normal per-user workstation installer now installs these stable executables:
 - `~/.local/bin/handy-remote-stream.py`, the SSH stdio-to-app-socket byte bridge;
 - `~/.local/bin/handy-remote-bind.py`, the detached exact-pane claimant.
 
-It also runs `scripts/configure-remote-herdr.py` against the active Herdr config. The utility supports Herdr 0.7.5 only. It appends or updates one marked detached-shell `prefix+alt+d` command, validates a same-directory candidate through `HERDR_CONFIG_PATH`, atomically replaces only the resolved regular target, reloads, and checks the running server. A config symlink remains the same symlink. The resolved target is backed up with a `.before-qq-dictation.*` suffix. Missing, foreign-owned, world-writable, chained-symlink, hard-linked, malformed, duplicate-marker, occupied-chord, and conflicting-command states are refused. Reload or post-check failure atomically restores and reloads the backup.
+It also runs `scripts/configure-remote-herdr.py` against the active Herdr config. The utility supports Herdr 0.7.5 only. It appends or updates one marked detached-shell `prefix+alt+d` command, validates a same-directory candidate through `HERDR_CONFIG_PATH`, atomically replaces only the resolved regular target, reloads, and checks the running server. A config symlink remains the same symlink. The resolved target is backed up with a `.before-qq-dictation.*` suffix. Missing, foreign-owned, world-writable, chained-symlink, hard-linked, malformed, duplicate-marker, scalar/array/indexed occupied-chord, and conflicting-command states are refused. Every failure after replacement atomically restores the fixed inspected target and makes a best-effort running-config rollback.
 
 The standalone hermetic/install surface is:
 
@@ -33,7 +33,7 @@ Install with exact facts from that laptop, for example:
   --herdr-prefix ctrl+b
 ```
 
-The placeholders are not source defaults. The installer writes owner-only `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. Existing differing configuration is never overwritten. The microphone command is a JSON argv array, defaults to:
+The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. An existing config must still be an operator-owned regular file with exact mode `0600`; differing or less private configuration is refused before client/service replacement or systemd. The microphone command is a JSON argv array, defaults to:
 
 ```json
 [
@@ -58,9 +58,11 @@ A PipeWire `--target` may be added to that argv during installation. The client 
 
 Arming creates exactly one SSH helper process and dynamically grabs Space/Delete. Start captures the active X11 window ID and requires its exact configured title and class. After the workstation returns `pending`, the client rechecks that same active window and asks `xdotool` to inject the configured Herdr prefix followed by the reserved `alt+d` into that exact window ID. It rechecks the active identity, waits for `bound`, and starts `pw-record` only after the bound response. It never reads Herdr global focus and never opens a second SSH connection.
 
-PCM is framed and sent as it arrives, before Space-stop. Stop terminates and reaps capture, sends `finish`, and shows `processing` until the workstation reports a terminal result. Notifications expose `off`, `armed`, `recording`, `processing`, and `failed` states.
+PCM is framed and sent as it arrives, before Space-stop. Stop terminates and reaps capture, sends `finish`, and shows `processing` until the workstation reports a terminal result. Recording cancellation returns to armed immediately; processing cancellation remains visibly non-recording and in progress until the workstation completion guard reports terminal cancellation. Each terminal request is retired so Space can start another request on the same one SSH helper. Normal idle armed periods do not expire that helper. Notifications expose `off`, `armed`, `recording`, `processing`, and `failed` states.
 
-Window mismatch, chord failure, missing/late binding, malformed/stale response, SSH EOF/timeout/replacement, microphone truncation/exit, app/Herdr loss, and unexpected state all fail closed. Failure cancels the owned request when possible, terminates and reaps both children, releases Space/Delete, and leaves a visible failed non-recording state. No automatic reconnect can attach an orphan request to later delivery.
+Bound-pane delivery issues one Herdr `pane send-text` call to the immutable pane. With auto-submit enabled its literal payload is normalized transcript text plus one trailing carriage return; no separate `send-keys` process or current-focus fallback exists.
+
+Window mismatch, chord failure, missing/late binding, malformed/stale response, active-request timeout, SSH EOF/replacement, microphone truncation/exit, app/Herdr loss, and unexpected state all fail closed. Failure cancels the owned request when possible, terminates and reaps both children, releases Space/Delete, and leaves a visible failed non-recording state. No automatic reconnect can attach an orphan request to later delivery.
 
 ## Approved later live proof
 

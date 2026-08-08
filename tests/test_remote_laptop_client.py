@@ -201,7 +201,9 @@ class FakeTransport:
         self.started = False
         self.closed = False
         self.messages = []
-        self.binding_done = False
+        self.request_number = 0
+        self.active_request = None
+        self.phase = None
         self.processing_polls = 0
         self.terminal = terminal
         self.exited = False
@@ -212,28 +214,58 @@ class FakeTransport:
     def exchange(self, message):
         self.messages.append(message)
         kind = message["type"]
-        request = message.get("request_id", "r1")
         if kind == "start":
-            return {"version": 1, "status": "pending", "request_id": "r1"}
-        if kind == "status" and not self.binding_done:
-            self.binding_done = True
+            if self.active_request is not None:
+                raise client.ClientError("overlapping fake request")
+            self.request_number += 1
+            self.active_request = f"r{self.request_number}"
+            self.phase = "pending"
+            self.processing_polls = 0
+            return {
+                "version": 1,
+                "status": "pending",
+                "request_id": self.active_request,
+            }
+
+        request = message.get("request_id")
+        if request != self.active_request:
+            raise client.ClientError("stale fake request")
+        if kind == "status" and self.phase == "pending":
+            self.phase = "recording"
             return {
                 "version": 1,
                 "status": "bound",
                 "request_id": request,
                 "pane_id": "wA:p1",
             }
-        if kind == "audio":
+        if kind == "audio" and self.phase == "recording":
             return {"version": 1, "status": "accepted", "request_id": request}
-        if kind == "finish":
+        if kind == "finish" and self.phase == "recording":
+            self.phase = "processing"
             return {"version": 1, "status": "processing", "request_id": request}
-        if kind == "status":
+        if kind == "status" and self.phase == "processing":
             self.processing_polls += 1
             status = "processing" if self.processing_polls == 1 else self.terminal
+            if status in {"succeeded", "failed", "cancelled"}:
+                self.active_request = None
+                self.phase = None
+            return {"version": 1, "status": status, "request_id": request}
+        if kind == "status" and self.phase == "cancelling":
+            self.processing_polls += 1
+            status = "cancelling" if self.processing_polls == 1 else "cancelled"
+            if status == "cancelled":
+                self.active_request = None
+                self.phase = None
             return {"version": 1, "status": status, "request_id": request}
         if kind == "cancel":
+            if self.phase == "processing":
+                self.phase = "cancelling"
+                self.processing_polls = 0
+                return {"version": 1, "status": "cancelling", "request_id": request}
+            self.active_request = None
+            self.phase = None
             return {"version": 1, "status": "cancelled", "request_id": request}
-        raise AssertionError(kind)
+        raise AssertionError((kind, self.phase))
 
     def unexpected_exit(self):
         return self.exited
@@ -333,23 +365,60 @@ class ApplicationStateTests(unittest.TestCase):
             ["start", "cancel"],
         )
 
-    def test_delete_cancels_recording_and_processing_without_stale_completion(self):
+    def test_one_armed_helper_reuses_sequential_requests_and_recording_cancel(self):
         app, _x11, _notifier, transports, _captures = self.make_app()
         app.arm()
-        app.space()
-        app.delete()
-        self.assertEqual(app.state, client.ClientState.ARMED)
-        self.assertEqual(transports[0].messages[-1]["type"], "cancel")
 
-        # A separate connection models processing cancellation; no old terminal
-        # response can be consumed after its request id is cleared.
-        app.right_control()
-        app.right_control()
         app.space()
+        first_request = app.request_id
         app.space()
+        app.tick()
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.ARMED)
+
+        app.space()
+        second_request = app.request_id
+        self.assertNotEqual(second_request, first_request)
         app.delete()
         self.assertEqual(app.state, client.ClientState.ARMED)
         self.assertIsNone(app.request_id)
+
+        app.space()
+        third_request = app.request_id
+        self.assertNotIn(third_request, {first_request, second_request})
+        app.space()
+        app.tick()
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.ARMED)
+        self.assertEqual(len(transports), 1)
+        self.assertEqual(
+            [message["type"] for message in transports[0].messages].count("start"),
+            3,
+        )
+
+    def test_processing_cancel_remains_nonrecording_until_terminal_completion(self):
+        app, _x11, notifier, transports, _captures = self.make_app()
+        app.arm()
+        app.space()
+        app.space()
+        request_id = app.request_id
+        app.delete()
+
+        self.assertEqual(app.state, client.ClientState.PROCESSING)
+        self.assertEqual(app.request_id, request_id)
+        self.assertEqual(transports[0].messages[-1]["type"], "cancel")
+        self.assertIn("Cancellation in progress", notifier.history[-1][1])
+
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.PROCESSING)
+        self.assertEqual(app.request_id, request_id)
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.ARMED)
+        self.assertIsNone(app.request_id)
+
+        app.space()
+        self.assertEqual(app.state, client.ClientState.RECORDING)
+        self.assertEqual(len(transports), 1)
 
     def test_right_control_cancels_processing_reaps_children_and_returns_off(self):
         app, x11, _notifier, transports, captures = self.make_app()
@@ -402,7 +471,9 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
                 payload = json.dumps(value, separators=(",", ":")).encode()
                 os.write(1, len(payload).to_bytes(4, "big") + payload)
             event("ssh-start")
-            binding = False
+            request_number = 0
+            active = None
+            phase = None
             processing_polls = 0
             while True:
                 first = os.read(0, 1)
@@ -411,18 +482,47 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
                 message = json.loads(exact(int.from_bytes(header, "big")))
                 kind = message["type"]
                 event("ssh:" + kind)
-                request = message.get("request_id", "r-real")
-                if kind == "start": send({{"version":1,"status":"pending","request_id":"r-real"}})
-                elif kind == "status" and not binding:
-                    binding = True
+                if kind == "start":
+                    if active is not None: raise SystemExit(3)
+                    request_number += 1
+                    active = f"r-real-{{request_number}}"
+                    phase = "pending"
+                    processing_polls = 0
+                    send({{"version":1,"status":"pending","request_id":active}})
+                    continue
+                request = message.get("request_id")
+                if request != active: raise SystemExit(4)
+                if kind == "status" and phase == "pending":
+                    phase = "recording"
                     send({{"version":1,"status":"bound","request_id":request,"pane_id":"wA:p1"}})
-                elif kind == "audio": send({{"version":1,"status":"accepted","request_id":request}})
-                elif kind == "finish": send({{"version":1,"status":"processing","request_id":request}})
-                elif kind == "status":
+                elif kind == "audio" and phase == "recording":
+                    send({{"version":1,"status":"accepted","request_id":request}})
+                elif kind == "finish" and phase == "recording":
+                    phase = "processing"
+                    send({{"version":1,"status":"processing","request_id":request}})
+                elif kind == "status" and phase == "processing":
                     processing_polls += 1
                     status = "processing" if processing_polls == 1 else "succeeded"
                     send({{"version":1,"status":status,"request_id":request}})
-                elif kind == "cancel": send({{"version":1,"status":"cancelled","request_id":request}})
+                    if status == "succeeded":
+                        active = None
+                        phase = None
+                elif kind == "cancel" and phase == "processing":
+                    phase = "cancelling"
+                    processing_polls = 0
+                    send({{"version":1,"status":"cancelling","request_id":request}})
+                elif kind == "status" and phase == "cancelling":
+                    processing_polls += 1
+                    status = "cancelling" if processing_polls == 1 else "cancelled"
+                    send({{"version":1,"status":status,"request_id":request}})
+                    if status == "cancelled":
+                        active = None
+                        phase = None
+                elif kind == "cancel":
+                    send({{"version":1,"status":"cancelled","request_id":request}})
+                    active = None
+                    phase = None
+                else: raise SystemExit(5)
             event("ssh-exit")
             """,
         )
@@ -492,17 +592,44 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
             )
             app.arm()
             self.assertEqual(len(transports), 1)
+
+            def start_and_wait_for_audio():
+                prior_audio = (
+                    log.read_text(encoding="utf-8").count("ssh:audio")
+                    if log.exists()
+                    else 0
+                )
+                app.space()
+                self.assertEqual(app.state, client.ClientState.RECORDING)
+                request_id = app.request_id
+                deadline = time.monotonic() + 2
+                while log.read_text(encoding="utf-8").count("ssh:audio") <= prior_audio:
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                return request_id
+
+            completed = []
+            for _ in range(2):
+                completed.append(start_and_wait_for_audio())
+                app.space()
+                self.assertEqual(app.state, client.ClientState.PROCESSING)
+                app.tick()
+                app.tick()
+                self.assertEqual(app.state, client.ClientState.ARMED)
+
+            cancelled = start_and_wait_for_audio()
+            app.delete()
+            self.assertEqual(app.state, client.ClientState.ARMED)
+            self.assertIsNone(app.request_id)
+
+            after_cancel = start_and_wait_for_audio()
             app.space()
-            self.assertEqual(app.state, client.ClientState.RECORDING)
-            deadline = time.monotonic() + 2
-            while "ssh:audio" not in log.read_text(encoding="utf-8"):
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.01)
-            app.space()
-            self.assertEqual(app.state, client.ClientState.PROCESSING)
             app.tick()
             app.tick()
             self.assertEqual(app.state, client.ClientState.ARMED)
+            self.assertEqual(len({*completed, cancelled, after_cancel}), 4)
+            self.assertEqual(len(transports), 1)
+
             ssh_process = transports[0].process
             self.assertIsNotNone(ssh_process)
             app.close()
@@ -511,6 +638,8 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
 
             events = log.read_text(encoding="utf-8").splitlines()
             self.assertEqual(events.count("ssh-start"), 1)
+            self.assertEqual(events.count("ssh:start"), 4)
+            self.assertEqual(events.count("ssh:cancel"), 1)
             start = events.index("ssh:start")
             chord = next(index for index, value in enumerate(events) if value.startswith("xdotool:"))
             bound_poll = events.index("ssh:status")

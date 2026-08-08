@@ -59,7 +59,7 @@ def bridge(stream: socket.socket, input_fd: int, output_fd: int) -> None:
     """
     input_open = True
     while True:
-        readers = [stream]
+        readers: list[socket.socket | int] = [stream]
         if input_open:
             readers.append(input_fd)
         ready, _, _ = select.select(readers, [], [])

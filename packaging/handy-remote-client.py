@@ -442,7 +442,9 @@ class MicrophoneCapture:
 
     def _copy_audio(self) -> None:
         process = self.process
-        assert process is not None and process.stdout is not None
+        if process is None or process.stdout is None:
+            self._report_failure("microphone capture pipe was not initialized")
+            return
         pending = bytearray()
         try:
             while True:
@@ -724,9 +726,17 @@ class LaptopApplication:
             return
         try:
             self._stop_capture()
-            self._cancel_request()
-            self.request_id = None
-            self._set_state(ClientState.ARMED, "Remote request cancelled")
+            status = self._cancel_request()
+            if status == "cancelled":
+                self.request_id = None
+                self._set_state(ClientState.ARMED, "Remote request cancelled")
+            elif status == "cancelling":
+                self._set_state(
+                    ClientState.PROCESSING,
+                    "Cancellation in progress on the workstation",
+                )
+            else:
+                raise ClientError("cancel did not name a terminal or in-progress state")
         except ClientError as error:
             self.fail(str(error))
 
@@ -819,7 +829,15 @@ class LaptopApplication:
         )
         return validate_response(
             response,
-            {"pending", "bound", "processing", "succeeded", "failed", "cancelled"},
+            {
+                "pending",
+                "bound",
+                "processing",
+                "cancelling",
+                "succeeded",
+                "failed",
+                "cancelled",
+            },
             self.request_id,
         )
 
@@ -843,7 +861,7 @@ class LaptopApplication:
                 elif status == "cancelled":
                     self.request_id = None
                     self._set_state(ClientState.ARMED, "Remote request cancelled")
-                elif status != "processing":
+                elif status not in {"processing", "cancelling"}:
                     raise ClientError(f"unexpected processing state: {status}")
             except ClientError as error:
                 self.fail(str(error))
@@ -858,9 +876,9 @@ class LaptopApplication:
         if capture is not None:
             capture.stop()
 
-    def _cancel_request(self) -> None:
+    def _cancel_request(self) -> str | None:
         if self.transport is None or self.request_id is None:
-            return
+            return None
         response = self.transport.exchange(
             {
                 "type": "cancel",
@@ -868,7 +886,10 @@ class LaptopApplication:
                 "request_id": self.request_id,
             }
         )
-        validate_response(response, {"cancelled"}, self.request_id)
+        validated = validate_response(
+            response, {"cancelled", "cancelling"}, self.request_id
+        )
+        return str(validated["status"])
 
     def close_resources(self, send_cancel: bool) -> None:
         try:

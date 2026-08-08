@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).parents[1]
 HERDR_SCRIPT = ROOT / "scripts" / "configure-remote-herdr.py"
@@ -251,6 +252,14 @@ class HerdrConfigPolicyTests(unittest.TestCase):
             "occupied action": base_config().replace(
                 'new_tab = "prefix+c"', 'new_tab = "prefix+alt+d"'
             ),
+            "occupied action array": base_config().replace(
+                'new_tab = "prefix+c"',
+                'new_tab = ["prefix+c", "prefix+alt+d"]',
+            ),
+            "occupied indexed key": base_config()
+            + '\n[keys.indexed]\n"prefix+alt+d" = 4\n',
+            "occupied indexed array": base_config()
+            + '\n[keys.indexed]\nselect = ["prefix+1", "prefix+alt+d"]\n',
             "occupied command": base_config()
             + '\n[[keys.command]]\nkey = "prefix+alt+d"\ntype = "shell"\ncommand = "other"\n',
             "other chord": base_config()
@@ -277,6 +286,24 @@ class HerdrConfigPolicyTests(unittest.TestCase):
                     self.assertEqual(list(directory.glob(f"{target.name}.before-*")), [])
             self.assertFalse(log.exists())
 
+    def test_nonconflicting_action_arrays_indexed_values_and_prefix_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            configured, target, binder, fake, _log = self.fixture(directory)
+            original = (
+                'onboarding = false\n\n'
+                '[keys]\n'
+                'prefix = "prefix+alt+d"\n'
+                'new_tab = ["prefix+c", "prefix+n"]\n\n'
+                '[keys.indexed]\n'
+                'select = ["prefix+1", "prefix+2"]\n'
+                '"prefix+3" = 3\n'
+            )
+            target.write_text(original, encoding="utf-8")
+            result = self.run_policy(configured, binder, fake)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(target.read_text(encoding="utf-8").startswith(original))
+
     def test_candidate_validation_failure_occurs_before_target_mutation_or_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -290,6 +317,41 @@ class HerdrConfigPolicyTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), original)
             self.assertEqual(list(directory.glob("*.before-qq-dictation.*")), [])
             self.assertEqual(list(directory.glob("*.candidate.*")), [])
+
+    def test_postreplacement_identity_failure_restores_fixed_target_and_running_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            configured, target, binder, fake, log = self.fixture(directory, symlink=True)
+            original = target.read_bytes()
+            original_mode = stat.S_IMODE(target.stat().st_mode)
+            link_inode = configured.lstat().st_ino
+            link_value = os.readlink(configured)
+
+            with mock.patch.object(
+                herdr_policy,
+                "verify_identity",
+                side_effect=[
+                    herdr_policy.PolicyError("injected post-replacement identity failure"),
+                    None,
+                ],
+            ):
+                with self.assertRaisesRegex(
+                    herdr_policy.PolicyError, "target and running config rolled back"
+                ):
+                    herdr_policy.configure(configured, binder, fake)
+
+            self.assertEqual(target.read_bytes(), original)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), original_mode)
+            self.assertEqual(configured.lstat().st_ino, link_inode)
+            self.assertEqual(os.readlink(configured), link_value)
+            backups = list(directory.glob("operator-config.toml.before-qq-dictation.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), original)
+            calls = [json.loads(line)["args"] for line in log.read_text().splitlines()]
+            self.assertEqual(calls[-2:], [
+                ["server", "reload-config"],
+                ["status", "server", "--json"],
+            ])
 
     def test_reload_and_postcheck_failures_atomically_restore_target_and_running_config(self):
         for variable in ("FAKE_HERDR_RELOAD_FAIL", "FAKE_HERDR_STATUS_FAIL"):
@@ -426,6 +488,67 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(
                 len(list(home.rglob("*.before-qq-dictation.*"))), backup_count
             )
+
+    def test_existing_laptop_config_must_be_mode_0600_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            home = directory / "home"
+            home.mkdir()
+            systemctl_log = directory / "systemctl.log"
+            systemctl = executable(
+                directory / "systemctl",
+                f"""
+                #!/bin/sh
+                printf '%s\\n' "$*" >> {str(systemctl_log)!r}
+                exit 0
+                """,
+            )
+            initial = [
+                "/usr/bin/python3",
+                str(LAPTOP_INSTALLER),
+                "--home",
+                str(home),
+                "--ssh-host",
+                "workstation",
+                "--ghostty-title",
+                "remote herdr",
+                "--ghostty-class",
+                "com.mitchellh.ghostty",
+                "--systemctl",
+                str(systemctl),
+            ]
+            result = subprocess.run(initial, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            config = home / ".config" / "qq-dictation" / "remote-laptop.json"
+            client_path = home / ".local" / "bin" / "handy-remote-client.py"
+            service = home / ".config" / "systemd" / "user" / "handy-remote-client.service"
+            config.chmod(0o644)
+            client_path.write_bytes(b"preserve existing client")
+            client_path.chmod(0o755)
+            service.write_bytes(b"preserve existing service")
+            service.chmod(0o644)
+            before = {
+                config: config.read_bytes(),
+                client_path: client_path.read_bytes(),
+                service: service.read_bytes(),
+            }
+            systemctl_log.unlink()
+
+            rerun = [
+                "/usr/bin/python3",
+                str(LAPTOP_INSTALLER),
+                "--home",
+                str(home),
+                "--systemctl",
+                str(systemctl),
+            ]
+            result = subprocess.run(rerun, capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("mode 0600", result.stderr)
+            for path, data in before.items():
+                self.assertEqual(path.read_bytes(), data)
+            self.assertFalse(systemctl_log.exists())
 
     def test_laptop_service_failure_is_reported_nonzero(self):
         with tempfile.TemporaryDirectory() as temporary:

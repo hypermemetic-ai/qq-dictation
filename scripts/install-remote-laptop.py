@@ -158,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
             config_metadata = config.lstat()
             if not stat.S_ISREG(config_metadata.st_mode) or config_metadata.st_uid != os.geteuid():
                 raise InstallError("refusing unsafe existing laptop configuration")
+            if stat.S_IMODE(config_metadata.st_mode) != 0o600:
+                raise InstallError("existing laptop configuration must have mode 0600")
             if desired is not None:
                 existing = json.loads(config.read_text(encoding="utf-8"))
                 if existing != desired:

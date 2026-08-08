@@ -316,11 +316,12 @@ pub(crate) fn pane_is_live(pane_id: &str) -> Result<(), String> {
 }
 
 /// Types `text` into the pane's PTY. Newlines are collapsed to spaces: a raw
-/// PTY write is not bracketed paste, so a literal newline would act as Enter
-/// and submit a half-delivered message.
+/// PTY write is not bracketed paste, so transcript newlines must not become
+/// implicit submits. When auto-submit is enabled, one trailing carriage return
+/// is included in this same literal Herdr send-text request.
 #[cfg(target_os = "linux")]
-pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
-    let text = collapse_newlines(text);
+pub fn deliver(pane_id: &str, text: &str, auto_submit: bool) -> Result<(), String> {
+    let text = send_text_payload(text, auto_submit);
     let herdr = resolve_herdr()?;
     let args = send_text_args(pane_id, &text);
     let output = run_with_timeout(&herdr, &args, Duration::from_secs(2))?;
@@ -340,24 +341,12 @@ fn send_text_args<'a>(pane_id: &'a str, text: &'a str) -> [&'a str; 4] {
     ["pane", "send-text", pane_id, text]
 }
 
-/// Sends Enter to the pane (auto-submit on the herdr path). Enter is the
-/// only submit key that makes sense for a terminal pane; the
-/// `auto_submit_key` setting's chorded variants target GUI apps.
-#[cfg(target_os = "linux")]
-pub fn send_enter(pane_id: &str) -> Result<(), String> {
-    let herdr = resolve_herdr()?;
-    let output = run_with_timeout(
-        &herdr,
-        &["pane", "send-keys", pane_id, "enter"],
-        Duration::from_secs(2),
-    )?;
-    if !output.status.success() {
-        return Err(format!(
-            "herdr pane send-keys failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+fn send_text_payload(text: &str, auto_submit: bool) -> String {
+    let mut payload = collapse_newlines(text);
+    if auto_submit {
+        payload.push('\r');
     }
-    Ok(())
+    payload
 }
 
 fn collapse_newlines(text: &str) -> String {
@@ -471,9 +460,18 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn send_text_args_do_not_inject_an_option_terminator() {
+    fn send_text_argv_contains_exact_pane_text_and_optional_carriage_return() {
+        let auto_submit = send_text_payload("first\nsecond", true);
+        assert_eq!(auto_submit, "first second\r");
         assert_eq!(
-            send_text_args("wM:p8P", "-leading dash is valid text"),
+            send_text_args("wM:p8P", &auto_submit),
+            ["pane", "send-text", "wM:p8P", "first second\r"]
+        );
+
+        let no_submit = send_text_payload("-leading dash is valid text", false);
+        assert_eq!(no_submit, "-leading dash is valid text");
+        assert_eq!(
+            send_text_args("wM:p8P", &no_submit),
             ["pane", "send-text", "wM:p8P", "-leading dash is valid text"]
         );
     }
