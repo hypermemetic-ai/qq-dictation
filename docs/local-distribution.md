@@ -45,17 +45,20 @@ Existing Handy app data—settings, ASR models, history, and logs—is not repla
 The installer backs up any launcher, bridge, service, settings file, or prior
 qq-dictation AppDir that it supersedes. On a fresh profile it creates the minimal
 settings store before applying the same policy. It enables Herdr target binding
-and push-to-talk, disables API post-processing, enables the native minimal
-overlay, and disables upstream update checks so a stock release cannot replace
-the tracked local build. Updates to qq-dictation are built and installed
-explicitly from Git.
+and push-to-talk, preserves an existing API post-processing choice, enables the
+native minimal overlay, and disables upstream update checks so a stock release
+cannot replace the tracked local build. When the post-processing setting is
+absent, including on a fresh profile, the installer defaults it off. Updates to
+qq-dictation are built and installed explicitly from Git.
 
 ## Runtime policy
 
-The selected Handy ASR model is the only model pass. qq-dictation does not
-fetch or run a transcript-cleanup classifier, and API post-processing is
-disabled by installation policy. Handy's built-in deterministic custom-word
-and filler handling remains part of its normal transcription path.
+The selected Handy ASR model performs the transcription. When API
+post-processing is enabled, Right-Control/Space sends the transcript through
+Handy's configured second pass; when it is disabled, the ASR result continues
+without that API pass. qq-dictation does not fetch or run a local
+transcript-cleanup classifier. Handy's built-in deterministic custom-word and
+filler handling remains part of its normal transcription path.
 
 When recording begins in Herdr on X11, qq-dictation captures the focused pane
 and delivers the finished transcript directly to that pane even if focus moves.
