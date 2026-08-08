@@ -40,6 +40,16 @@ def validate_socket(path: Path) -> None:
         raise RuntimeError("remote dictation socket is not owner-only")
 
 
+def write_all(output_fd: int, data: bytes) -> None:
+    """Write every byte, including when POSIX reports a legal short write."""
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(output_fd, remaining)
+        if written <= 0:
+            raise OSError("stdout write made no progress")
+        remaining = remaining[written:]
+
+
 def bridge(stream: socket.socket, input_fd: int, output_fd: int) -> None:
     """Copy both directions until the app socket closes.
 
@@ -57,7 +67,7 @@ def bridge(stream: socket.socket, input_fd: int, output_fd: int) -> None:
             chunk = stream.recv(COPY_CHUNK_BYTES)
             if not chunk:
                 return
-            os.write(output_fd, chunk)
+            write_all(output_fd, chunk)
         if input_open and input_fd in ready:
             chunk = os.read(input_fd, COPY_CHUNK_BYTES)
             if chunk:

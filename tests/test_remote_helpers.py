@@ -82,6 +82,49 @@ class SocketPolicyTests(unittest.TestCase):
 
 
 class StreamBridgeTests(unittest.TestCase):
+    def test_complete_app_frame_survives_legal_short_stdout_writes(self):
+        helper_socket, app_socket = socket.socketpair()
+        input_read, input_write = os.pipe()
+        output_read, output_write = os.pipe()
+        response = binder.encode_message(
+            {
+                "version": 1,
+                "status": "bound",
+                "request_id": "short-write-proof",
+            }
+        )
+        real_write = os.write
+        writes: list[int] = []
+
+        def short_write(descriptor, data):
+            limited = bytes(data[: max(1, len(data) // 3)])
+            writes.append(len(limited))
+            return real_write(descriptor, limited)
+
+        with mock.patch.object(stream_helper.os, "write", side_effect=short_write):
+            worker = threading.Thread(
+                target=stream_helper.bridge,
+                args=(helper_socket, input_read, output_write),
+            )
+            worker.start()
+            app_socket.sendall(response)
+            app_socket.close()
+            worker.join(timeout=1)
+
+        os.close(output_write)
+        try:
+            forwarded = bytearray()
+            while chunk := os.read(output_read, 4096):
+                forwarded.extend(chunk)
+            self.assertFalse(worker.is_alive())
+            self.assertGreater(len(writes), 1)
+            self.assertLess(writes[0], len(response))
+            self.assertEqual(bytes(forwarded), response)
+        finally:
+            helper_socket.close()
+            for descriptor in (input_read, input_write, output_read):
+                os.close(descriptor)
+
     def test_app_socket_replacement_terminates_even_while_stdin_stays_open(self):
         helper_socket, app_socket = socket.socketpair()
         input_read, input_write = os.pipe()
