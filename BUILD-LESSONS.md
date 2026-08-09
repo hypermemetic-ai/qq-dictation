@@ -10,7 +10,7 @@ When a new failure teaches something transferable, append or revise an entry wit
 - the repository safeguard or working procedure;
 - the evidence required to call the gate green.
 
-Task notes retain ticket-specific evidence. This file carries only lessons that a later implementer or Change owner should apply. A delegated Rust work order must point the implementer to this file; if their substrate cannot run the documented gate, their envelope must say so and the accountable owner must run it before review or commit.
+Task notes retain ticket-specific evidence. This file carries only lessons that a later implementer or Adaptive Task Owner should apply. A delegated Rust work order must point the implementer to this file; if their substrate cannot run the documented gate, their envelope must say so and the accountable owner must run it before review or commit.
 
 ## 2026-07-24 and 2026-08-02 — Build memory containment changed with the toolchain
 
@@ -100,7 +100,7 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Safeguard:** An implementer without the substrate records Rust checks as not run rather than inferring success from frontend checks or LSP. The accountable owner uses the pinned `packaging/Dockerfile` image under a guarded operator authorization and preserves the TASK-3 resource limits.
 
-**Green evidence:** Actual `cargo fmt -- --check` and `cargo test` output from the mounted Change worktree. Successfully building the Docker toolchain image proves only that the image built; it does not prove the Rust project compiled or its tests ran.
+**Green evidence:** Actual `cargo fmt -- --check` and `cargo test` output from the mounted Task worktree. Successfully building the Docker toolchain image proves only that the image built; it does not prove the Rust project compiled or its tests ran.
 
 ## 2026-08-05 — Unformatted delegate deltas repeatedly stopped TASK-14 before compilation
 

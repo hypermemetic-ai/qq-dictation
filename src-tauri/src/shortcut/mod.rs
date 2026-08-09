@@ -19,12 +19,9 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
     self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
     OverlayPosition, OverlayStyle, PasteMethod, ShortcutBinding, SoundTheme, Theme, TypingTool,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -529,27 +526,7 @@ pub fn change_theme_setting(app: AppHandle, theme: String) -> Result<(), String>
     };
     settings.theme = parsed;
     settings::write_settings(&app, settings);
-    #[cfg(target_os = "windows")]
-    apply_window_theme(&app, parsed);
     Ok(())
-}
-
-/// Applies the appearance setting to the Windows title bar, which CSS
-/// `data-theme` cannot reach. `System` clears the override so the window follows
-/// Windows. Call this on startup and whenever the setting changes to keep the
-/// title bar in sync with the in-app palette.
-#[cfg(target_os = "windows")]
-pub fn apply_window_theme(app: &AppHandle, theme: Theme) {
-    let window_theme = match theme {
-        Theme::System => None,
-        Theme::Light => Some(tauri::Theme::Light),
-        Theme::Dark => Some(tauri::Theme::Dark),
-    };
-    if let Some(window) = app.get_webview_window("main") {
-        if let Err(e) = window.set_theme(window_theme) {
-            warn!("Failed to apply window theme: {}", e);
-        }
-    }
 }
 
 #[tauri::command]
@@ -692,67 +669,6 @@ pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_update_checks_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.update_checks_enabled = enabled;
-    settings::write_settings(&app, settings);
-
-    let _ = app.emit(
-        "settings-changed",
-        serde_json::json!({
-            "setting": "update_checks_enabled",
-            "value": enabled
-        }),
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_show_whats_new_on_update_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.show_whats_new_on_update = enabled;
-    settings::write_settings(&app, settings);
-
-    let _ = app.emit(
-        "settings-changed",
-        serde_json::json!({
-            "setting": "show_whats_new_on_update",
-            "value": enabled
-        }),
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_whats_new_last_seen_version_setting(
-    app: AppHandle,
-    version: String,
-) -> Result<(), String> {
-    let version = version.trim().to_string();
-    let mut settings = settings::get_settings(&app);
-    settings.whats_new_last_seen_version = version.clone();
-    settings::write_settings(&app, settings);
-
-    let _ = app.emit(
-        "settings-changed",
-        serde_json::json!({
-            "setting": "whats_new_last_seen_version",
-            "value": version
-        }),
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.custom_words = words;
@@ -823,14 +739,7 @@ pub fn change_paste_method_setting(app: AppHandle, method: String) -> Result<(),
 #[tauri::command]
 #[specta::specta]
 pub fn get_available_typing_tools() -> Vec<String> {
-    #[cfg(target_os = "linux")]
-    {
-        crate::clipboard::get_available_typing_tools()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        vec!["auto".to_string()]
-    }
+    crate::clipboard::get_available_typing_tools()
 }
 
 #[tauri::command]
@@ -1118,18 +1027,6 @@ pub async fn fetch_post_process_models(
         .find(|p| p.id == provider_id)
         .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
 
-    if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        {
-            return Ok(vec![APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string()]);
-        }
-
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        {
-            return Err("Apple Intelligence is only available on Apple silicon Macs running macOS 15 or later.".to_string());
-        }
-    }
-
     // Get API key
     let api_key = settings
         .post_process_api_keys
@@ -1279,7 +1176,7 @@ pub fn change_transcribe_gpu_device(app: AppHandle, device: i32) -> Result<(), S
 /// Return which accelerators and GPU devices are available for this build.
 ///
 /// First-call cost is dominated by enumerating GPU devices through the
-/// transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
+/// transcribe.cpp Vulkan backend, which loads dynamic libraries and
 /// probes hardware. Run it on the blocking pool so the webview thread
 /// stays responsive — see also the startup pre-warm in `lib.rs`.
 #[tauri::command]

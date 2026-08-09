@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Inställningar...",
-    "checkUpdates": "Sök efter uppdateringar...",
     "copyLastTranscript": "Kopiera senaste transkriptionen",
     "unloadModel": "Avlasta modell",
     "model": "Modell",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "Behörigheter krävs",
-      "description": "Handy behöver ett par behörigheter för att fungera korrekt.",
-      "microphone": {
-        "title": "Mikrofonåtkomst",
-        "description": "Krävs för att höra din röst för transkription."
-      },
-      "accessibility": {
-        "title": "Hjälpmedelsåtkomst",
-        "description": "Krävs för att skriva transkriberad text i dina program."
-      },
-      "grant": "Bevilja behörighet",
-      "granted": "Beviljad",
-      "waiting": "Väntar...",
-      "allGranted": "Allt klart!",
-      "errors": {
-        "checkFailed": "Misslyckades med att kontrollera behörigheter. Försök igen.",
-        "requestFailed": "Misslyckades med att begära behörighet. Försök igen."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Whisper-acceleration",
-          "description": "Hårdvaruacceleration för Whisper-modeller. Auto använder GPU om tillgängligt (Metal på macOS, Vulkan på Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX-acceleration",
-          "description": "Hårdvaruacceleration för ONNX-modeller (Parakeet, Canary, Moonshine, etc.). DirectML på Windows är experimentellt. Modeller kan misslyckas med att transkribera."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Auto"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Skicka automatiskt",
-        "description": "Skicka automatiskt den valda tangentkombinationen efter textinsättning. Cmd+Enter gäller på macOS, medan Windows/Linux använder Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Av",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Leverantör",
           "description": "Välj en OpenAI-kompatibel leverantör."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence är inte tillgängligt på den här enheten. Kräver en Apple Silicon Mac som kör macOS Tahoe (26.0) eller senare med Apple Intelligence aktiverat i systeminställningarna."
         },
         "baseUrl": {
           "title": "Bas-URL",
@@ -463,10 +438,6 @@
         "lineCount": "{{count}} rader",
         "empty": "Väntar på loggar… Poster visas här när appen skickar dem."
       },
-      "updateChecks": {
-        "label": "Sök efter uppdateringar",
-        "description": "Sök automatiskt efter nya versioner av Handy"
-      },
       "soundTheme": {
         "label": "Ljudtema",
         "description": "Välj ett ljudtema för återkoppling vid start och stopp av inspelning"
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Alltid påslagen mikrofon",
         "description": "Håll mikrofonen aktiv för snabbare svar"
-      },
-      "clamshellMicrophone": {
-        "title": "Clamshell-mikrofon",
-        "description": "Mikrofon som ska användas när bärbara datorns lock är stängt"
       },
       "postProcessingToggle": {
         "label": "Efterbearbetning",
@@ -531,13 +498,6 @@
       "recordingBuffer": {
         "title": "Extra inspelningsbuffert",
         "description": "Extra tid (i millisekunder) för att fortsätta spela in efter att du släppt tangenten, för att fånga upp avslutande ljud. 0 = ingen extra buffert."
-      },
-      "whatsNewPreview": {
-        "title": "Förhandsvisa nyheter",
-        "description": "Öppna den senaste medföljande versionsinformationen utan att markera den som visad",
-        "button": "Förhandsvisa",
-        "noNotes": "Ingen medföljande versionsinformation hittades",
-        "error": "Det gick inte att förhandsvisa versionsinformationen"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "Källkod",
-        "description": "Visa källkod och bidra",
+        "description": "View the private qq-dictation source repository.",
         "button": "Visa på GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Stöd utvecklingen",
-        "description": "Hjälp oss att fortsätta bygga Handy",
-        "button": "Donera"
       },
       "acknowledgments": {
         "title": "Tack till",
@@ -567,25 +522,8 @@
           "description": "Högpresterande inferens av OpenAI:s Whisper-modell för automatisk taligenkänning",
           "details": "Handy använder ggml för snabb, lokal tal-till-text-behandling. Tack till det fantastiska arbete som utförts av Georgi Gerganov med medarbetare."
         }
-      },
-      "whatsNewUpdates": {
-        "label": "Visa nyheter",
-        "description": "Visa versionsinformation efter Handy-uppdateringar"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "Söker efter uppdateringar...",
-    "updateAvailableShort": "Uppdatering tillgänglig",
-    "upToDate": "Uppdaterad",
-    "updateCheckingDisabled": "Uppdateringskontroll inaktiverad",
-    "downloading": "Laddar ner... {{progress}}%",
-    "installing": "Installerar...",
-    "preparing": "Förbereder...",
-    "checkForUpdates": "Sök efter uppdateringar",
-    "portableUpdateTitle": "Manuell uppdatering krävs",
-    "portableUpdateMessage": "Portabla installationer kan inte uppdateras automatiskt. Så här uppdaterar du: ladda ner den senaste NSIS-installeraren från GitHub Releases, installera den i samma mapp och kopiera sedan din Data/-mapp (inställningar, modeller, inspelningar) från den gamla versionen till den nya.",
-    "portableUpdateButton": "Öppna GitHub Releases"
   },
   "common": {
     "loading": "Laddar...",
@@ -596,17 +534,11 @@
     "clear": "Rensa",
     "noOptionsFound": "Inga alternativ hittades"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy behöver behörighet för hjälpmedel för att kunna skriva transkriberad text.",
-    "openSettings": "Öppna systeminställningar"
-  },
   "errors": {
     "loadDirectory": "Fel vid laddning av mapp: {{error}}",
     "micPermissionDeniedTitle": "Mikrofonåtkomst nekad",
     "micPermissionDenied": {
       "generic": "Mikrofonåtkomst nekades av operativsystemet. Bevilja mikrofonbehörighet i dina systeminställningar.",
-      "windows": "Aktivera mikrofonåtkomst i Inställningar → Integritet och säkerhet → Mikrofon (inklusive åtkomst till skrivbordsappar).",
-      "macos": "Bevilja mikrofonåtkomst i Systeminställningar → Integritet och säkerhet → Mikrofon.",
       "linux": "Bevilja mikrofonåtkomst i systemets ljud- eller integritetsinställningar."
     },
     "recordingFailed": "Misslyckades med att starta inspelning: {{error}}",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "Transkriberar...",
     "processing": "Bearbetar..."
-  },
-  "whatsNew": {
-    "title": "Nytt i Handy v{{version}}"
   }
 }

@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Instellingen...",
-    "checkUpdates": "Controleren op updates...",
     "copyLastTranscript": "Laatste transcriptie kopiëren",
     "unloadModel": "Model ontladen",
     "model": "Model",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Model selecteren mislukt"
-    },
-    "permissions": {
-      "title": "Machtigingen vereist",
-      "description": "Handy heeft een aantal machtigingen nodig om goed te kunnen werken.",
-      "microphone": {
-        "title": "Microfoontoegang",
-        "description": "Vereist om je stem op te nemen voor transcriptie."
-      },
-      "accessibility": {
-        "title": "Toegankelijkheid",
-        "description": "Vereist om getranscribeerde tekst in je applicaties te kunnen typen."
-      },
-      "grant": "Machtiging verlenen",
-      "granted": "Verleend",
-      "waiting": "Wachten...",
-      "allGranted": "Alles ingesteld!",
-      "errors": {
-        "checkFailed": "Machtigingen controleren mislukt. Probeer het opnieuw.",
-        "requestFailed": "Machtiging aanvragen mislukt. Probeer het opnieuw."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "transcribe.cpp-versnelling",
-          "description": "Hardwareversnelling voor transcribe.cpp-modellen (Whisper-familie). 'Automatisch' gebruikt de GPU indien beschikbaar (Metal op macOS, Vulkan op Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX-versnelling",
-          "description": "Hardwareversnelling voor ONNX-modellen (Parakeet, Canary, Moonshine, etc.). DirectML op Windows is experimenteel; modellen kunnen daardoor haperen."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Automatisch"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Automatisch verzenden",
-        "description": "Verzend automatisch de geselecteerde toetsencombinatie na het invoegen van de tekst. Cmd+Enter geldt voor macOS, Windows/Linux gebruiken Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Uit",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Provider",
           "description": "Selecteer een OpenAI-compatibele provider."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence is niet beschikbaar op dit apparaat. Vereist een Apple Silicon Mac met macOS Tahoe (26.0) of nieuwer waarop Apple Intelligence is ingeschakeld via de Systeeminstellingen."
         },
         "baseUrl": {
           "title": "Basis-URL",
@@ -463,17 +438,6 @@
         "lineCount": "{{count}} regels",
         "empty": "Wachten op logboeken... Meldingen verschijnen hier zodra de app ze genereert."
       },
-      "updateChecks": {
-        "label": "Controleren op updates",
-        "description": "Automatisch controleren op nieuwe versies van Handy"
-      },
-      "whatsNewPreview": {
-        "title": "Voorbeeld van release-notes",
-        "description": "Open de nieuwste meegeleverde release-notes zonder deze als gelezen te markeren",
-        "button": "Voorbeeld",
-        "noNotes": "Geen meegeleverde release-notes gevonden",
-        "error": "Voorbeeld van release-notes laden mislukt"
-      },
       "soundTheme": {
         "label": "Geluidsthema",
         "description": "Kies een geluidsthema voor feedback bij het starten en stoppen van opnames"
@@ -500,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Microfoon altijd aan",
         "description": "Houd de microfoon actief voor een snellere reactietijd"
-      },
-      "clamshellMicrophone": {
-        "title": "Clamshell-microfoon",
-        "description": "Microfoon die gebruikt moet worden wanneer het laptopscherm gesloten is"
       },
       "postProcessingToggle": {
         "label": "Naverwerking",
@@ -546,23 +506,14 @@
         "title": "Versie",
         "description": "Huidige versie van Handy"
       },
-      "whatsNewUpdates": {
-        "label": "Toon 'Wat is er nieuw'",
-        "description": "Release-notes tonen nadat Handy is bijgewerkt"
-      },
       "appDataDirectory": {
         "title": "App-datamap",
         "description": "Locatie waar Handy de gegevens opslaat"
       },
       "sourceCode": {
         "title": "Broncode",
-        "description": "Bekijk de broncode en draag bij",
+        "description": "View the private qq-dictation source repository.",
         "button": "Bekijk op GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Ontwikkeling ondersteunen",
-        "description": "Help ons om te blijven bouwen aan Handy",
-        "button": "Doneren"
       },
       "acknowledgments": {
         "title": "Dankbetuigingen",
@@ -574,22 +525,6 @@
       }
     }
   },
-  "footer": {
-    "checkingUpdates": "Controleren op updates...",
-    "updateAvailableShort": "Update beschikbaar",
-    "upToDate": "Up-to-date",
-    "updateCheckingDisabled": "Updatecontrole uitgeschakeld",
-    "downloading": "Downloaden... {{progress}}%",
-    "installing": "Installeren...",
-    "preparing": "Voorbereiden...",
-    "checkForUpdates": "Controleren op updates",
-    "portableUpdateTitle": "Handmatige update vereist",
-    "portableUpdateMessage": "Draagbare (portable) installaties kunnen niet automatisch worden bijgewerkt. Om bij te werken: download het nieuwste NSIS-installatiebestand van GitHub Releases, installeer het in dezelfde map en kopieer vervolgens je Data/-map (instellingen, modellen, opnames) van de oude versie naar de nieuwe.",
-    "portableUpdateButton": "GitHub Releases openen"
-  },
-  "whatsNew": {
-    "title": "Nieuw in Handy v{{version}}"
-  },
   "common": {
     "loading": "Laden...",
     "delete": "Verwijderen",
@@ -599,17 +534,11 @@
     "clear": "Wissen",
     "noOptionsFound": "Geen opties gevonden"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy heeft toegankelijkheidsmachtigingen nodig om getranscribeerde tekst te kunnen typen.",
-    "openSettings": "Systeeminstellingen openen"
-  },
   "errors": {
     "loadDirectory": "Fout bij laden van map: {{error}}",
     "micPermissionDeniedTitle": "Microfoontoegang geweigerd",
     "micPermissionDenied": {
       "generic": "Microfoontoegang is geweigerd door het besturingssysteem. Verleen microfoonmachtiging in je systeeminstellingen.",
-      "windows": "Schakel microfoontoegang in via Instellingen → Privacy & beveiliging → Microfoon (inclusief toegang voor desktop-apps).",
-      "macos": "Verleen microfoontoegang via Systeeminstellingen → Privacy & Beveiliging → Microfoon.",
       "linux": "Verleen microfoontoegang in de geluids- of privacyinstellingen van je systeem."
     },
     "noInputDeviceTitle": "Geen microfoon gevonden",

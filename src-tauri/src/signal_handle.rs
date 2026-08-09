@@ -1,22 +1,16 @@
 use crate::TranscriptionCoordinator;
-#[cfg(unix)]
 use log::debug;
 use log::warn;
 use tauri::{AppHandle, Manager};
 
-#[cfg(unix)]
 use signal_hook::consts::{SIGUSR1, SIGUSR2};
-#[cfg(unix)]
 use signal_hook::iterator::Signals;
-#[cfg(unix)]
 use std::thread;
 
-#[cfg(target_os = "linux")]
 pub fn ptt_start_signal() -> i32 {
     libc::SIGRTMIN()
 }
 
-#[cfg(target_os = "linux")]
 pub fn ptt_stop_signal() -> i32 {
     libc::SIGRTMIN() + 1
 }
@@ -24,51 +18,38 @@ pub fn ptt_stop_signal() -> i32 {
 // Visible Space dictation mode (qq-dictation). Realtime signal numbers
 // preserve safety ordering when several are pending: prepare, commit, off,
 // Space, then Delete.
-#[cfg(target_os = "linux")]
 pub fn mode_prepare_signal() -> i32 {
     libc::SIGRTMIN() + 2
 }
 
-#[cfg(target_os = "linux")]
 pub fn mode_on_signal() -> i32 {
     libc::SIGRTMIN() + 3
 }
 
-#[cfg(target_os = "linux")]
 pub fn mode_off_signal() -> i32 {
     libc::SIGRTMIN() + 4
 }
 
-#[cfg(target_os = "linux")]
 pub fn mode_space_signal() -> i32 {
     libc::SIGRTMIN() + 5
 }
 
-#[cfg(target_os = "linux")]
 pub fn mode_delete_signal() -> i32 {
     libc::SIGRTMIN() + 6
 }
 
-#[cfg(unix)]
 pub fn transcription_signals() -> Vec<i32> {
-    #[cfg(target_os = "linux")]
-    {
-        vec![
-            SIGUSR1,
-            SIGUSR2,
-            ptt_start_signal(),
-            ptt_stop_signal(),
-            mode_prepare_signal(),
-            mode_on_signal(),
-            mode_off_signal(),
-            mode_space_signal(),
-            mode_delete_signal(),
-        ]
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        vec![SIGUSR1, SIGUSR2]
-    }
+    vec![
+        SIGUSR1,
+        SIGUSR2,
+        ptt_start_signal(),
+        ptt_stop_signal(),
+        mode_prepare_signal(),
+        mode_on_signal(),
+        mode_off_signal(),
+        mode_space_signal(),
+        mode_delete_signal(),
+    ]
 }
 
 /// Send a transcription input to the coordinator.
@@ -81,7 +62,6 @@ pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str)
     }
 }
 
-#[cfg(target_os = "linux")]
 fn ptt_binding_id(post_process_enabled: bool) -> &'static str {
     if post_process_enabled {
         "transcribe_with_post_process"
@@ -90,7 +70,6 @@ fn ptt_binding_id(post_process_enabled: bool) -> &'static str {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
         // PTT follows the post-processing setting: enabled routes hold-to-talk
@@ -114,7 +93,6 @@ fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
 /// Route a dictation-mode command to the coordinator. Mode signals are commands
 /// (not raw key events), so the signal thread never calls pipeline actions
 /// directly — the coordinator serialises them with every other input.
-#[cfg(target_os = "linux")]
 fn send_mode_input(app: &AppHandle, command: ModeCommand) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
         match command {
@@ -135,7 +113,6 @@ fn send_mode_input(app: &AppHandle, command: ModeCommand) {
     }
 }
 
-#[cfg(target_os = "linux")]
 enum ModeCommand {
     Prepare,
     On,
@@ -144,29 +121,18 @@ enum ModeCommand {
     Delete,
 }
 
-#[cfg(unix)]
 pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
-    #[cfg(target_os = "linux")]
     let ptt_start = ptt_start_signal();
-    #[cfg(target_os = "linux")]
     let ptt_stop = ptt_stop_signal();
-    #[cfg(target_os = "linux")]
     let mode_prepare = mode_prepare_signal();
-    #[cfg(target_os = "linux")]
     let mode_on = mode_on_signal();
-    #[cfg(target_os = "linux")]
     let mode_off = mode_off_signal();
-    #[cfg(target_os = "linux")]
     let mode_space = mode_space_signal();
-    #[cfg(target_os = "linux")]
     let mode_delete = mode_delete_signal();
-    #[cfg(target_os = "linux")]
     debug!(
         "Signal handlers registered (SIGUSR1, SIGUSR2, SIGRTMIN={ptt_start}, SIGRTMIN+1={ptt_stop}, \
          mode prepare={mode_prepare}, mode on={mode_on}, mode off={mode_off}, mode space={mode_space}, mode delete={mode_delete})"
     );
-    #[cfg(not(target_os = "linux"))]
-    debug!("Signal handlers registered (SIGUSR1, SIGUSR2)");
     thread::spawn(move || {
         for sig in signals.forever() {
             match sig {
@@ -182,37 +148,30 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
                     debug!("Received SIGUSR2");
                     send_transcription_input(&app_handle, "transcribe", "SIGUSR2");
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == ptt_start => {
                     debug!("Received SIGRTMIN (PTT press)");
                     send_ptt_input(&app_handle, "SIGRTMIN", true);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == ptt_stop => {
                     debug!("Received SIGRTMIN+1 (PTT release)");
                     send_ptt_input(&app_handle, "SIGRTMIN+1", false);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == mode_prepare => {
                     debug!("Received SIGRTMIN+2 (dictation mode prepare)");
                     send_mode_input(&app_handle, ModeCommand::Prepare);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == mode_on => {
                     debug!("Received SIGRTMIN+3 (dictation mode on)");
                     send_mode_input(&app_handle, ModeCommand::On);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == mode_off => {
                     debug!("Received SIGRTMIN+4 (dictation mode off)");
                     send_mode_input(&app_handle, ModeCommand::Off);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == mode_space => {
                     debug!("Received SIGRTMIN+5 (dictation mode Space)");
                     send_mode_input(&app_handle, ModeCommand::Space);
                 }
-                #[cfg(target_os = "linux")]
                 sig if sig == mode_delete => {
                     debug!("Received SIGRTMIN+6 (dictation mode Delete)");
                     send_mode_input(&app_handle, ModeCommand::Delete);
@@ -223,7 +182,7 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
     });
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

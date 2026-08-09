@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
-import { useOsType } from "../../hooks/useOsType";
 import { commands } from "@/bindings";
 import type { TypingTool } from "@/bindings";
 
@@ -24,23 +23,16 @@ export const TypingToolSetting: React.FC<TypingToolProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
-    const osType = useOsType();
     const [availableTools, setAvailableTools] = useState<string[] | null>(null);
 
     useEffect(() => {
-      if (osType !== "linux") return;
       commands
         .getAvailableTypingTools()
         .then(setAvailableTools)
         .catch(() => {
           setAvailableTools(["auto"]);
         });
-    }, [osType]);
-
-    // Only show this setting on Linux
-    if (osType !== "linux") {
-      return null;
-    }
+    }, []);
 
     // Only show if paste method is "direct"
     const pasteMethod = getSetting("paste_method");

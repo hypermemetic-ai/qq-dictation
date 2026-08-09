@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Cài đặt...",
-    "checkUpdates": "Kiểm tra cập nhật...",
     "copyLastTranscript": "Sao chép bản chép lời mới nhất",
     "unloadModel": "Dỡ mô hình",
     "model": "Mô hình",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "Cần cấp quyền",
-      "description": "Handy cần một số quyền để hoạt động bình thường.",
-      "microphone": {
-        "title": "Quyền truy cập Micrô",
-        "description": "Cần thiết để nghe giọng nói của bạn để chuyển đổi."
-      },
-      "accessibility": {
-        "title": "Quyền truy cập Trợ năng",
-        "description": "Cần thiết để nhập văn bản đã chuyển đổi vào các ứng dụng của bạn."
-      },
-      "grant": "Cấp quyền",
-      "granted": "Đã cấp",
-      "waiting": "Đang chờ...",
-      "allGranted": "Hoàn tất!",
-      "errors": {
-        "checkFailed": "Không thể kiểm tra quyền. Vui lòng thử lại.",
-        "requestFailed": "Không thể yêu cầu quyền. Vui lòng thử lại."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Tăng tốc Whisper",
-          "description": "Tăng tốc phần cứng cho các mô hình Whisper. Chế độ tự động sử dụng GPU nếu có (Metal trên macOS, Vulkan trên Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "Tăng tốc ONNX",
-          "description": "Tăng tốc phần cứng cho các mô hình ONNX (Parakeet, Canary, Moonshine, v.v.). DirectML trên Windows là thử nghiệm. Các mô hình có thể không chuyển đổi giọng nói được."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Tự động"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Gửi tự động",
-        "description": "Tự động gửi tổ hợp phím đã chọn sau khi chèn văn bản. Cmd+Enter áp dụng trên macOS, còn Windows/Linux dùng Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Tắt",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Nhà cung cấp",
           "description": "Chọn một nhà cung cấp tương thích OpenAI."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence không khả dụng trên thiết bị này. Yêu cầu Mac Apple Silicon chạy macOS Tahoe (26.0) trở lên với Apple Intelligence được bật trong Cài đặt Hệ thống."
         },
         "baseUrl": {
           "title": "URL cơ sở",
@@ -463,10 +438,6 @@
         "lineCount": "{{count}} dòng",
         "empty": "Đang chờ nhật ký… Các mục sẽ xuất hiện ở đây khi ứng dụng phát ra."
       },
-      "updateChecks": {
-        "label": "Kiểm tra cập nhật",
-        "description": "Tự động kiểm tra phiên bản mới của Handy"
-      },
       "soundTheme": {
         "label": "Chủ đề âm thanh",
         "description": "Chọn chủ đề âm thanh cho phản hồi bắt đầu và kết thúc ghi âm"
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Micrô luôn bật",
         "description": "Giữ micrô hoạt động để phản hồi nhanh hơn"
-      },
-      "clamshellMicrophone": {
-        "title": "Micrô chế độ gập",
-        "description": "Micrô sử dụng khi nắp laptop được đóng"
       },
       "postProcessingToggle": {
         "label": "Xử lý sau",
@@ -531,13 +498,6 @@
       "recordingBuffer": {
         "title": "Bộ đệm ghi âm thêm",
         "description": "Thời gian thêm (tính bằng mili giây) để tiếp tục ghi âm sau khi nhả phím, để thu âm thanh cuối. 0 = không có bộ đệm thêm."
-      },
-      "whatsNewPreview": {
-        "title": "Xem trước điểm mới",
-        "description": "Mở ghi chú phát hành mới nhất được đóng gói mà không đánh dấu là đã xem",
-        "button": "Xem trước",
-        "noNotes": "Không tìm thấy ghi chú phát hành được đóng gói",
-        "error": "Không thể xem trước ghi chú phát hành"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "Mã nguồn",
-        "description": "Xem mã nguồn và đóng góp",
+        "description": "View the private qq-dictation source repository.",
         "button": "Xem trên GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Hỗ trợ phát triển",
-        "description": "Giúp chúng tôi tiếp tục xây dựng Handy",
-        "button": "Quyên góp"
       },
       "acknowledgments": {
         "title": "Lời cảm ơn",
@@ -567,25 +522,8 @@
           "description": "Suy luận hiệu suất cao của mô hình nhận dạng giọng nói tự động Whisper của OpenAI",
           "details": "Handy sử dụng ggml để xử lý chuyển đổi giọng nói thành văn bản nhanh, cục bộ. Cảm ơn công việc tuyệt vời của Georgi Gerganov và các cộng tác viên."
         }
-      },
-      "whatsNewUpdates": {
-        "label": "Hiển thị điểm mới",
-        "description": "Hiển thị ghi chú phát hành sau khi Handy cập nhật"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "Đang kiểm tra cập nhật...",
-    "updateAvailableShort": "Có bản cập nhật",
-    "upToDate": "Đã cập nhật",
-    "updateCheckingDisabled": "Đã tắt kiểm tra cập nhật",
-    "downloading": "Đang tải... {{progress}}%",
-    "installing": "Đang cài đặt...",
-    "preparing": "Đang chuẩn bị...",
-    "checkForUpdates": "Kiểm tra cập nhật",
-    "portableUpdateTitle": "Cần cập nhật thủ công",
-    "portableUpdateMessage": "Bản cài đặt di động không thể cập nhật tự động. Để cập nhật: tải trình cài đặt NSIS mới nhất từ GitHub Releases, cài đặt vào cùng thư mục, sau đó sao chép thư mục Data/ (cài đặt, mô hình, bản ghi) từ phiên bản cũ sang phiên bản mới.",
-    "portableUpdateButton": "Mở GitHub Releases"
   },
   "common": {
     "loading": "Đang tải...",
@@ -596,17 +534,11 @@
     "clear": "Xóa",
     "noOptionsFound": "Không tìm thấy tùy chọn"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy cần quyền truy cập để gõ văn bản đã chuyển đổi.",
-    "openSettings": "Mở Cài đặt Hệ thống"
-  },
   "errors": {
     "loadDirectory": "Lỗi khi tải thư mục: {{error}}",
     "micPermissionDeniedTitle": "Quyền truy cập micrô bị từ chối",
     "micPermissionDenied": {
       "generic": "Quyền truy cập micrô đã bị hệ điều hành từ chối. Vui lòng cấp quyền micrô trong cài đặt hệ thống.",
-      "windows": "Bật quyền truy cập micrô trong Cài đặt → Quyền riêng tư & bảo mật → Micrô (bao gồm quyền truy cập ứng dụng máy tính).",
-      "macos": "Cấp quyền truy cập micrô trong Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Micrô.",
       "linux": "Cấp quyền truy cập micrô trong cài đặt âm thanh hoặc quyền riêng tư của hệ thống."
     },
     "noInputDeviceTitle": "Không tìm thấy micrô",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "Đang chuyển đổi...",
     "processing": "Đang xử lý..."
-  },
-  "whatsNew": {
-    "title": "Điểm mới trong Handy v{{version}}"
   }
 }

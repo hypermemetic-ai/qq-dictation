@@ -1693,19 +1693,12 @@ fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
 
 /// Initialize the transcribe-cpp native backend once at startup: route native +
 /// ggml diagnostics into the `log` facade and register compute backend modules.
-/// In a static build (macOS Metal) `init_backends_default` is a harmless no-op;
-/// in a `dynamic-backends` build it loads the per-ISA CPU / GPU modules. Must run
+/// The Linux `dynamic-backends` build loads its CPU and GPU modules here. Must run
 /// before the first model load.
 pub fn init_transcribe_backend() {
     transcribe_cpp::init_logging();
     match transcribe_cpp::init_backends_default() {
         Ok(()) => {
-            if transcribe_gpu_disabled_for_host() {
-                warn!(
-                    "Windows x64 build is running under emulation on an ARM64 host; \
-                     disabling transcribe.cpp GPU acceleration and using CPU"
-                );
-            }
             let devices = transcribe_compute_devices();
             info!(
                 "transcribe-cpp initialized with {} compute device(s): [{}]",
@@ -1760,7 +1753,6 @@ fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
         })?;
     let backend = match device.kind.as_str() {
         "cpu" => Backend::Cpu,
-        "metal" => Backend::Metal,
         "cuda" => Backend::Cuda,
         "vulkan" => Backend::Vulkan,
         other => {
@@ -1783,16 +1775,12 @@ fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
 /// `Auto` lets the library pick the best device (with CPU fallback). `Cpu` forces
 /// strict CPU. `Gpu` requests the platform GPU backend, but only if a device for
 /// it is actually registered — otherwise it falls back to `Auto` so the load
-/// never fails outright on a machine without that GPU backend. An emulated x64
-/// process on Windows ARM64 forces strict CPU for every setting.
+/// never fails outright on a machine without that GPU backend.
 fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
-    match effective_transcribe_accelerator(setting, transcribe_gpu_disabled_for_host()) {
+    match setting {
         TranscribeAcceleratorSetting::Cpu => Backend::Cpu,
         TranscribeAcceleratorSetting::Auto => Backend::Auto,
         TranscribeAcceleratorSetting::Gpu => {
-            #[cfg(target_os = "macos")]
-            let candidates = [Backend::Metal];
-            #[cfg(not(target_os = "macos"))]
             let candidates = [Backend::Cuda, Backend::Vulkan];
 
             match candidates
@@ -1819,10 +1807,7 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
 /// resolves to a registered GPU device — otherwise fall back to `0` so a stale
 /// selection can never fail the load.
 fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) -> i32 {
-    if transcribe_gpu_disabled_for_host()
-        || setting != TranscribeAcceleratorSetting::Gpu
-        || gpu_device <= 0
-    {
+    if setting != TranscribeAcceleratorSetting::Gpu || gpu_device <= 0 {
         return 0;
     }
     let still_valid = transcribe_compute_devices()
@@ -1859,7 +1844,6 @@ pub fn apply_accelerator_settings(app: &tauri::AppHandle) {
         OrtAcceleratorSetting::Auto => accel::OrtAccelerator::Auto,
         OrtAcceleratorSetting::Cpu => accel::OrtAccelerator::CpuOnly,
         OrtAcceleratorSetting::Cuda => accel::OrtAccelerator::Cuda,
-        OrtAcceleratorSetting::DirectMl => accel::OrtAccelerator::DirectMl,
         OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
     };
     accel::set_ort_accelerator(ort_pref);
@@ -1875,48 +1859,16 @@ pub struct GpuDeviceOption {
 
 static GPU_DEVICES: OnceLock<Vec<GpuDeviceOption>> = OnceLock::new();
 
-fn transcribe_gpu_disabled_for_host() -> bool {
-    crate::utils::is_windows_x64_emulated_on_arm64()
-}
-
-fn effective_transcribe_accelerator(
-    setting: TranscribeAcceleratorSetting,
-    gpu_disabled: bool,
-) -> TranscribeAcceleratorSetting {
-    if gpu_disabled {
-        TranscribeAcceleratorSetting::Cpu
-    } else {
-        setting
-    }
-}
-
 fn is_transcribe_gpu_device(device: &transcribe_cpp::Device) -> bool {
     device.kind != "cpu" && device.kind != "accel"
 }
 
-fn transcribe_device_allowed(kind: &str, gpu_disabled: bool) -> bool {
-    !gpu_disabled || matches!(kind, "cpu" | "accel")
-}
-
 fn transcribe_compute_devices() -> Vec<transcribe_cpp::Device> {
-    let devices = transcribe_cpp::devices();
-    let gpu_disabled = transcribe_gpu_disabled_for_host();
-    if !gpu_disabled {
-        return devices;
-    }
-
-    devices
-        .into_iter()
-        .filter(|device| transcribe_device_allowed(&device.kind, gpu_disabled))
-        .collect()
+    transcribe_cpp::devices()
 }
 
-fn available_transcribe_accelerators(gpu_disabled: bool) -> Vec<String> {
-    if gpu_disabled {
-        vec!["cpu".to_string()]
-    } else {
-        vec!["auto".to_string(), "cpu".to_string(), "gpu".to_string()]
-    }
+fn available_transcribe_accelerators() -> Vec<String> {
+    vec!["auto".to_string(), "cpu".to_string(), "gpu".to_string()]
 }
 
 fn cached_gpu_devices() -> &'static [GpuDeviceOption] {
@@ -1924,7 +1876,7 @@ fn cached_gpu_devices() -> &'static [GpuDeviceOption] {
     // device's registry index (`Device::index`, not a re-counted position) so it
     // feeds straight back as `ModelOptions::gpu_device` (see `resolve_gpu_device`).
     // `total_vram_mb` is the backend-reported capacity, 0 when unreported (some
-    // Metal/Vulkan drivers).
+    // Vulkan drivers).
     GPU_DEVICES.get_or_init(|| {
         transcribe_compute_devices()
             .into_iter()
@@ -1958,7 +1910,7 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
         .map(|a| a.to_string())
         .collect();
 
-    let transcribe_options = available_transcribe_accelerators(transcribe_gpu_disabled_for_host());
+    let transcribe_options = available_transcribe_accelerators();
 
     AvailableAccelerators {
         transcribe: transcribe_options,
@@ -1992,41 +1944,8 @@ mod tests {
     }
 
     #[test]
-    fn normal_hosts_preserve_every_transcribe_accelerator_setting() {
-        for setting in [
-            TranscribeAcceleratorSetting::Auto,
-            TranscribeAcceleratorSetting::Cpu,
-            TranscribeAcceleratorSetting::Gpu,
-        ] {
-            assert_eq!(effective_transcribe_accelerator(setting, false), setting);
-        }
-        assert_eq!(
-            available_transcribe_accelerators(false),
-            ["auto", "cpu", "gpu"]
-        );
-        for kind in ["cpu", "accel", "metal", "cuda", "vulkan", "gpu"] {
-            assert!(transcribe_device_allowed(kind, false));
-        }
-    }
-
-    #[test]
-    fn emulated_x64_on_arm64_forces_every_transcribe_setting_to_cpu() {
-        for setting in [
-            TranscribeAcceleratorSetting::Auto,
-            TranscribeAcceleratorSetting::Cpu,
-            TranscribeAcceleratorSetting::Gpu,
-        ] {
-            assert_eq!(
-                effective_transcribe_accelerator(setting, true),
-                TranscribeAcceleratorSetting::Cpu
-            );
-        }
-        assert_eq!(available_transcribe_accelerators(true), ["cpu"]);
-        assert!(transcribe_device_allowed("cpu", true));
-        assert!(transcribe_device_allowed("accel", true));
-        for kind in ["metal", "cuda", "vulkan", "gpu", "unknown"] {
-            assert!(!transcribe_device_allowed(kind, true));
-        }
+    fn linux_exposes_all_transcribe_accelerator_modes() {
+        assert_eq!(available_transcribe_accelerators(), ["auto", "cpu", "gpu"]);
     }
 
     #[test]

@@ -37,7 +37,7 @@ The standalone hermetic surface is:
 /usr/bin/python3 scripts/install-remote-workstation.py
 ```
 
-There is no Herdr binder, reserved chord, config edit/reload, custom command, direct terminal attach, popup, proxy, or fork. The workstation installer does not inspect or modify Herdr config or a config symlink/target. Do not run installers until the reviewed Change reaches its approved live-install step.
+There is no Herdr binder, reserved chord, config edit/reload, custom command, direct terminal attach, popup, proxy, or fork. The workstation installer does not inspect or modify Herdr config or a config symlink/target. Do not run installers until the reviewed Task reaches its approved live-install step.
 
 ## Laptop requirements
 

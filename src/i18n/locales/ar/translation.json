@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "...الإعدادات",
-    "checkUpdates": "...التحقق من وجود تحديثات",
     "copyLastTranscript": "نسخ آخر نص تم تفريغه",
     "unloadModel": "تفريغ النموذج",
     "model": "النموذج",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "الأذونات المطلوبة",
-      "description": ".يحتاج Handy إلى بعض الأذونات ليعمل بشكل صحيح",
-      "microphone": {
-        "title": "الوصول إلى الميكروفون",
-        "description": ".مطلوب لسماع صوتك من أجل التفريغ الصوتي"
-      },
-      "accessibility": {
-        "title": "إمكانية الوصول",
-        "description": ".مطلوب لكتابة النص المفرغ في تطبيقاتك"
-      },
-      "grant": "منح الإذن",
-      "granted": "تم المنح",
-      "waiting": "...في الانتظار",
-      "allGranted": "كل شيء جاهز!",
-      "errors": {
-        "checkFailed": "فشل التحقق من الأذونات. يرجير المحاولة مرة أخرى.",
-        "requestFailed": "فشل طلب الإذن. يرجى المحاولة مرة أخرى."
-      }
     }
   },
   "modelSelector": {
@@ -237,11 +216,11 @@
       "acceleration": {
         "transcribe": {
           "title": "تسريع Whisper",
-          "description": "تسريع الأجهزة لنماذج Whisper. الوضع التلقائي يستخدم GPU إن توفر (Metal على macOS، Vulkan على Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "تسريع ONNX",
-          "description": "تسريع الأجهزة لنماذج ONNX (Parakeet، Canary، Moonshine، إلخ). DirectML على Windows تجريبي. قد تفشل النماذج في النسخ."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "تلقائي"
@@ -308,11 +287,10 @@
       },
       "autoSubmit": {
         "title": "إرسال تلقائي",
-        "description": "إرسال مجموعة المفاتيح المحددة تلقائياً بعد إدراج النص. Cmd+Enter ينطبق على macOS، بينما يستخدم Windows/Linux مفتاح Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "إيقاف",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -361,9 +339,6 @@
         "provider": {
           "title": "المزود",
           "description": "اختر مزوداً متوافقاً مع OpenAI."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence غير متاح على هذا الجهاز. يتطلب جهاز Mac بمعالج Apple Silicon يعمل بنظام macOS Tahoe (26.0) أو أحدث مع تمكين Apple Intelligence في إعدادات النظام."
         },
         "baseUrl": {
           "title": "URL الأساسي",
@@ -442,10 +417,6 @@
         "lineCount": "{{count}} سطر",
         "empty": "بانتظار السجلات… ستظهر الإدخالات هنا فور إصدار التطبيق لها."
       },
-      "updateChecks": {
-        "label": "التحقق من وجود تحديثات",
-        "description": "التحقق تلقائياً من وجود إصدارات جديدة من Handy"
-      },
       "soundTheme": {
         "label": "سمة الصوت",
         "description": "اختر سمة صوت لتنبيهات بدء وتوقف التسجيل"
@@ -472,10 +443,6 @@
       "alwaysOnMicrophone": {
         "label": "ميكروفون يعمل دائماً",
         "description": "إبقاء الميكروفون نشطاً لاستجابة أسرع"
-      },
-      "clamshellMicrophone": {
-        "title": "ميكروفون وضع الإغلاق",
-        "description": "الميكروفون المراد استخدامه عندما يكون غطاء المحمول مغلقاً"
       },
       "postProcessingToggle": {
         "label": "معالجة لاحقة",
@@ -510,13 +477,6 @@
       "recordingBuffer": {
         "title": "مخزن التسجيل الإضافي",
         "description": "وقت إضافي (بالمللي ثانية) للاستمرار في التسجيل بعد تحرير المفتاح، لالتقاط الصوت المتبقي. 0 = لا مخزن إضافي."
-      },
-      "whatsNewPreview": {
-        "title": "معاينة الجديد",
-        "description": "افتح أحدث ملاحظات إصدار مضمنة دون وضع علامة عليها كمقروءة",
-        "button": "معاينة",
-        "noNotes": "لم يتم العثور على ملاحظات إصدار مضمنة",
-        "error": "تعذرت معاينة ملاحظات الإصدار"
       }
     },
     "about": {
@@ -531,13 +491,8 @@
       },
       "sourceCode": {
         "title": "كود المصدر",
-        "description": "عرض كود المصدر والمساهمة",
+        "description": "View the private qq-dictation source repository.",
         "button": "عرض على GitHub"
-      },
-      "supportDevelopment": {
-        "title": "دعم التطوير",
-        "description": "ساعدنا في مواصلة بناء Handy",
-        "button": "تبرع"
       },
       "acknowledgments": {
         "title": "شكر وتقدير",
@@ -546,10 +501,6 @@
           "description": "استنتاج عالي الأداء لنموذج التعرف التلقائي على الكلام Whisper من OpenAI",
           "details": ".يستخدم Handy برنامج ggml لمعالجة سريعة ومحلية لتحويل الكلام إلى نص. شكراً للعمل الرائع الذي قام به Georgi Gerganov والمساهمون"
         }
-      },
-      "whatsNewUpdates": {
-        "label": "إظهار الجديد",
-        "description": "إظهار ملاحظات الإصدار بعد تحديثات Handy"
       }
     },
     "modelSettings": {
@@ -574,19 +525,6 @@
       }
     }
   },
-  "footer": {
-    "checkingUpdates": "...جاري التحقق من وجود تحديثات",
-    "updateAvailableShort": "تحديث متاح",
-    "upToDate": "محدث",
-    "updateCheckingDisabled": "تم تعطيل التحقق من التحديث",
-    "downloading": "...جاري التنزيل {{progress}}%",
-    "installing": "...جاري التثبيت",
-    "preparing": "...جاري التحضير",
-    "checkForUpdates": "التحقق من وجود تحديثات",
-    "portableUpdateTitle": "التحديث اليدوي مطلوب",
-    "portableUpdateMessage": "لا يمكن تحديث التثبيتات المحمولة تلقائيًا. للتحديث: نزّل أحدث مثبّت NSIS من GitHub Releases، وثبّته في المجلد نفسه، ثم انسخ مجلد Data/ (الإعدادات والنماذج والتسجيلات) من الإصدار القديم إلى الجديد.",
-    "portableUpdateButton": "فتح GitHub Releases"
-  },
   "common": {
     "loading": "...جاري التحميل",
     "delete": "حذف",
@@ -596,17 +534,11 @@
     "clear": "مسح",
     "noOptionsFound": "لم يتم العثور على خيارات"
   },
-  "accessibility": {
-    "permissionsDescription": ".يحتاج Handy إلى أذونات إمكانية الوصول لكتابة النص المفرغ",
-    "openSettings": "فتح إعدادات النظام"
-  },
   "errors": {
     "loadDirectory": "خطأ في تحميل المجلد: {{error}}",
     "micPermissionDeniedTitle": "تم رفض الوصول إلى الميكروفون",
     "micPermissionDenied": {
       "generic": "تم رفض الوصول إلى الميكروفون من قبل نظام التشغيل. يرجى منح إذن الميكروفون في إعدادات النظام.",
-      "windows": "قم بتمكين الوصول إلى الميكروفون في الإعدادات ← الخصوصية والأمان ← الميكروفون (بما في ذلك وصول تطبيقات سطح المكتب).",
-      "macos": "امنح الوصول إلى الميكروفون في إعدادات النظام ← الخصوصية والأمان ← الميكروفون.",
       "linux": "امنح الوصول إلى الميكروفون في إعدادات الصوت أو الخصوصية في نظامك."
     },
     "noInputDeviceTitle": "لم يتم العثور على ميكروفون",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "...جاري التفريغ",
     "processing": "...جاري المعالجة"
-  },
-  "whatsNew": {
-    "title": "الجديد في Handy v{{version}}"
   }
 }

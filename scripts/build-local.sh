@@ -15,7 +15,7 @@ fi
 
 mkdir -p "$cache_dir" "$output_dir"
 
-# Change worktrees share the primary checkout's expensive build cache through
+# Task worktrees share the primary checkout's expensive build cache through
 # symlinks. Mount that resolved cache root over /work/.docker-cache so those
 # links do not point outside the container's filesystem.
 container_cache_dir="$cache_dir"
@@ -28,9 +28,10 @@ docker build \
     --tag "$builder_image" \
     "${repository_root}/packaging"
 
-# The 5g default protects the host desktop during builds (TASK-3). Newer
-# toolchain images can need more for ggml-vulkan's heaviest translation
-# units; override with QQ_BUILD_MEM=8g (applies to both memory and
+# The 5g default protects the host desktop during builds, as established by
+# the July containment evidence. Newer toolchain images can need more for
+# ggml-vulkan's heaviest translation units; override with QQ_BUILD_MEM=8g
+# (applies to both memory and
 # memory-swap) without editing this script. NOTE: bash does not allow
 # comments inside a line-continued command — keep them above `docker run`.
 docker run --rm \
@@ -52,8 +53,7 @@ docker run --rm \
         set -euo pipefail
         mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$ORT_CACHE_DIR"
         bun install --frozen-lockfile
-        bun run tauri build --bundles deb \
-            --config "{\"bundle\":{\"createUpdaterArtifacts\":false}}"
+        bun run tauri build --bundles deb
     '
 
 deb_path="$(find "${cache_dir}/target/release/bundle/deb" -maxdepth 1 \
