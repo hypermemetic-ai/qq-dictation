@@ -22,7 +22,7 @@ The standalone hermetic surface is:
 /usr/bin/python3 scripts/install-remote-workstation.py
 ```
 
-Do not run installers until the reviewed Change reaches its approved live-install step.
+Do not run installers until the reviewed Task reaches its approved live-install step.
 
 ## Laptop requirements and install
 
