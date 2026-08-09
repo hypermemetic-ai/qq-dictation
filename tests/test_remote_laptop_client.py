@@ -8,6 +8,7 @@ import io
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -41,6 +42,10 @@ def config(**updates):
         "remote_helper": "~/.local/bin/handy-remote-stream.py",
         "notify_send_path": "/usr/bin/notify-send",
     }
+    if updates.get("delivery_mode") == "local":
+        raw.pop("ghostty_title")
+        raw.pop("ghostty_class")
+        raw["xdotool_path"] = "/usr/bin/xdotool"
     raw.update(updates)
     return client.ClientConfig.from_mapping(raw)
 
@@ -74,6 +79,19 @@ class ConfigAndProtocolTests(unittest.TestCase):
                 }
             )
 
+    def test_delivery_mode_schema_is_exact_and_mode_specific(self):
+        self.assertEqual(config().delivery_mode, client.DeliveryMode.HERDR)
+        local = config(delivery_mode="local")
+        self.assertEqual(local.delivery_mode, client.DeliveryMode.LOCAL)
+        self.assertIsNone(local.ghostty_title)
+        self.assertEqual(local.xdotool_path, "/usr/bin/xdotool")
+        with self.assertRaisesRegex(client.ClientError, "exactly"):
+            config(delivery_mode="wayland")
+        with self.assertRaisesRegex(client.ClientError, "must not name a Ghostty"):
+            config(delivery_mode="local", ghostty_title="saved", ghostty_class="saved")
+        with self.assertRaisesRegex(client.ClientError, "xdotool_path"):
+            config(xdotool_path="/usr/bin/xdotool")
+
     def test_protocol_framing_version_and_request_matching_are_strict(self):
         frame = client.encode_message({"type": "status", "version": 1})
         self.assertEqual(int.from_bytes(frame[:4], "big"), len(frame) - 4)
@@ -94,6 +112,75 @@ class ConfigAndProtocolTests(unittest.TestCase):
                     client.decode_response(payload)
         with self.assertRaisesRegex(client.ClientError, "stale or different"):
             client.validate_response(good, {"ready"}, "r2")
+
+    def test_injection_plan_is_bounded_strict_and_consuming_only(self):
+        response = client.decode_response(
+            b'{"version":1,"status":"succeeded","request_id":"r1",'
+            b'"injection":{"text":"exact text ","submit_key":"ctrl_enter"}}'
+        )
+        validated = client.validate_response(
+            response, {"succeeded"}, "r1", expect_injection=True
+        )
+        self.assertEqual(
+            client.injection_plan(validated),
+            client.InjectionPlan("exact text ", "ctrl_enter"),
+        )
+        with self.assertRaisesRegex(client.ClientError, "outside its consuming"):
+            client.validate_response(response, {"succeeded"}, "r1")
+        for injection, message in [
+            ({"text": "x", "submit_key": "tab"}, "unsupported submit"),
+            ({"text": "x"}, "malformed"),
+            (
+                {"text": "x" * (client.MAX_INJECTION_TEXT_BYTES + 1), "submit_key": None},
+                "outside bounds",
+            ),
+        ]:
+            payload = json.dumps(
+                {
+                    "version": 1,
+                    "status": "succeeded",
+                    "request_id": "r1",
+                    "injection": injection,
+                }
+            ).encode()
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(client.ClientError, message):
+                    client.decode_response(payload)
+
+    def test_xdotool_adapter_uses_argv_only_exact_text_and_one_submit_key(self):
+        injector = client.XdotoolInjector(config(delivery_mode="local"))
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(client.subprocess, "run", return_value=completed) as run:
+            injector.inject(client.InjectionPlan("exact -- Unicode Δ ", "cmd_enter"))
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            [
+                "/usr/bin/xdotool",
+                "type",
+                "--clearmodifiers",
+                "--",
+                "exact -- Unicode Δ ",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            [
+                "/usr/bin/xdotool",
+                "key",
+                "--clearmodifiers",
+                "super+Return",
+            ],
+        )
+        self.assertTrue(all(call.kwargs["shell"] is False for call in run.call_args_list))
+
+    def test_xdotool_text_failure_never_attempts_submit_key(self):
+        injector = client.XdotoolInjector(config(delivery_mode="local"))
+        failed = subprocess.CompletedProcess([], 1, "", "synthetic adapter failure")
+        with mock.patch.object(client.subprocess, "run", return_value=failed) as run:
+            with self.assertRaisesRegex(client.ClientError, "synthetic adapter failure"):
+                injector.inject(client.InjectionPlan("one attempt", "enter"))
+        self.assertEqual(run.call_count, 1)
 
     def test_pcm_decoder_is_little_endian_bounded_and_refuses_partial_samples(self):
         self.assertEqual(client.pcm_s16le_samples(b"\x01\x00\x00\x80"), [1, -32768])
@@ -157,7 +244,7 @@ class FakeNotifier:
 
 
 class FakeX11:
-    def __init__(self, fail_recheck=False):
+    def __init__(self, fail_recheck=False, focus_failure_at=None):
         self.identity = client.WindowIdentity(
             1234, 5678, "operator remote herdr", "com.mitchellh.ghostty"
         )
@@ -165,6 +252,9 @@ class FakeX11:
         self.released = 0
         self.fail_recheck = fail_recheck
         self.rechecks = 0
+        self.identity_reads = 0
+        self.focus_checks = 0
+        self.focus_failure_at = focus_failure_at
 
     def grab_dynamic(self):
         self.dynamic = True
@@ -175,6 +265,7 @@ class FakeX11:
         self.dynamic = False
 
     def active_identity(self):
+        self.identity_reads += 1
         return self.identity
 
     def require_same_active(self, identity):
@@ -184,9 +275,26 @@ class FakeX11:
         if identity != self.identity:
             raise client.ClientError("wrong identity")
 
+    def require_readable_focus(self):
+        self.focus_checks += 1
+        if self.focus_failure_at == self.focus_checks:
+            raise client.ClientError("X11 did not report one focused window")
+
+
+class FakeInjector:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.plans = []
+
+    def inject(self, plan):
+        self.plans.append(plan)
+        if self.fail:
+            raise client.ClientError("synthetic adapter-reported failure")
+
 
 class FakeTransport:
     def __init__(self, _config, terminal="succeeded"):
+        self.delivery_mode = _config.delivery_mode
         self.started = False
         self.closed = False
         self.messages = []
@@ -246,7 +354,13 @@ class FakeTransport:
             status = self.terminal
             self.active_request = None
             self.phase = None
-            return {"version": 1, "status": status, "request_id": request}
+            response = {"version": 1, "status": status, "request_id": request}
+            if self.delivery_mode == client.DeliveryMode.LOCAL and status == "succeeded":
+                response["injection"] = {
+                    "text": "workstation text ",
+                    "submit_key": "ctrl_enter",
+                }
+            return response
         if kind == "status" and self.phase == "cancelling":
             self.processing_polls += 1
             status = "cancelling" if self.processing_polls == 1 else "cancelled"
@@ -287,40 +401,47 @@ class FakeCapture:
 
 
 class ApplicationStateTests(unittest.TestCase):
-    def make_app(self, x11=None, terminal="succeeded"):
+    def make_app(self, x11=None, terminal="succeeded", delivery_mode="herdr", injector=None):
         x11 = x11 or FakeX11()
         notifier = FakeNotifier()
         transports = []
         captures = []
+        injector = injector or FakeInjector()
+        configured = config(delivery_mode=delivery_mode) if delivery_mode == "local" else config()
 
-        def transport_factory(configured):
-            value = FakeTransport(configured, terminal)
-            transports.append(value)
-            return value
+        def transport_factory(value):
+            transport = FakeTransport(value, terminal)
+            transports.append(transport)
+            return transport
 
-        def capture_factory(configured, send, fail):
-            value = FakeCapture(configured, send, fail)
-            captures.append(value)
-            return value
+        def capture_factory(value, send, fail):
+            capture = FakeCapture(value, send, fail)
+            captures.append(capture)
+            return capture
 
         app = client.LaptopApplication(
-            config(), x11, notifier, transport_factory, capture_factory
+            configured,
+            x11,
+            notifier,
+            transport_factory,
+            capture_factory,
+            injector_factory=lambda _configured: injector,
         )
-        return app, x11, notifier, transports, captures
+        return app, x11, notifier, transports, captures, injector
 
     def test_failed_dynamic_grab_never_starts_ssh_and_remains_nonrecording(self):
         class RefusingX11(FakeX11):
             def grab_dynamic(self):
                 raise client.ClientError("Space or Delete is already grabbed")
 
-        app, x11, _notifier, transports, _captures = self.make_app(RefusingX11())
+        app, x11, _notifier, transports, _captures, _injector = self.make_app(RefusingX11())
         app.arm()
         self.assertEqual(app.state, client.ClientState.FAILED)
         self.assertFalse(x11.dynamic)
         self.assertEqual(transports, [])
 
     def test_start_audio_finish_ready_commit_and_terminal_states_are_ordered(self):
-        app, x11, notifier, transports, captures = self.make_app()
+        app, x11, notifier, transports, captures, _injector = self.make_app()
         app.right_control()
         self.assertEqual(app.state, client.ClientState.ARMED)
         self.assertTrue(x11.dynamic)
@@ -352,8 +473,76 @@ class ApplicationStateTests(unittest.TestCase):
             ],
         )
 
+    def test_local_mode_has_no_start_target_and_injects_one_exact_workstation_plan(self):
+        app, x11, notifier, transports, _captures, injector = self.make_app(
+            delivery_mode="local"
+        )
+        app.arm()
+        app.space()
+        self.assertIsNone(app.start_window)
+        self.assertEqual(x11.identity_reads, 0)
+        self.assertEqual(transports[0].messages[0]["delivery_mode"], "local")
+        app.space()
+        app.tick()
+        app.tick()
+
+        self.assertEqual(app.state, client.ClientState.ARMED)
+        self.assertEqual(x11.focus_checks, 2)
+        self.assertEqual(
+            injector.plans,
+            [client.InjectionPlan("workstation text ", "ctrl_enter")],
+        )
+        self.assertEqual(
+            [message["type"] for message in transports[0].messages].count("commit"), 1
+        )
+        self.assertIn("X11-focused window", notifier.history[-1][1])
+
+    def test_local_focus_refusal_before_or_after_handoff_never_injects(self):
+        for failure_at, expected_commits in ((1, 0), (2, 1)):
+            with self.subTest(failure_at=failure_at):
+                app, x11, _notifier, transports, _captures, injector = self.make_app(
+                    x11=FakeX11(focus_failure_at=failure_at), delivery_mode="local"
+                )
+                app.arm()
+                app.space()
+                app.space()
+                app.tick()
+                app.tick()
+                self.assertEqual(app.state, client.ClientState.FAILED)
+                self.assertFalse(x11.dynamic)
+                self.assertEqual(injector.plans, [])
+                self.assertEqual(
+                    [message["type"] for message in transports[0].messages].count("commit"),
+                    expected_commits,
+                )
+
+    def test_local_adapter_failure_is_one_marked_attempt_without_retry_or_fallback(self):
+        failing = FakeInjector(fail=True)
+        app, x11, notifier, transports, _captures, injector = self.make_app(
+            delivery_mode="local", injector=failing
+        )
+        app.arm()
+        app.space()
+        app.space()
+        app.tick()
+        app.tick()
+
+        self.assertEqual(app.state, client.ClientState.FAILED)
+        self.assertTrue(app.injection_attempted is False)  # cleared only during terminal teardown
+        self.assertEqual(
+            injector.plans,
+            [client.InjectionPlan("workstation text ", "ctrl_enter")],
+        )
+        self.assertFalse(x11.dynamic)
+        self.assertIn("adapter-reported failure", notifier.history[-1][1])
+        self.assertEqual(
+            [message["type"] for message in transports[0].messages].count("commit"), 1
+        )
+        app.tick()
+        self.assertEqual(len(injector.plans), 1)
+
     def test_window_mismatch_at_ready_sends_no_commit_and_releases_resources(self):
-        app, x11, _notifier, transports, captures = self.make_app(
+        app, x11, _notifier, transports, captures, _injector = self.make_app(
             FakeX11(fail_recheck=True)
         )
         app.arm()
@@ -370,7 +559,7 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertEqual(kinds[-1], "cancel")
 
     def test_one_armed_helper_reuses_sequential_requests_and_recording_cancel(self):
-        app, _x11, _notifier, transports, _captures = self.make_app()
+        app, _x11, _notifier, transports, _captures, _injector = self.make_app()
         app.arm()
 
         app.space()
@@ -401,7 +590,7 @@ class ApplicationStateTests(unittest.TestCase):
         )
 
     def test_blank_terminal_success_never_commits_or_manufactures_delivery(self):
-        app, _x11, _notifier, transports, _captures = self.make_app(terminal="blank")
+        app, _x11, _notifier, transports, _captures, _injector = self.make_app(terminal="blank")
         app.arm()
         app.space()
         app.space()
@@ -413,7 +602,7 @@ class ApplicationStateTests(unittest.TestCase):
         )
 
     def test_effect_uncertain_commit_is_attempted_once_then_resources_release(self):
-        app, x11, _notifier, transports, _captures = self.make_app()
+        app, x11, _notifier, transports, _captures, _injector = self.make_app()
         app.arm()
         app.space()
         app.space()
@@ -437,7 +626,7 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertTrue(transports[0].closed)
 
     def test_processing_cancel_remains_nonrecording_until_terminal_completion(self):
-        app, _x11, notifier, transports, _captures = self.make_app()
+        app, _x11, notifier, transports, _captures, _injector = self.make_app()
         app.arm()
         app.space()
         app.space()
@@ -461,7 +650,7 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertEqual(len(transports), 1)
 
     def test_right_control_cancels_processing_reaps_children_and_returns_off(self):
-        app, x11, _notifier, transports, captures = self.make_app()
+        app, x11, _notifier, transports, captures, _injector = self.make_app()
         app.arm()
         app.space()
         app.space()
@@ -472,7 +661,7 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertFalse(x11.dynamic)
 
     def test_ssh_replacement_and_capture_failure_are_visible_nonrecording_failures(self):
-        app, x11, _notifier, transports, captures = self.make_app()
+        app, x11, _notifier, transports, captures, _injector = self.make_app()
         app.arm()
         transports[0].exited = True
         app.tick()

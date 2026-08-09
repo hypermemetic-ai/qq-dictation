@@ -28,6 +28,7 @@ from Xlib.error import XError
 
 PROTOCOL_VERSION = 1
 MAX_PROTOCOL_FRAME_BYTES = 65_536
+MAX_INJECTION_TEXT_BYTES = 8_192
 MAX_AUDIO_SAMPLES = 4_800
 AUDIO_BYTES_PER_SAMPLE = 2
 AUDIO_CHUNK_BYTES = MAX_AUDIO_SAMPLES * AUDIO_BYTES_PER_SAMPLE
@@ -51,17 +52,15 @@ DEFAULT_CAPTURE_ARGV = [
     "-",
 ]
 DEFAULTS = {
+    "delivery_mode": "herdr",
     "ssh_path": "/usr/bin/ssh",
     "remote_helper": "~/.local/bin/handy-remote-stream.py",
     "notify_send_path": "/usr/bin/notify-send",
+    "xdotool_path": "/usr/bin/xdotool",
 }
-REQUIRED_CONFIG = {
-    "ssh_host",
-    "ghostty_title",
-    "ghostty_class",
-    "capture_argv",
-}
-ALLOWED_CONFIG = REQUIRED_CONFIG | set(DEFAULTS)
+COMMON_REQUIRED_CONFIG = {"ssh_host", "capture_argv"}
+HERDR_CONFIG = {"ghostty_title", "ghostty_class"}
+ALLOWED_CONFIG = COMMON_REQUIRED_CONFIG | HERDR_CONFIG | set(DEFAULTS)
 SAFE_SSH_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,254}\Z")
 SAFE_REMOTE_HELPER = re.compile(r"[A-Za-z0-9_./~+-]{1,512}\Z")
 
@@ -78,40 +77,55 @@ class ClientState(str, Enum):
     FAILED = "failed"
 
 
+class DeliveryMode(str, Enum):
+    HERDR = "herdr"
+    LOCAL = "local"
+
+
 @dataclass(frozen=True)
 class ClientConfig:
     ssh_host: str
-    ghostty_title: str
-    ghostty_class: str
+    delivery_mode: DeliveryMode
+    ghostty_title: str | None
+    ghostty_class: str | None
     capture_argv: tuple[str, ...]
     ssh_path: str
     remote_helper: str
     notify_send_path: str
+    xdotool_path: str | None
 
     @classmethod
     def from_mapping(cls, raw: object) -> "ClientConfig":
         if not isinstance(raw, dict):
             raise ClientError("configuration must be one JSON object")
         fields = set(raw)
-        missing = REQUIRED_CONFIG - fields
+        missing = COMMON_REQUIRED_CONFIG - fields
         unknown = fields - ALLOWED_CONFIG
         if missing:
             raise ClientError(f"configuration is missing: {', '.join(sorted(missing))}")
         if unknown:
             raise ClientError(f"configuration has unknown fields: {', '.join(sorted(unknown))}")
         values = {**DEFAULTS, **raw}
+        try:
+            delivery_mode = DeliveryMode(values["delivery_mode"])
+        except (TypeError, ValueError) as error:
+            raise ClientError("delivery_mode must be exactly 'herdr' or 'local'") from error
 
-        for key in (
-            "ssh_host",
-            "ghostty_title",
-            "ghostty_class",
-            "ssh_path",
-            "remote_helper",
-            "notify_send_path",
-        ):
+        mode_fields = fields & HERDR_CONFIG
+        if delivery_mode == DeliveryMode.HERDR and mode_fields != HERDR_CONFIG:
+            missing = HERDR_CONFIG - fields
+            raise ClientError(f"configuration is missing: {', '.join(sorted(missing))}")
+        if delivery_mode == DeliveryMode.LOCAL and mode_fields:
+            raise ClientError("local delivery configuration must not name a Ghostty target")
+        if delivery_mode == DeliveryMode.HERDR and "xdotool_path" in fields:
+            raise ClientError("Herdr delivery configuration must not name xdotool_path")
+
+        for key in ("ssh_host", "ssh_path", "remote_helper", "notify_send_path"):
             if not isinstance(values[key], str) or not values[key]:
                 raise ClientError(f"{key} must be a non-empty string")
-        for key in ("ghostty_title", "ghostty_class"):
+        for key in HERDR_CONFIG & fields:
+            if not isinstance(values[key], str) or not values[key]:
+                raise ClientError(f"{key} must be a non-empty string")
             if any(ord(character) < 32 for character in values[key]):
                 raise ClientError(f"{key} contains a control character")
         if not SAFE_SSH_HOST.fullmatch(values["ssh_host"]):
@@ -121,6 +135,11 @@ class ClientConfig:
         for key in ("ssh_path", "notify_send_path"):
             if not Path(values[key]).is_absolute():
                 raise ClientError(f"{key} must be an absolute executable path")
+        xdotool_path = None
+        if delivery_mode == DeliveryMode.LOCAL:
+            xdotool_path = values["xdotool_path"]
+            if not isinstance(xdotool_path, str) or not Path(xdotool_path).is_absolute():
+                raise ClientError("xdotool_path must be an absolute executable path")
 
         capture = values["capture_argv"]
         if (
@@ -143,12 +162,14 @@ class ClientConfig:
 
         return cls(
             ssh_host=values["ssh_host"],
-            ghostty_title=values["ghostty_title"],
-            ghostty_class=values["ghostty_class"],
+            delivery_mode=delivery_mode,
+            ghostty_title=values.get("ghostty_title"),
+            ghostty_class=values.get("ghostty_class"),
             capture_argv=tuple(capture),
             ssh_path=values["ssh_path"],
             remote_helper=values["remote_helper"],
             notify_send_path=values["notify_send_path"],
+            xdotool_path=xdotool_path,
         )
 
     @classmethod
@@ -159,11 +180,12 @@ class ClientConfig:
             raise ClientError(f"cannot read configuration {path}: {error}") from error
 
     def validate_runtime_tools(self) -> None:
-        for executable in (
-            self.ssh_path,
-            self.notify_send_path,
-            self.capture_argv[0],
-        ):
+        executables = [self.ssh_path, self.notify_send_path, self.capture_argv[0]]
+        if self.delivery_mode == DeliveryMode.LOCAL:
+            if self.xdotool_path is None:
+                raise ClientError("local delivery is missing xdotool_path")
+            executables.append(self.xdotool_path)
+        for executable in executables:
             path = Path(executable)
             if not path.is_file() or not os.access(path, os.X_OK):
                 raise ClientError(f"required executable is unavailable: {path}")
@@ -175,6 +197,12 @@ class WindowIdentity:
     process_id: int
     title: str
     window_class: str
+
+
+@dataclass(frozen=True)
+class InjectionPlan:
+    text: str
+    submit_key: str | None
 
 
 class DistinctPressTracker:
@@ -239,7 +267,7 @@ def decode_response(payload: bytes) -> dict[str, object]:
         raise ClientError("workstation returned malformed JSON") from error
     if not isinstance(response, dict):
         raise ClientError("workstation returned a non-object response")
-    allowed = {"version", "status", "request_id", "error"}
+    allowed = {"version", "status", "request_id", "error", "injection"}
     if set(response) - allowed:
         raise ClientError("workstation response contained unknown fields")
     if type(response.get("version")) is not int or response["version"] != PROTOCOL_VERSION:
@@ -251,6 +279,20 @@ def decode_response(payload: bytes) -> dict[str, object]:
         if not isinstance(detail, str) or not detail:
             detail = "workstation refused the request without a reason"
         raise ClientError(detail)
+    injection = response.get("injection")
+    if injection is not None:
+        if not isinstance(injection, dict) or set(injection) != {"text", "submit_key"}:
+            raise ClientError("workstation returned a malformed injection plan")
+        text = injection.get("text")
+        submit_key = injection.get("submit_key")
+        if (
+            not isinstance(text, str)
+            or not text
+            or len(text.encode("utf-8")) > MAX_INJECTION_TEXT_BYTES
+        ):
+            raise ClientError("workstation injection text is outside bounds")
+        if submit_key not in {None, "enter", "ctrl_enter", "cmd_enter"}:
+            raise ClientError("workstation returned an unsupported submit key")
     return response
 
 
@@ -258,6 +300,7 @@ def validate_response(
     response: dict[str, object],
     expected_statuses: set[str],
     request_id: str | None = None,
+    expect_injection: bool = False,
 ) -> dict[str, object]:
     status = response["status"]
     if status not in expected_statuses:
@@ -268,7 +311,19 @@ def validate_response(
             raise ClientError("workstation did not mint a request id")
     elif observed_request != request_id:
         raise ClientError("workstation response named a stale or different request")
+    has_injection = response.get("injection") is not None
+    if has_injection != expect_injection:
+        if has_injection:
+            raise ClientError("workstation exposed injection data outside its consuming handoff")
+        raise ClientError("workstation omitted the local injection plan")
     return response
+
+
+def injection_plan(response: dict[str, object]) -> InjectionPlan:
+    raw = response.get("injection")
+    if not isinstance(raw, dict):
+        raise ClientError("workstation omitted the local injection plan")
+    return InjectionPlan(text=str(raw["text"]), submit_key=raw["submit_key"])
 
 
 class ProtocolTransport:
@@ -498,6 +553,44 @@ class StatusNotifier:
             print(f"handy-remote-client: status notification failed: {error}", file=sys.stderr)
 
 
+class XdotoolInjector:
+    """One best-effort X11 synthetic-injection adapter attempt."""
+
+    def __init__(self, config: ClientConfig):
+        if config.xdotool_path is None:
+            raise ClientError("local delivery is missing xdotool_path")
+        self.executable = config.xdotool_path
+
+    def _run(self, arguments: list[str], action: str) -> None:
+        try:
+            result = subprocess.run(
+                [self.executable, *arguments],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False,
+                timeout=PROTOCOL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ClientError(f"xdotool {action} attempt failed: {error}") from error
+        if result.returncode != 0:
+            detail = result.stderr.strip()[:1024]
+            suffix = f": {detail}" if detail else ""
+            raise ClientError(f"xdotool {action} failed with status {result.returncode}{suffix}")
+
+    def inject(self, plan: InjectionPlan) -> None:
+        self._run(["type", "--clearmodifiers", "--", plan.text], "text injection")
+        if plan.submit_key is not None:
+            key = {
+                "enter": "Return",
+                "ctrl_enter": "ctrl+Return",
+                "cmd_enter": "super+Return",
+            }[plan.submit_key]
+            self._run(["key", "--clearmodifiers", key], "submit-key injection")
+
+
 class X11Controller:
     def __init__(self, config: ClientConfig):
         self.config = config
@@ -617,6 +710,23 @@ class X11Controller:
         if self.active_identity() != expected:
             raise ClientError("active Ghostty window changed before remote commit")
 
+    def require_readable_focus(self) -> None:
+        try:
+            atom = self.display.intern_atom("_NET_ACTIVE_WINDOW")
+            active = self.root.get_full_property(atom, X.AnyPropertyType)
+            if active is None or len(active.value) != 1:
+                raise ClientError("X11 did not report one focused window")
+            window_id = int(active.value[0])
+            if window_id <= 0:
+                raise ClientError("X11 reported no focused window")
+            window = self.display.create_resource_object("window", window_id)
+            if window.get_attributes() is None:
+                raise ClientError("focused X11 window was unreadable")
+        except XError as error:
+            raise ClientError("focused X11 window disappeared during delivery") from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ClientError("X11 reported malformed focused-window state") from error
+
     def next_event(self, timeout: float = POLL_SECONDS):
         if self.display.pending_events():
             return self.display.next_event()
@@ -637,18 +747,23 @@ class LaptopApplication:
             [ClientConfig, Callable[[list[int]], None], Callable[[str], None]],
             MicrophoneCapture,
         ] = MicrophoneCapture,
+        injector_factory: Callable[[ClientConfig], XdotoolInjector] = XdotoolInjector,
     ):
         self.config = config
         self.x11 = x11
         self.notifier = notifier or StatusNotifier(config.notify_send_path)
         self.transport_factory = transport_factory
         self.capture_factory = capture_factory
+        self.injector = (
+            injector_factory(config) if config.delivery_mode == DeliveryMode.LOCAL else None
+        )
         self.state = ClientState.OFF
         self.transport: ProtocolTransport | None = None
         self.capture: MicrophoneCapture | None = None
         self.request_id: str | None = None
         self.start_window: WindowIdentity | None = None
         self.commit_attempted = False
+        self.injection_attempted = False
         self._failure_lock = threading.Lock()
         self._async_failure: str | None = None
         self._set_state(ClientState.OFF, "Right-Control arms remote dictation")
@@ -693,6 +808,7 @@ class LaptopApplication:
                 self.request_id = None
                 self.start_window = None
                 self.commit_attempted = False
+                self.injection_attempted = False
                 self._set_state(ClientState.ARMED, "Remote request cancelled")
             elif status == "cancelling":
                 self._set_state(
@@ -710,12 +826,17 @@ class LaptopApplication:
             self.fail("SSH helper is unavailable")
             return
         try:
-            intended = self.x11.active_identity()
+            intended = (
+                self.x11.active_identity()
+                if self.config.delivery_mode == DeliveryMode.HERDR
+                else None
+            )
             response = validate_response(
                 transport.exchange(
                     {
                         "type": "start",
                         "version": PROTOCOL_VERSION,
+                        "delivery_mode": self.config.delivery_mode.value,
                         "audio": {
                             "format": "s16le",
                             "sample_rate": 16000,
@@ -728,6 +849,7 @@ class LaptopApplication:
             self.request_id = str(response["request_id"])
             self.start_window = intended
             self.commit_attempted = False
+            self.injection_attempted = False
             capture = self.capture_factory(
                 self.config, self._send_audio, self._record_async_failure
             )
@@ -812,10 +934,12 @@ class LaptopApplication:
                     if result == "succeeded":
                         self.request_id = None
                         self.start_window = None
-                        self._set_state(
-                            ClientState.ARMED,
-                            "Delivered to the Herdr pane selected at commit",
+                        detail = (
+                            "Delivered to the Herdr pane selected at commit"
+                            if self.config.delivery_mode == DeliveryMode.HERDR
+                            else "Injected into the X11-focused window at delivery"
                         )
+                        self._set_state(ClientState.ARMED, detail)
                     elif result == "failed":
                         self.fail("workstation delivery failed")
                     else:
@@ -839,14 +963,23 @@ class LaptopApplication:
     def _commit_ready_request(self) -> str:
         transport = self.transport
         request_id = self.request_id
-        start_window = self.start_window
-        if transport is None or request_id is None or start_window is None:
-            raise ClientError("ready request is missing its original window identity")
+        if transport is None or request_id is None:
+            raise ClientError("ready request has no live owning connection")
         if self.commit_attempted:
             raise ClientError("remote commit was already attempted and will not be retried")
-        self.x11.require_same_active(start_window)
+
+        local_delivery = self.config.delivery_mode == DeliveryMode.LOCAL
+        if local_delivery:
+            # This is a readability check, not a saved target. The actual target
+            # remains whichever X11 window is focused immediately before injection.
+            self.x11.require_readable_focus()
+        else:
+            if self.start_window is None:
+                raise ClientError("ready Herdr request is missing its original window identity")
+            self.x11.require_same_active(self.start_window)
+
         # Set this before the exchange. A lost response is effect-uncertain and
-        # must never cause this client to issue the commit a second time.
+        # must never cause this client to issue the consuming commit a second time.
         self.commit_attempted = True
         response = transport.exchange(
             {
@@ -855,8 +988,29 @@ class LaptopApplication:
                 "request_id": request_id,
             }
         )
-        validated = validate_response(response, {"succeeded", "failed"}, request_id)
-        return str(validated["status"])
+        if not local_delivery:
+            validated = validate_response(response, {"succeeded", "failed"}, request_id)
+            return str(validated["status"])
+
+        status = str(response["status"])
+        if status == "failed":
+            validate_response(response, {"failed"}, request_id)
+            return status
+        validated = validate_response(
+            response, {"succeeded"}, request_id, expect_injection=True
+        )
+        plan = injection_plan(validated)
+        self.x11.require_readable_focus()
+        if self.injection_attempted:
+            raise ClientError("local injection was already attempted and will not be retried")
+        injector = self.injector
+        if injector is None:
+            raise ClientError("local injection adapter is unavailable")
+        # Mark the effectful adapter attempt first. A timeout, tool failure, or
+        # uncertain effect can only become a truthful local failure, never a retry.
+        self.injection_attempted = True
+        injector.inject(plan)
+        return status
 
     def _record_async_failure(self, detail: str) -> None:
         with self._failure_lock:
@@ -896,6 +1050,7 @@ class LaptopApplication:
         self.request_id = None
         self.start_window = None
         self.commit_attempted = False
+        self.injection_attempted = False
         if self.transport is not None:
             self.transport.close()
             self.transport = None

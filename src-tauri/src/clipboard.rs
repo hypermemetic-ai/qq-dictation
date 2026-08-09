@@ -608,6 +608,58 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+pub(crate) const MAX_REMOTE_INJECTION_TEXT_BYTES: usize = 8_192;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct RemoteInjectionPlan {
+    pub(crate) text: String,
+    pub(crate) submit_key: Option<AutoSubmitKey>,
+}
+
+pub(crate) fn validate_remote_local_transcript(text: &str) -> Result<(), String> {
+    // Reserve one byte for the workstation-owned optional trailing space. JSON
+    // escaping of this bound still fits within the enclosing 65,536-byte frame.
+    if text.is_empty() || text.len() >= MAX_REMOTE_INJECTION_TEXT_BYTES {
+        Err("Remote local-injection text is outside bounds".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn build_remote_injection_plan(
+    text: String,
+    append_trailing_space: bool,
+    auto_submit: bool,
+    auto_submit_key: AutoSubmitKey,
+) -> Result<RemoteInjectionPlan, String> {
+    validate_remote_local_transcript(&text)?;
+    let text = if append_trailing_space {
+        format!("{text} ")
+    } else {
+        text
+    };
+    if text.len() > MAX_REMOTE_INJECTION_TEXT_BYTES {
+        return Err("Remote local-injection text is outside bounds".to_string());
+    }
+    Ok(RemoteInjectionPlan {
+        text,
+        submit_key: auto_submit.then_some(auto_submit_key),
+    })
+}
+
+pub(crate) fn prepare_remote_injection_plan(
+    text: String,
+    app_handle: &AppHandle,
+) -> Result<RemoteInjectionPlan, String> {
+    let settings = get_settings(app_handle);
+    build_remote_injection_plan(
+        text,
+        settings.append_trailing_space,
+        settings.auto_submit,
+        settings.auto_submit_key,
+    )
+}
+
 #[cfg(target_os = "linux")]
 fn deliver_bound_herdr(
     pane_id: &str,
@@ -796,6 +848,48 @@ mod tests {
         assert!(should_send_auto_submit(true, PasteMethod::Direct));
         assert!(should_send_auto_submit(true, PasteMethod::CtrlShiftV));
         assert!(should_send_auto_submit(true, PasteMethod::ShiftInsert));
+    }
+
+    #[test]
+    fn local_plan_applies_exact_trailing_space_and_submit_key() {
+        let plan = build_remote_injection_plan(
+            "synthetic text".to_string(),
+            true,
+            true,
+            AutoSubmitKey::CtrlEnter,
+        )
+        .unwrap();
+        assert_eq!(plan.text, "synthetic text ");
+        assert_eq!(plan.submit_key, Some(AutoSubmitKey::CtrlEnter));
+
+        let without_submit = build_remote_injection_plan(
+            "unchanged".to_string(),
+            false,
+            false,
+            AutoSubmitKey::CmdEnter,
+        )
+        .unwrap();
+        assert_eq!(without_submit.text, "unchanged");
+        assert_eq!(without_submit.submit_key, None);
+    }
+
+    #[test]
+    fn local_plan_refuses_text_that_cannot_fit_one_bounded_response() {
+        assert!(build_remote_injection_plan(
+            "x".repeat(MAX_REMOTE_INJECTION_TEXT_BYTES),
+            false,
+            false,
+            AutoSubmitKey::Enter,
+        )
+        .is_err());
+        let plan = build_remote_injection_plan(
+            "x".repeat(MAX_REMOTE_INJECTION_TEXT_BYTES - 1),
+            true,
+            false,
+            AutoSubmitKey::Enter,
+        )
+        .unwrap();
+        assert_eq!(plan.text.len(), MAX_REMOTE_INJECTION_TEXT_BYTES);
     }
 
     #[cfg(target_os = "linux")]

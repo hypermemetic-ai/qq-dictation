@@ -722,10 +722,24 @@ impl ShortcutAction for TranscribeAction {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RemoteDeliveryMode {
+    #[default]
+    Herdr,
+    Local,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteDeliveryPlan {
+    Herdr(crate::target_binding::HerdrSessionIdentity),
+    Local,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteOperationPlan {
     pub(crate) post_process: bool,
-    pub(crate) herdr_identity: crate::target_binding::HerdrSessionIdentity,
+    pub(crate) delivery: RemoteDeliveryPlan,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -737,10 +751,16 @@ enum FinishDelivery {
 pub(crate) fn start_remote_operation(
     app: &AppHandle,
     request_id: &str,
+    delivery_mode: RemoteDeliveryMode,
 ) -> Result<RemoteOperationPlan, String> {
-    // Remote start is authorized only while the configured/default Herdr
-    // session has a bounded live identity. This reads no pane or focus state.
-    let herdr_identity = crate::target_binding::capture_remote_session_identity()?;
+    // Herdr delivery retains its start-owned exact server/session identity.
+    // Laptop-local delivery deliberately captures no workstation or laptop target.
+    let delivery = match delivery_mode {
+        RemoteDeliveryMode::Herdr => RemoteDeliveryPlan::Herdr(
+            crate::target_binding::capture_remote_session_identity()?,
+        ),
+        RemoteDeliveryMode::Local => RemoteDeliveryPlan::Local,
+    };
     let transcription = app.state::<Arc<TranscriptionManager>>();
     let recording = app.state::<Arc<AudioRecordingManager>>();
     transcription.initiate_model_load();
@@ -777,7 +797,7 @@ pub(crate) fn start_remote_operation(
 
     Ok(RemoteOperationPlan {
         post_process: settings.post_process_enabled,
-        herdr_identity,
+        delivery,
     })
 }
 
