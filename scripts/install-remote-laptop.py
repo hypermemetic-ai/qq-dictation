@@ -24,6 +24,7 @@ DEFAULT_CAPTURE_ARGV = [
     "s16",
     "-",
 ]
+DEFAULT_XDOTOOL_PATH = "/usr/bin/xdotool"
 
 SERVICE_NAME = "handy-remote-client.service"
 SERVICE_HEALTH_PROPERTIES = ("ActiveState", "SubState", "MainPID", "NRestarts")
@@ -76,26 +77,57 @@ def install_file(source: Path, destination: Path, mode: int) -> Path | None:
 
 
 def requested_config(arguments) -> dict | None:
-    identity = (arguments.ssh_host, arguments.ghostty_title, arguments.ghostty_class)
-    if not any(value is not None for value in identity):
+    requested = (
+        arguments.ssh_host,
+        arguments.ghostty_title,
+        arguments.ghostty_class,
+        arguments.delivery_mode,
+        arguments.xdotool_path,
+    )
+    if not any(value is not None for value in requested):
         return None
-    if not all(value is not None for value in identity):
-        raise InstallError(
-            "--ssh-host, --ghostty-title, and --ghostty-class must be supplied together"
-        )
+    delivery_mode = arguments.delivery_mode or "herdr"
+    if arguments.ssh_host is None:
+        raise InstallError("a requested configuration must include --ssh-host")
+    if delivery_mode == "herdr":
+        if arguments.ghostty_title is None or arguments.ghostty_class is None:
+            raise InstallError(
+                "Herdr delivery requires --ghostty-title and --ghostty-class"
+            )
+        if arguments.xdotool_path is not None:
+            raise InstallError("Herdr delivery must not configure xdotool")
+    elif arguments.ghostty_title is not None or arguments.ghostty_class is not None:
+        raise InstallError("local delivery must not configure a Ghostty target")
     try:
         capture = json.loads(arguments.capture_argv_json)
     except json.JSONDecodeError as error:
         raise InstallError(f"--capture-argv-json is invalid: {error}") from error
-    return {
+    result = {
         "ssh_host": arguments.ssh_host,
-        "ghostty_title": arguments.ghostty_title,
-        "ghostty_class": arguments.ghostty_class,
         "capture_argv": capture,
         "ssh_path": arguments.ssh_path,
         "remote_helper": arguments.remote_helper,
         "notify_send_path": arguments.notify_send_path,
     }
+    if delivery_mode == "herdr":
+        result.update(
+            {
+                "ghostty_title": arguments.ghostty_title,
+                "ghostty_class": arguments.ghostty_class,
+            }
+        )
+        # Preserve exact equality with configurations installed before this
+        # additive field existed unless the operator explicitly selected it.
+        if arguments.delivery_mode is not None:
+            result["delivery_mode"] = delivery_mode
+    else:
+        result.update(
+            {
+                "delivery_mode": delivery_mode,
+                "xdotool_path": arguments.xdotool_path or DEFAULT_XDOTOOL_PATH,
+            }
+        )
+    return result
 
 
 def validate_config(client: Path, config: Path) -> None:
@@ -128,6 +160,8 @@ def validate_laptop_runtime(config: Path) -> None:
         value["notify_send_path"],
         value["capture_argv"][0],
     ]
+    if value.get("delivery_mode", "herdr") == "local":
+        executables.append(value.get("xdotool_path", "/usr/bin/xdotool"))
     for executable in executables:
         path = Path(executable)
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -320,12 +354,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--ssh-host")
+    parser.add_argument("--delivery-mode", choices=("herdr", "local"))
     parser.add_argument("--ghostty-title")
     parser.add_argument("--ghostty-class")
     parser.add_argument("--capture-argv-json", default=json.dumps(DEFAULT_CAPTURE_ARGV))
     parser.add_argument("--ssh-path", default="/usr/bin/ssh")
     parser.add_argument("--remote-helper", default="~/.local/bin/handy-remote-stream.py")
     parser.add_argument("--notify-send-path", default="/usr/bin/notify-send")
+    parser.add_argument("--xdotool-path")
     parser.add_argument("--systemctl", type=Path, default=Path("/usr/bin/systemctl"))
     arguments = parser.parse_args(argv)
 
@@ -353,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if desired is None:
                 raise InstallError(
-                    "first install requires --ssh-host, --ghostty-title, and --ghostty-class"
+                    "first install requires a complete Herdr or local delivery configuration"
                 )
             config.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             descriptor, candidate_name = tempfile.mkstemp(

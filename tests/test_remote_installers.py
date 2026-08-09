@@ -12,6 +12,8 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).parents[1]
 WORKSTATION_INSTALLER = ROOT / "scripts" / "install-remote-workstation.py"
@@ -54,6 +56,39 @@ def laptop_command(home: Path, systemctl: Path) -> list[str]:
         "--systemctl",
         str(systemctl),
     ]
+
+
+def local_laptop_command(home: Path, systemctl: Path, xdotool: Path) -> list[str]:
+    return [
+        "/usr/bin/python3",
+        str(LAPTOP_INSTALLER),
+        "--home",
+        str(home),
+        "--ssh-host",
+        "workstation",
+        "--delivery-mode",
+        "local",
+        "--xdotool-path",
+        str(xdotool),
+        "--systemctl",
+        str(systemctl),
+    ]
+
+
+def requested_arguments(**updates):
+    values = {
+        "ssh_host": "workstation",
+        "delivery_mode": None,
+        "ghostty_title": "remote herdr",
+        "ghostty_class": "com.mitchellh.ghostty",
+        "capture_argv_json": json.dumps(INSTALLER_MODULE.DEFAULT_CAPTURE_ARGV),
+        "ssh_path": "/usr/bin/ssh",
+        "remote_helper": "~/.local/bin/handy-remote-stream.py",
+        "notify_send_path": "/usr/bin/notify-send",
+        "xdotool_path": None,
+    }
+    values.update(updates)
+    return SimpleNamespace(**values)
 
 
 def fake_systemctl(
@@ -154,6 +189,141 @@ class InstallerTests(unittest.TestCase):
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("unrecognized arguments", rejected.stderr)
 
+    def test_requested_config_preserves_legacy_and_supports_explicit_per_install_modes(self):
+        legacy = INSTALLER_MODULE.requested_config(requested_arguments())
+        self.assertNotIn("delivery_mode", legacy)
+        self.assertNotIn("xdotool_path", legacy)
+        self.assertEqual(legacy["ghostty_title"], "remote herdr")
+
+        explicit_herdr = INSTALLER_MODULE.requested_config(
+            requested_arguments(delivery_mode="herdr")
+        )
+        self.assertEqual(explicit_herdr["delivery_mode"], "herdr")
+        self.assertNotIn("xdotool_path", explicit_herdr)
+
+        local = INSTALLER_MODULE.requested_config(
+            requested_arguments(
+                delivery_mode="local",
+                ghostty_title=None,
+                ghostty_class=None,
+            )
+        )
+        self.assertEqual(
+            local,
+            {
+                "ssh_host": "workstation",
+                "capture_argv": INSTALLER_MODULE.DEFAULT_CAPTURE_ARGV,
+                "ssh_path": "/usr/bin/ssh",
+                "remote_helper": "~/.local/bin/handy-remote-stream.py",
+                "notify_send_path": "/usr/bin/notify-send",
+                "delivery_mode": "local",
+                "xdotool_path": INSTALLER_MODULE.DEFAULT_XDOTOOL_PATH,
+            },
+        )
+
+    def test_requested_config_refuses_cross_mode_target_fields(self):
+        with self.assertRaisesRegex(INSTALLER_MODULE.InstallError, "Ghostty target"):
+            INSTALLER_MODULE.requested_config(
+                requested_arguments(delivery_mode="local")
+            )
+        with self.assertRaisesRegex(INSTALLER_MODULE.InstallError, "must not configure xdotool"):
+            INSTALLER_MODULE.requested_config(
+                requested_arguments(delivery_mode="herdr", xdotool_path="/tmp/xdotool")
+            )
+
+    def test_runtime_requires_xdotool_only_for_local_delivery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            ssh = executable(directory / "ssh", "#!/bin/sh\nexit 0\n")
+            notify = executable(directory / "notify-send", "#!/bin/sh\nexit 0\n")
+            capture = executable(directory / "pw-record", "#!/bin/sh\nexit 0\n")
+            missing_xdotool = directory / "missing-xdotool"
+            config = directory / "remote-laptop.json"
+            common = {
+                "ssh_path": str(ssh),
+                "notify_send_path": str(notify),
+                "capture_argv": [str(capture)],
+            }
+
+            with mock.patch.object(
+                INSTALLER_MODULE.subprocess,
+                "run",
+                return_value=completed(["python"], stdout=""),
+            ):
+                config.write_text(json.dumps(common), encoding="utf-8")
+                INSTALLER_MODULE.validate_laptop_runtime(config)
+
+                config.write_text(
+                    json.dumps(
+                        {
+                            **common,
+                            "delivery_mode": "local",
+                            "xdotool_path": str(missing_xdotool),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    INSTALLER_MODULE.InstallError, "missing-xdotool"
+                ):
+                    INSTALLER_MODULE.validate_laptop_runtime(config)
+
+                executable(missing_xdotool, "#!/bin/sh\nexit 0\n")
+                INSTALLER_MODULE.validate_laptop_runtime(config)
+
+    def test_local_install_is_private_idempotent_and_refuses_different_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            home = directory / "home"
+            home.mkdir()
+            systemctl_log = directory / "systemctl.log"
+            systemctl = fake_systemctl(
+                directory / "systemctl",
+                systemctl_log,
+                [HEALTHY_SERVICE_STATE],
+            )
+            xdotool = executable(directory / "xdotool", "#!/bin/sh\nexit 0\n")
+            command = local_laptop_command(home, systemctl, xdotool)
+
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = home / ".config" / "qq-dictation" / "remote-laptop.json"
+            client = home / ".local" / "bin" / "handy-remote-client.py"
+            service = home / ".config" / "systemd" / "user" / "handy-remote-client.service"
+            value = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(value["delivery_mode"], "local")
+            self.assertEqual(value["xdotool_path"], str(xdotool))
+            self.assertNotIn("ghostty_title", value)
+            self.assertNotIn("ghostty_class", value)
+            self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+
+            backup_count = len(list(home.rglob("*.before-qq-dictation.*")))
+            rerun = subprocess.run(command, capture_output=True, text=True, check=False)
+            self.assertEqual(rerun.returncode, 0, rerun.stderr)
+            self.assertEqual(
+                len(list(home.rglob("*.before-qq-dictation.*"))), backup_count
+            )
+
+            before = {path: path.read_bytes() for path in (config, client, service)}
+            command_count = len(systemctl_log.read_text(encoding="utf-8").splitlines())
+            other_xdotool = executable(
+                directory / "other-xdotool", "#!/bin/sh\nexit 0\n"
+            )
+            refused = subprocess.run(
+                local_laptop_command(home, systemctl, other_xdotool),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("differs", refused.stderr)
+            for path, data in before.items():
+                self.assertEqual(path.read_bytes(), data)
+            self.assertEqual(
+                len(systemctl_log.read_text(encoding="utf-8").splitlines()),
+                command_count,
+            )
+
     def test_laptop_installer_health_gates_first_install_and_idempotent_rerun(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -193,7 +363,13 @@ class InstallerTests(unittest.TestCase):
                     "-",
                 ],
             )
-            for obsolete in ("herdr_prefix", "binder_key", "xdotool_path", "password"):
+            for obsolete in (
+                "delivery_mode",
+                "herdr_prefix",
+                "binder_key",
+                "xdotool_path",
+                "password",
+            ):
                 self.assertNotIn(obsolete, value)
             self.assertIn("ExecStart=/usr/bin/python3", service.read_text())
             first_commands = systemctl_log.read_text().splitlines()

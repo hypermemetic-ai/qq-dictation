@@ -1,6 +1,8 @@
 use crate::actions::{
-    finish_remote_operation, start_remote_operation, RemoteOperationPlan, ACTION_MAP,
+    finish_remote_operation, start_remote_operation, RemoteDeliveryMode, RemoteDeliveryPlan,
+    RemoteOperationPlan, ACTION_MAP,
 };
+use crate::clipboard::RemoteInjectionPlan;
 use crate::managers::audio::AudioRecordingManager;
 use crate::operation::{OperationOutcome, OperationOwner};
 use log::{debug, error, warn};
@@ -54,6 +56,12 @@ pub(crate) enum RemoteCancelStatus {
     Cancelling,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteCommitOutcome {
+    pub(crate) status: RemoteStatus,
+    pub(crate) injection: Option<RemoteInjectionPlan>,
+}
+
 struct RecordingRemote {
     request_id: String,
     connection_id: u64,
@@ -67,7 +75,7 @@ struct ProcessingRemote {
     connection_id: u64,
     request_deadline: Instant,
     cancelled: bool,
-    herdr_identity: crate::target_binding::HerdrSessionIdentity,
+    delivery: RemoteDeliveryPlan,
 }
 
 struct ReadyRemote {
@@ -75,7 +83,7 @@ struct ReadyRemote {
     connection_id: u64,
     request_deadline: Instant,
     text: String,
-    herdr_identity: crate::target_binding::HerdrSessionIdentity,
+    delivery: RemoteDeliveryPlan,
 }
 
 enum ActiveRemote {
@@ -134,6 +142,7 @@ enum Command {
     RemoteStart {
         connection_id: u64,
         request_id: String,
+        delivery_mode: RemoteDeliveryMode,
         reply: Sender<Result<(), String>>,
     },
     RemoteAudio {
@@ -155,7 +164,7 @@ enum Command {
     RemoteCommit {
         connection_id: u64,
         request_id: String,
-        reply: Sender<Result<RemoteStatus, String>>,
+        reply: Sender<Result<RemoteCommitOutcome, String>>,
     },
     RemoteCancel {
         connection_id: u64,
@@ -304,13 +313,18 @@ fn stage_ready_state(
             if text.trim().is_empty() {
                 *active_remote = Some(ActiveRemote::Processing(remote));
                 Err("Blank remote output cannot enter ready state".to_string())
+            } else if matches!(&remote.delivery, RemoteDeliveryPlan::Local)
+                && crate::clipboard::validate_remote_local_transcript(&text).is_err()
+            {
+                *active_remote = Some(ActiveRemote::Processing(remote));
+                Err("Remote local-injection text is outside bounds".to_string())
             } else {
                 *active_remote = Some(ActiveRemote::Ready(ReadyRemote {
                     request_id: remote.request_id,
                     connection_id: remote.connection_id,
                     request_deadline: remote.request_deadline,
                     text,
-                    herdr_identity: remote.herdr_identity,
+                    delivery: remote.delivery,
                 }));
                 Ok(())
             }
@@ -729,6 +743,7 @@ impl TranscriptionCoordinator {
                         Command::RemoteStart {
                             connection_id,
                             request_id,
+                            delivery_mode,
                             reply,
                         } => {
                             let now = Instant::now();
@@ -750,7 +765,7 @@ impl TranscriptionCoordinator {
                             } else if !remote_slot_available(&stage, &active_remote) {
                                 Err("Dictation pipeline is owned by another source".to_string())
                             } else {
-                                match start_remote_operation(&app, &request_id) {
+                                match start_remote_operation(&app, &request_id, delivery_mode) {
                                     Ok(plan) => {
                                         stage =
                                             Stage::Recording(OperationOwner::remote(&request_id));
@@ -840,7 +855,7 @@ impl TranscriptionCoordinator {
                                             connection_id,
                                             request_deadline: remote.request_deadline,
                                             cancelled: false,
-                                            herdr_identity: remote.plan.herdr_identity.clone(),
+                                            delivery: remote.plan.delivery.clone(),
                                         };
                                         finish_remote_operation(&app, &request_id, remote.plan);
                                         active_remote = Some(ActiveRemote::Processing(processing));
@@ -884,22 +899,51 @@ impl TranscriptionCoordinator {
                                 &request_id,
                             )
                             .map(|remote| {
-                                // Taking Ready serializes this commit against disconnect,
-                                // cancel, and replay. The irrevocable boundary remains inside
-                                // paste_remote_commit, after the start-owned Herdr identity is
-                                // revalidated and before its one snapshot/send attempt.
-                                let status = commit_delivery_status(|| {
-                                    crate::clipboard::paste_remote_commit(
-                                        remote.text,
-                                        &remote.herdr_identity,
-                                        app.clone(),
-                                    )
-                                });
+                                // Taking Ready serializes this one consuming handoff against
+                                // disconnect, cancel, cross-owner access, and replay.
+                                let outcome = match remote.delivery {
+                                    RemoteDeliveryPlan::Herdr(herdr_identity) => {
+                                        // Herdr keeps its existing effectful identity recheck and
+                                        // one explicit pane-send boundary on the workstation.
+                                        let status = commit_delivery_status(|| {
+                                            crate::clipboard::paste_remote_commit(
+                                                remote.text,
+                                                &herdr_identity,
+                                                app.clone(),
+                                            )
+                                        });
+                                        RemoteCommitOutcome {
+                                            status,
+                                            injection: None,
+                                        }
+                                    }
+                                    RemoteDeliveryPlan::Local => {
+                                        // Laptop-local commit consumes Ready before constructing
+                                        // the bounded workstation-authored injection plan. The
+                                        // laptop owns the one later effect attempt.
+                                        match crate::clipboard::prepare_remote_injection_plan(
+                                            remote.text,
+                                            &app,
+                                        ) {
+                                            Ok(injection) => RemoteCommitOutcome {
+                                                status: RemoteStatus::Succeeded,
+                                                injection: Some(injection),
+                                            },
+                                            Err(error) => {
+                                                error!("Remote local handoff failed: {error}");
+                                                RemoteCommitOutcome {
+                                                    status: RemoteStatus::Failed,
+                                                    injection: None,
+                                                }
+                                            }
+                                        }
+                                    }
+                                };
                                 push_terminal(
                                     &mut terminals,
                                     remote.request_id,
                                     remote.connection_id,
-                                    status.clone(),
+                                    outcome.status.clone(),
                                     Instant::now(),
                                 );
                                 stage = Stage::Idle;
@@ -911,7 +955,7 @@ impl TranscriptionCoordinator {
                                 if armed {
                                     crate::overlay::show_armed_overlay(&app);
                                 }
-                                status
+                                outcome
                             });
                             let _ = reply.send(result);
                         }
@@ -1051,10 +1095,12 @@ impl TranscriptionCoordinator {
         &self,
         connection_id: u64,
         request_id: String,
+        delivery_mode: RemoteDeliveryMode,
     ) -> Result<(), String> {
         self.request(|reply| Command::RemoteStart {
             connection_id,
             request_id,
+            delivery_mode,
             reply,
         })
     }
@@ -1101,7 +1147,7 @@ impl TranscriptionCoordinator {
         &self,
         connection_id: u64,
         request_id: String,
-    ) -> Result<RemoteStatus, String> {
+    ) -> Result<RemoteCommitOutcome, String> {
         self.request(|reply| Command::RemoteCommit {
             connection_id,
             request_id,
@@ -1330,7 +1376,9 @@ mod tests {
             total_audio_samples: 0,
             plan: RemoteOperationPlan {
                 post_process: false,
-                herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
+                delivery: RemoteDeliveryPlan::Herdr(
+                    crate::target_binding::synthetic_remote_session_identity(1),
+                ),
             },
         }));
         assert!(!remote_slot_available(&stage, &active));
@@ -1348,7 +1396,9 @@ mod tests {
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: true,
-            herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
+            delivery: RemoteDeliveryPlan::Herdr(
+                crate::target_binding::synthetic_remote_session_identity(1),
+            ),
         }));
 
         assert_eq!(
@@ -1378,7 +1428,7 @@ mod tests {
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: false,
-            herdr_identity: identity.clone(),
+            delivery: RemoteDeliveryPlan::Herdr(identity.clone()),
         }));
         stage_ready_state(&stage, &mut active, "request-a", "staged text".into()).unwrap();
         assert_eq!(
@@ -1391,7 +1441,7 @@ mod tests {
         assert!(matches!(active, Some(ActiveRemote::Ready(_))));
         let ready = take_ready_for_commit(&mut active, 7, "request-a").unwrap();
         assert_eq!(ready.text, "staged text");
-        assert_eq!(ready.herdr_identity, identity);
+        assert_eq!(ready.delivery, RemoteDeliveryPlan::Herdr(identity));
         assert!(active.is_none());
         assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
 
@@ -1411,6 +1461,46 @@ mod tests {
     }
 
     #[test]
+    fn local_ready_is_bounded_owned_and_consumed_at_most_once() {
+        let stage = Stage::Processing(OperationOwner::remote("request-local"));
+        let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
+            request_id: "request-local".into(),
+            connection_id: 17,
+            request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
+            cancelled: false,
+            delivery: RemoteDeliveryPlan::Local,
+        }));
+        assert!(stage_ready_state(
+            &stage,
+            &mut active,
+            "request-local",
+            "x".repeat(crate::clipboard::MAX_REMOTE_INJECTION_TEXT_BYTES),
+        )
+        .is_err());
+        assert!(matches!(active, Some(ActiveRemote::Processing(_))));
+
+        stage_ready_state(
+            &stage,
+            &mut active,
+            "request-local",
+            "bounded local text".into(),
+        )
+        .unwrap();
+        assert!(take_ready_for_commit(&mut active, 18, "request-local").is_err());
+        assert!(matches!(active, Some(ActiveRemote::Ready(_))));
+        let ready = take_ready_for_commit(&mut active, 17, "request-local").unwrap();
+        assert_eq!(ready.delivery, RemoteDeliveryPlan::Local);
+        assert_eq!(ready.text, "bounded local text");
+        assert!(take_ready_for_commit(&mut active, 17, "request-local").is_err());
+
+        // Terminal cancellation or disconnect leaves no Ready value from which
+        // any later connection/request could obtain an injection handoff.
+        active = None;
+        assert!(take_ready_for_commit(&mut active, 17, "request-local").is_err());
+        assert!(take_ready_for_commit(&mut active, 18, "request-local").is_err());
+    }
+
+    #[test]
     fn early_commit_and_cancelled_or_blank_ready_are_refused_without_state_loss() {
         let stage = Stage::Processing(OperationOwner::remote("request-a"));
         let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
@@ -1418,7 +1508,7 @@ mod tests {
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: false,
-            herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
+            delivery: RemoteDeliveryPlan::Local,
         }));
         assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
         assert!(stage_ready_state(&stage, &mut active, "request-a", "  ".into()).is_err());

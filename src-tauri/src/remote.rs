@@ -4,8 +4,10 @@
 //! request/connection identity, the owner-only Unix socket, and dispatch into
 //! the app's single [`TranscriptionCoordinator`] authority.
 
+use crate::actions::RemoteDeliveryMode;
+use crate::clipboard::RemoteInjectionPlan;
 use crate::transcription_coordinator::{
-    RemoteCancelStatus, RemoteStatus, TranscriptionCoordinator,
+    RemoteCancelStatus, RemoteCommitOutcome, RemoteStatus, TranscriptionCoordinator,
 };
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -62,6 +64,8 @@ impl AudioFormat {
 enum WireRequest {
     Start {
         version: u8,
+        #[serde(default)]
+        delivery_mode: RemoteDeliveryMode,
         audio: AudioFormat,
     },
     Audio {
@@ -108,6 +112,8 @@ struct WireResponse {
     request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    injection: Option<RemoteInjectionPlan>,
 }
 
 impl WireResponse {
@@ -117,6 +123,7 @@ impl WireResponse {
             status: status.to_string(),
             request_id: request_id.map(str::to_string),
             error: None,
+            injection: None,
         }
     }
 
@@ -126,6 +133,7 @@ impl WireResponse {
             status: "error".to_string(),
             request_id: None,
             error: Some(error.to_string()),
+            injection: None,
         }
     }
 }
@@ -442,7 +450,11 @@ fn dispatch_request(
         .try_state::<TranscriptionCoordinator>()
         .ok_or_else(|| "Transcription coordinator is unavailable".to_string())?;
     match request {
-        WireRequest::Start { audio, .. } => {
+        WireRequest::Start {
+            audio,
+            delivery_mode,
+            ..
+        } => {
             audio.validate()?;
             let request_id = format!(
                 "{:x}-{:x}",
@@ -450,7 +462,7 @@ fn dispatch_request(
                 NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
             );
             session.begin(request_id.clone())?;
-            coordinator.remote_start(connection_id, request_id)?;
+            coordinator.remote_start(connection_id, request_id, delivery_mode)?;
             let request_id = session.request_id.as_deref().expect("request was stored");
             Ok(WireResponse::status("recording", Some(request_id)))
         }
@@ -473,8 +485,8 @@ fn dispatch_request(
         }
         WireRequest::Commit { request_id, .. } => {
             session.authorize(&request_id)?;
-            let status = coordinator.remote_commit(connection_id, request_id.clone())?;
-            status_response(session, &request_id, status)
+            let outcome = coordinator.remote_commit(connection_id, request_id.clone())?;
+            commit_response(session, &request_id, outcome)
         }
         WireRequest::Status { request_id, .. } => {
             session.authorize(&request_id)?;
@@ -497,6 +509,19 @@ fn cancel_response(
         RemoteCancelStatus::Cancelling => "cancelling",
     };
     Ok(WireResponse::status(wire_status, Some(request_id)))
+}
+
+fn commit_response(
+    session: &mut ConnectionSession,
+    request_id: &str,
+    outcome: RemoteCommitOutcome,
+) -> Result<WireResponse, String> {
+    if outcome.injection.is_some() && outcome.status != RemoteStatus::Succeeded {
+        return Err("A failed remote commit cannot carry injection data".to_string());
+    }
+    let mut response = status_response(session, request_id, outcome.status)?;
+    response.injection = outcome.injection;
+    Ok(response)
 }
 
 fn status_response(
@@ -605,10 +630,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(request.version(), PROTOCOL_VERSION);
-        let WireRequest::Start { audio, .. } = request else {
+        let WireRequest::Start {
+            audio,
+            delivery_mode,
+            ..
+        } = request
+        else {
             panic!("expected start")
         };
         assert_eq!(audio.validate(), Ok(()));
+        assert_eq!(delivery_mode, RemoteDeliveryMode::Herdr);
+
+        let explicit_herdr: WireRequest = serde_json::from_slice(
+            br#"{"type":"start","version":1,"delivery_mode":"herdr","audio":{"format":"s16le","sample_rate":16000,"channels":1}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            explicit_herdr,
+            WireRequest::Start {
+                delivery_mode: RemoteDeliveryMode::Herdr,
+                ..
+            }
+        ));
+
+        let local: WireRequest = serde_json::from_slice(
+            br#"{"type":"start","version":1,"delivery_mode":"local","audio":{"format":"s16le","sample_rate":16000,"channels":1}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            local,
+            WireRequest::Start {
+                delivery_mode: RemoteDeliveryMode::Local,
+                ..
+            }
+        ));
+        assert!(serde_json::from_slice::<WireRequest>(
+            br#"{"type":"start","version":1,"delivery_mode":"wayland","audio":{"format":"s16le","sample_rate":16000,"channels":1}}"#,
+        )
+        .is_err());
 
         for invalid in [
             AudioFormat {
@@ -744,6 +803,84 @@ mod tests {
         session.begin("request-b".into()).unwrap();
         assert_eq!(session.authorize("request-b"), Ok(()));
         assert!(session.authorize("request-a").is_err());
+    }
+
+    #[test]
+    fn local_injection_is_framed_only_on_one_consuming_owner_response() {
+        let mut session = ConnectionSession::default();
+        session.begin("request-a".into()).unwrap();
+
+        let ordinary = status_response(&mut session, "request-a", RemoteStatus::Ready).unwrap();
+        assert!(ordinary.injection.is_none());
+        assert!(!session.is_idle());
+
+        let plan = RemoteInjectionPlan {
+            text: "bounded text ".to_string(),
+            submit_key: Some(crate::settings::AutoSubmitKey::CtrlEnter),
+        };
+        let response = commit_response(
+            &mut session,
+            "request-a",
+            RemoteCommitOutcome {
+                status: RemoteStatus::Succeeded,
+                injection: Some(plan.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.injection, Some(plan));
+        let mut frame = Vec::new();
+        write_response(&mut frame, &response).unwrap();
+        assert!(frame.len() <= MAX_PROTOCOL_FRAME_BYTES + 4);
+        assert!(session.is_idle());
+        assert!(session.authorize("request-a").is_err());
+
+        let mut other_connection = ConnectionSession::default();
+        other_connection.begin("request-b".into()).unwrap();
+        assert!(commit_response(
+            &mut other_connection,
+            "request-a",
+            RemoteCommitOutcome {
+                status: RemoteStatus::Succeeded,
+                injection: Some(RemoteInjectionPlan {
+                    text: "must not return".to_string(),
+                    submit_key: None,
+                }),
+            },
+        )
+        .is_err());
+
+        let mut failed = ConnectionSession::default();
+        failed.begin("request-failed".into()).unwrap();
+        assert!(commit_response(
+            &mut failed,
+            "request-failed",
+            RemoteCommitOutcome {
+                status: RemoteStatus::Failed,
+                injection: Some(RemoteInjectionPlan {
+                    text: "must not accompany failure".to_string(),
+                    submit_key: None,
+                }),
+            },
+        )
+        .is_err());
+        let failed_response = commit_response(
+            &mut failed,
+            "request-failed",
+            RemoteCommitOutcome {
+                status: RemoteStatus::Failed,
+                injection: None,
+            },
+        )
+        .unwrap();
+        assert!(failed_response.injection.is_none());
+        assert!(failed.is_idle());
+
+        let mut cancelled = ConnectionSession::default();
+        cancelled.begin("request-cancelled".into()).unwrap();
+        let cancelled_response =
+            status_response(&mut cancelled, "request-cancelled", RemoteStatus::Cancelled).unwrap();
+        assert!(cancelled_response.injection.is_none());
+        assert!(cancelled.is_idle());
     }
 
     #[test]
