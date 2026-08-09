@@ -10,6 +10,59 @@ This guide covers how to set up the development environment and build Handy from
 > build uses `QQ_BUILD_MEM=8g scripts/build-local.sh`; the older 5 GiB limit was
 > later OOM-killed by the rebuilt toolchain.
 
+## QQ contained-build cache lifecycle
+
+`scripts/build-local.sh` is the only creator of the shared Linux contained-build
+cache. Every checkout and linked worktree consumes the same host directory
+directly:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/
+```
+
+`XDG_CACHE_HOME`, when non-empty, must be absolute. Otherwise `HOME` must be
+available and absolute so the script can use `$HOME/.cache`. Invalid or unknown
+input is refused before a cache is created or mounted; it is never rewritten to
+a fallback. The host root is mounted at `/work/.docker-cache`, with `cargo`,
+`target`, and `ort` beneath it. No checkout may carry a `.docker-cache` symlink,
+mirror, or compatibility directory. Only `.local-build/` remains checkout-local.
+
+Inspect the root without authorizing a mutation:
+
+```bash
+scripts/build-cache.sh inspect
+```
+
+The command reports stable `key=value` evidence for the canonical root, creator,
+filesystem owner and mode, bytes, entry counts, last write, and rebuild cost. It
+always reports `quiescence=not_proven` and `prune_authorized=false`. Immediately
+before this lifecycle change, the active cache held 21,004,594,058 bytes, 95,713
+regular files, 16,182 directories, and 38 symlinks. Recreating its Cargo,
+release-target, native C++/Vulkan, and ONNX Runtime state is a high-cost build,
+so it is retained for reuse. Size alone never authorizes deletion.
+
+A migration or future prune needs fresh quiescence evidence covering all three
+consumer classes: running build-related processes, Docker container bind mounts,
+and open files anywhere below the candidate root. A missing tool, permission
+denial, race, or any other unknown fails closed. For the current same-filesystem
+migration, first prove the old root quiescent and the canonical root absent;
+atomically rename the old root to a uniquely named staging directory beside the
+canonical root; verify owner, mode, byte and entry counts, plus recorded hash
+samples; then atomically rename staging to `build`. Before the first rename the
+old root remains authoritative. If interrupted while staged, run no build and
+either resume verification and the final rename or, while the old path remains
+absent, rename staging back to roll back. After the final rename, the canonical
+root is authoritative and the checkout path stays absent.
+
+Future pruning is a separate, explicitly authorized operation; the inspect
+command cannot perform it. After the same fresh quiescence proof, atomically
+rename `build` to a timestamped sibling quarantine and retain it through an
+agreed rollback window. Rollback may rename it back only if no new canonical
+root exists; if one does, stop rather than merge or discard either tree. Delete
+only the exact quarantine after the retention window, renewed quiescence proof,
+and acceptance that rollback is no longer needed. Unrelated XDG cache content
+is never part of either transaction.
+
 ## Prerequisites
 
 ### All Platforms

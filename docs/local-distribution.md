@@ -27,12 +27,45 @@ It remains contained with no additional container swap, two CPUs, and one
 Cargo/CMake job.
 
 The build runs in a pinned Docker environment because the host intentionally
-does not carry the full GTK/WebKit development stack. Cargo and bundle output
-are cached in ignored `.docker-cache/` and `.local-build/` directories. The
-ONNX Runtime download cache is persisted alongside Cargo's cache so a fresh
-container can always relink the application and its tests. The builder refuses
-a dirty source tree and writes the exact Git commit into the AppDir as
-`qq-dictation-commit`.
+does not carry the full GTK/WebKit development stack. `scripts/build-local.sh`
+is the cache creator, and every checkout and linked worktree directly consumes
+`${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/`. A non-empty
+`XDG_CACHE_HOME`, or the `HOME` used for the default, must provide a safe
+absolute base; invalid or unknown input is refused before creation or mounting,
+not rewritten. The host's `cargo`, `target`, and `ort` directories appear in the
+container at `/work/.docker-cache/...`. There is no checkout-root cache symlink,
+mirror, or compatibility path. Only `.local-build/` remains checkout-local.
+
+Use `scripts/build-cache.sh inspect` for read-only, stable `key=value` evidence
+about the canonical root, creator, owner, mode, bytes, entry counts, last write,
+and rebuild cost. Inspection always reports quiescence unproven and pruning
+unauthorized. The active pre-migration cache measured 21,004,594,058 bytes,
+95,713 regular files, 16,182 directories, and 38 symlinks. It retains expensive
+Cargo, release-target, native C++/Vulkan, and ONNX Runtime state so fresh
+containers can relink the application and its tests. Size alone never
+authorizes deletion.
+
+Migration or future pruning requires fresh evidence that no build-related
+process, Docker bind mount, or open file uses the candidate; unavailable,
+permission-limited, ambiguous, or racing evidence fails closed. The current
+same-filesystem migration atomically renames the old cache to a unique staging
+directory beside the canonical root, verifies owner/mode, bytes, entry counts,
+and hash samples, then atomically renames staging to `build`. Before staging,
+the old root is authoritative. After an interruption in staging, run no build:
+either resume verification and the final rename or roll back by renaming staging
+to the still-absent old path. After the final rename, only the canonical root is
+authoritative and the checkout path stays absent.
+
+A future prune is separately and explicitly authorized; the inspect script has
+no deletion action. After renewed quiescence proof, atomically rename `build`
+to a timestamped sibling quarantine and keep it for an agreed rollback window.
+Restore it only when no new canonical root exists; otherwise stop without
+merging or deleting either tree. Delete only that exact quarantine after the
+window, another quiescence check, and acceptance that rollback is unnecessary.
+Unrelated XDG cache content is never included.
+
+The builder refuses a dirty source tree and writes the exact Git commit into the
+checkout-local AppDir as `qq-dictation-commit`.
 
 Installation writes only to the current user's directories:
 
