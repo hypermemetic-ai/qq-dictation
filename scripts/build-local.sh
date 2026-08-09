@@ -3,8 +3,26 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 builder_image="qq-dictation-builder:ubuntu24.04"
-cache_dir="${repository_root}/.docker-cache"
 output_dir="${repository_root}/.local-build"
+
+if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    cache_base="$XDG_CACHE_HOME"
+elif [[ -n "${HOME:-}" ]]; then
+    cache_base="${HOME}/.cache"
+else
+    printf 'Refusing to build: no absolute cache base is available from XDG_CACHE_HOME or HOME.\n' >&2
+    exit 1
+fi
+if [[ "$cache_base" != /* || "$cache_base" == *$'\n'* || "$cache_base" == *$'\r'* ]]; then
+    printf 'Refusing to build: cache base must be a safe absolute path.\n' >&2
+    exit 1
+fi
+cache_dir="${cache_base}/qq-dictation/build"
+
+if [[ -L "$cache_dir" ]]; then
+    printf 'Refusing to build: canonical cache root must be a real directory; symbolic links are refused.\n' >&2
+    exit 1
+fi
 
 if ! git -C "$repository_root" diff --quiet \
     || ! git -C "$repository_root" diff --cached --quiet \
@@ -13,15 +31,7 @@ if ! git -C "$repository_root" diff --quiet \
     exit 1
 fi
 
-mkdir -p "$cache_dir" "$output_dir"
-
-# Task worktrees share the primary checkout's expensive build cache through
-# symlinks. Mount that resolved cache root over /work/.docker-cache so those
-# links do not point outside the container's filesystem.
-container_cache_dir="$cache_dir"
-if [[ -L "${cache_dir}/cargo" ]]; then
-    container_cache_dir="$(dirname "$(readlink -f "${cache_dir}/cargo")")"
-fi
+mkdir -p "$cache_dir"/{cargo,target,ort} "$output_dir"
 
 docker build \
     --file "${repository_root}/packaging/Dockerfile" \
@@ -40,12 +50,13 @@ docker run --rm \
     --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
-    --volume "${container_cache_dir}:/work/.docker-cache" \
+    --volume "${cache_dir}:/qq-build-cache" \
     --workdir /work \
     --env HOME=/tmp/qq-builder \
-    --env CARGO_HOME=/work/.docker-cache/cargo \
-    --env CARGO_TARGET_DIR=/work/.docker-cache/target \
-    --env ORT_CACHE_DIR=/work/.docker-cache/ort \
+    --env NODE_OPTIONS=--max-old-space-size=4096 \
+    --env CARGO_HOME=/qq-build-cache/cargo \
+    --env CARGO_TARGET_DIR=/qq-build-cache/target \
+    --env ORT_CACHE_DIR=/qq-build-cache/ort \
     --env CARGO_BUILD_JOBS=1 \
     --env CMAKE_BUILD_PARALLEL_LEVEL=1 \
     "$builder_image" \
