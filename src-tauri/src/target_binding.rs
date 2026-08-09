@@ -13,26 +13,18 @@
 //! transcription to the newer recording's pane. Each recording takes only its
 //! own entry.
 //!
-//! Linux/X11-only in practice. Off the supported path capture explicitly
-//! selects legacy focus-based delivery.
+//! Herdr pane binding is available on X11; capture explicitly selects legacy
+//! focus-based delivery when the session conditions are not met.
 
-#[cfg(target_os = "linux")]
 use log::{debug, warn};
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
 use std::ffi::OsStr;
-#[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-#[cfg(target_os = "linux")]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
-#[cfg(target_os = "linux")]
 use std::os::unix::net::UnixStream;
-#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -41,9 +33,7 @@ use tauri::AppHandle;
 
 /// Title herdr's client sets on its terminal window; used to tell "operator
 /// is dictating into a herdr pane" apart from "herdr merely runs somewhere".
-#[cfg(target_os = "linux")]
 const HERDR_WINDOW_TITLE: &str = "herdr";
-#[cfg(target_os = "linux")]
 const LINUXBREW_HERDR: &str = "/home/linuxbrew/.linuxbrew/bin/herdr";
 
 /// Immutable identity of the configured/default live Herdr session. It does
@@ -80,7 +70,6 @@ pub(crate) fn synthetic_remote_session_identity(seed: u64) -> HerdrSessionIdenti
     }
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug, serde::Deserialize)]
 struct HerdrServerStatus {
     status: String,
@@ -92,7 +81,6 @@ struct HerdrServerStatus {
     session: Option<String>,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct HerdrSocketObservation {
     path: PathBuf,
@@ -105,7 +93,6 @@ struct HerdrSocketObservation {
     peer_start_time: u64,
 }
 
-#[cfg(target_os = "linux")]
 fn parse_herdr_server_status(json_bytes: &[u8]) -> Result<HerdrServerStatus, String> {
     let status: HerdrServerStatus = serde_json::from_slice(json_bytes)
         .map_err(|error| format!("Herdr server status was malformed: {error}"))?;
@@ -131,7 +118,6 @@ fn parse_herdr_server_status(json_bytes: &[u8]) -> Result<HerdrServerStatus, Str
     Ok(status)
 }
 
-#[cfg(target_os = "linux")]
 fn require_owned_socket(metadata: &fs::Metadata, expected_uid: u32) -> Result<(), String> {
     if !metadata.file_type().is_socket() {
         return Err("Herdr server status path is not a Unix socket".to_string());
@@ -142,7 +128,6 @@ fn require_owned_socket(metadata: &fs::Metadata, expected_uid: u32) -> Result<()
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn socket_peer_credentials(stream: &UnixStream) -> Result<(u32, u32, u32), String> {
     let mut credentials = libc::ucred {
         pid: 0,
@@ -172,7 +157,6 @@ fn socket_peer_credentials(stream: &UnixStream) -> Result<(u32, u32, u32), Strin
     Ok((peer_pid, credentials.uid, credentials.gid))
 }
 
-#[cfg(target_os = "linux")]
 fn linux_process_start_time(pid: u32) -> Result<u64, String> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))
         .map_err(|error| format!("Could not verify Herdr server process identity: {error}"))?;
@@ -188,7 +172,6 @@ fn linux_process_start_time(pid: u32) -> Result<u64, String> {
         .ok_or_else(|| "Herdr server process start identity was malformed".to_string())
 }
 
-#[cfg(target_os = "linux")]
 fn inspect_herdr_socket(path: &Path, expected_uid: u32) -> Result<HerdrSocketObservation, String> {
     let before = fs::symlink_metadata(path)
         .map_err(|error| format!("Herdr server socket is unavailable: {error}"))?;
@@ -225,7 +208,6 @@ fn inspect_herdr_socket(path: &Path, expected_uid: u32) -> Result<HerdrSocketObs
     })
 }
 
-#[cfg(target_os = "linux")]
 fn identity_from_status(
     json_bytes: &[u8],
     expected_uid: u32,
@@ -249,7 +231,6 @@ fn identity_from_status(
 
 /// Observe the exact configured/default live Herdr server without reading its
 /// focus or layout.
-#[cfg(target_os = "linux")]
 pub(crate) fn capture_remote_session_identity() -> Result<HerdrSessionIdentity, String> {
     let herdr = resolve_herdr()?;
     let output = run_with_timeout(
@@ -264,11 +245,6 @@ pub(crate) fn capture_remote_session_identity() -> Result<HerdrSessionIdentity, 
         ));
     }
     identity_from_status(&output.stdout, unsafe { libc::geteuid() })
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn capture_remote_session_identity() -> Result<HerdrSessionIdentity, String> {
-    Err("Remote Herdr session identity is supported only on Linux".to_string())
 }
 
 /// The capture result that determines whether paste may use OS-level input.
@@ -301,7 +277,6 @@ pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
     let token = NEXT_TOKEN.fetch_add(1, Ordering::SeqCst);
     LATEST_TOKEN.store(token, Ordering::SeqCst);
 
-    #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
         let capture = if crate::settings::get_settings(&app).herdr_binding_enabled {
             focused_herdr_pane()
@@ -376,7 +351,6 @@ pub fn take_for_recording(token: u64) -> CaptureOutcome {
 /// The focused herdr pane, but only when the herdr window itself is the
 /// active X11 window — otherwise the snapshot's focused pane is just stale
 /// state from before the operator moved to another app.
-#[cfg(target_os = "linux")]
 fn focused_herdr_pane() -> CaptureOutcome {
     if crate::utils::is_wayland() {
         return CaptureOutcome::Legacy;
@@ -411,7 +385,6 @@ fn focused_herdr_pane() -> CaptureOutcome {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn active_window_title() -> Result<String, String> {
     let output = run_with_timeout(
         "xdotool",
@@ -427,7 +400,6 @@ fn active_window_title() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-#[cfg(target_os = "linux")]
 fn resolve_herdr() -> Result<PathBuf, String> {
     resolve_herdr_from(
         std::env::var_os("PATH").as_deref(),
@@ -436,7 +408,6 @@ fn resolve_herdr() -> Result<PathBuf, String> {
     )
 }
 
-#[cfg(target_os = "linux")]
 fn resolve_herdr_from(
     path: Option<&OsStr>,
     fallback: &Path,
@@ -459,7 +430,6 @@ fn resolve_herdr_from(
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     path.metadata()
@@ -478,33 +448,28 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-#[cfg(target_os = "linux")]
 #[derive(serde::Deserialize)]
 struct RemoteSnapshotEnvelope {
     result: RemoteSnapshotResult,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(serde::Deserialize)]
 struct RemoteSnapshotResult {
     snapshot: RemoteSnapshot,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(serde::Deserialize)]
 struct RemoteSnapshot {
     focused_pane_id: String,
     panes: Vec<RemoteSnapshotPane>,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(serde::Deserialize)]
 struct RemoteSnapshotPane {
     pane_id: String,
     focused: bool,
 }
 
-#[cfg(target_os = "linux")]
 pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
     if pane_id.is_empty() || pane_id.len() > 64 || !pane_id.is_ascii() {
         return false;
@@ -521,7 +486,6 @@ pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
         })
 }
 
-#[cfg(target_os = "linux")]
 fn parse_remote_delivery_pane(json_bytes: &[u8]) -> Result<String, String> {
     let envelope: RemoteSnapshotEnvelope = serde_json::from_slice(json_bytes)
         .map_err(|error| format!("Herdr session snapshot was malformed: {error}"))?;
@@ -554,7 +518,6 @@ fn parse_remote_delivery_pane(json_bytes: &[u8]) -> Result<String, String> {
 /// focus once, freeze that exact pane, and make one literal explicit send.
 /// This path is remote-only and never consults X11 or the local per-recording
 /// capture map. The irrevocable commit begins only after identity equality.
-#[cfg(target_os = "linux")]
 pub(crate) fn deliver_remote(
     start_identity: &HerdrSessionIdentity,
     text: &str,
@@ -592,7 +555,6 @@ pub(crate) fn deliver_remote(
     )
 }
 
-#[cfg(target_os = "linux")]
 fn deliver_remote_with(
     start_identity: &HerdrSessionIdentity,
     text: &str,
@@ -614,7 +576,6 @@ fn deliver_remote_with(
     deliver_remote_snapshot(&snapshot, text, auto_submit, delivery_enabled, deliver)
 }
 
-#[cfg(target_os = "linux")]
 fn deliver_remote_snapshot(
     snapshot: &[u8],
     text: &str,
@@ -634,7 +595,6 @@ fn deliver_remote_snapshot(
 /// PTY write is not bracketed paste, so transcript newlines must not become
 /// implicit submits. When auto-submit is enabled, one trailing carriage return
 /// is included in this same literal Herdr send-text request.
-#[cfg(target_os = "linux")]
 pub fn deliver(pane_id: &str, text: &str, auto_submit: bool) -> Result<(), String> {
     let text = send_text_payload(text, auto_submit);
     let herdr = resolve_herdr()?;
@@ -649,7 +609,6 @@ pub fn deliver(pane_id: &str, text: &str, auto_submit: bool) -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn send_text_args<'a>(pane_id: &'a str, text: &'a str) -> [&'a str; 4] {
     // Herdr accepts leading dashes in the TEXT positional directly. Supplying
     // a standalone `--` after PANE_ID makes it literal transcript content.
@@ -674,7 +633,6 @@ fn collapse_newlines(text: &str) -> String {
 /// child emitting more than a pipe buffer would otherwise block on write and
 /// never exit. On timeout the helper thread still reaps the child whenever it
 /// eventually finishes, so nothing is left as a zombie.
-#[cfg(target_os = "linux")]
 fn run_with_timeout(
     program: impl AsRef<OsStr>,
     args: &[&str],
@@ -717,7 +675,6 @@ fn run_with_timeout(
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
     fn live_status_json(socket: &Path) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "status": "running",
@@ -736,7 +693,6 @@ mod tests {
         .unwrap()
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn parses_installed_herdr_0_7_5_server_status_and_tolerates_unknown_fields() {
         let fixture = br#"{"status":"running","running":true,"version":"0.7.5","protocol":17,"capabilities":{"live_handoff":true,"detached_server_daemon":true},"compatible":true,"socket":"/home/qqp/.config/herdr/herdr.sock","session":null,"restart_needed":false,"future_field":{"ignored":true}}"#;
@@ -748,7 +704,6 @@ mod tests {
         assert_eq!(status.session, None);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn malformed_unavailable_non_socket_and_wrong_owner_status_is_refused() {
         for malformed in [
@@ -777,7 +732,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn production_socket_identity_includes_inode_peer_pid_and_start_time() {
         let temp_dir = tempfile::TempDir::new().expect("create socket fixture");
@@ -821,7 +775,6 @@ mod tests {
         assert_eq!(collapse_newlines("no newlines"), "no newlines");
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn remote_pane_ids_are_strict_and_bounded() {
         for valid in ["w2H:p13", "wM:pEC", "w1:p2"] {
@@ -844,7 +797,6 @@ mod tests {
         assert!(!validate_pane_id(&format!("w{}:p1", "a".repeat(64))));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn remote_snapshot_requires_one_valid_live_focused_pane() {
         let valid = br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p14","focused":false}]}}}"#;
@@ -865,7 +817,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn same_session_identity_allows_a_different_commit_time_focused_pane() {
         let identity = synthetic_remote_session_identity(1);
@@ -895,7 +846,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn replaced_session_identity_refuses_before_snapshot_or_send() {
         let start = synthetic_remote_session_identity(1);
@@ -937,7 +887,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn unavailable_or_malformed_commit_identity_refuses_before_snapshot_or_send() {
         let start = synthetic_remote_session_identity(1);
@@ -970,7 +919,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn unchanged_laptop_ghostty_does_not_authorize_replaced_workstation_session() {
         // Laptop window identity is intentionally absent from this workstation
@@ -995,7 +943,6 @@ mod tests {
         assert!(!snapshot_called.get());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn local_exact_capture_never_uses_remote_session_identity() {
         let local_capture = CaptureOutcome::Bound("wLocal:pExact".to_string());
@@ -1010,7 +957,6 @@ mod tests {
         assert_eq!(remote_identity.socket_inode, 99);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn remote_delivery_uses_only_commit_snapshot_pane_once() {
         let start = br#"{"result":{"snapshot":{"focused_pane_id":"wA:p1","panes":[{"pane_id":"wA:p1","focused":true}]}}}"#;
@@ -1044,7 +990,6 @@ mod tests {
         assert_eq!(failures.get(), 1);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn send_text_argv_contains_exact_pane_text_and_optional_carriage_return() {
         let auto_submit = send_text_payload("first\nsecond", true);
@@ -1064,7 +1009,6 @@ mod tests {
 
     /// Single test for all map behavior: the map is process-global and tests
     /// run in parallel, so separate tests could evict each other's entries.
-    #[cfg(target_os = "linux")]
     #[test]
     fn captures_are_per_recording_and_evicted_in_order() {
         // A finished "not aimed at herdr" capture answers immediately — the
@@ -1108,7 +1052,6 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn resolves_path_before_linuxbrew_fallback() {
         let path = OsStr::new("/desktop/bin:/usr/bin");
@@ -1124,7 +1067,6 @@ mod tests {
         assert_eq!(from_fallback.unwrap(), fallback);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn resolves_linuxbrew_herdr_when_desktop_path_omits_it() {
         let desktop_path =
@@ -1137,7 +1079,6 @@ mod tests {
         assert_eq!(resolved.unwrap(), fallback);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn missing_herdr_is_an_explicit_error() {
         let result = resolve_herdr_from(

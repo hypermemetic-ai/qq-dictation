@@ -387,18 +387,12 @@ fn modifiers_to_strings(modifiers: handy_keys::Modifiers) -> Vec<String> {
         result.push("ctrl".to_string());
     }
     if modifiers.contains(handy_keys::Modifiers::OPT) {
-        #[cfg(target_os = "macos")]
-        result.push("option".to_string());
-        #[cfg(not(target_os = "macos"))]
         result.push("alt".to_string());
     }
     if modifiers.contains(handy_keys::Modifiers::SHIFT) {
         result.push("shift".to_string());
     }
     if modifiers.contains(handy_keys::Modifiers::CMD) {
-        #[cfg(target_os = "macos")]
-        result.push("command".to_string());
-        #[cfg(not(target_os = "macos"))]
         result.push("super".to_string());
     }
     if modifiers.contains(handy_keys::Modifiers::FN) {
@@ -459,47 +453,12 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
 
 /// Register the cancel shortcut (called when recording starts)
 pub fn register_cancel_shortcut(app: &AppHandle) {
-    // Disabled on Linux due to instability
-    #[cfg(target_os = "linux")]
-    {
-        let _ = app;
-        return;
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let app_clone = app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Some(cancel_binding) = get_settings(&app_clone).bindings.get("cancel").cloned() {
-                if let Some(state) = app_clone.try_state::<HandyKeysState>() {
-                    if let Err(e) = state.register(&cancel_binding) {
-                        error!("Failed to register cancel shortcut: {}", e);
-                    }
-                }
-            }
-        });
-    }
+    let _ = app;
 }
 
 /// Unregister the cancel shortcut (called when recording stops)
 pub fn unregister_cancel_shortcut(app: &AppHandle) {
-    #[cfg(target_os = "linux")]
-    {
-        let _ = app;
-        return;
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let app_clone = app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Some(cancel_binding) = get_settings(&app_clone).bindings.get("cancel").cloned() {
-                if let Some(state) = app_clone.try_state::<HandyKeysState>() {
-                    let _ = state.unregister(&cancel_binding);
-                }
-            }
-        });
-    }
+    let _ = app;
 }
 
 /// Register a shortcut

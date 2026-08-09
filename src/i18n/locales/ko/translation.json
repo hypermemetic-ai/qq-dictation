@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "설정...",
-    "checkUpdates": "업데이트 확인...",
     "copyLastTranscript": "마지막 녹음 내용 복사",
     "unloadModel": "모델 언로드",
     "model": "모델",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "권한 필요",
-      "description": "Handy가 제대로 작동하려면 몇 가지 권한이 필요합니다.",
-      "microphone": {
-        "title": "마이크 접근",
-        "description": "음성 인식을 위해 마이크 접근 권한이 필요합니다."
-      },
-      "accessibility": {
-        "title": "접근성 권한",
-        "description": "녹음된 텍스트를 애플리케이션에 입력하기 위해 필요합니다."
-      },
-      "grant": "권한 부여",
-      "granted": "승인됨",
-      "waiting": "대기 중...",
-      "allGranted": "모두 설정 완료!",
-      "errors": {
-        "checkFailed": "권한 확인에 실패했습니다. 다시 시도해주세요.",
-        "requestFailed": "권한 요청에 실패했습니다. 다시 시도해주세요."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Whisper 가속",
-          "description": "Whisper 모델의 하드웨어 가속. 자동 모드는 GPU를 사용합니다 (macOS에서는 Metal, Windows/Linux에서는 Vulkan)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX 가속",
-          "description": "ONNX 모델의 하드웨어 가속 (Parakeet, Canary, Moonshine 등). Windows의 DirectML은 실험적입니다. 모델이 전사에 실패할 수 있습니다."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "자동"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "자동 제출",
-        "description": "텍스트 삽입 후 선택한 키 조합을 자동으로 전송합니다. macOS에서는 Cmd+Enter가, Windows/Linux에서는 Super+Enter가 적용됩니다.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "끄기",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "제공자",
           "description": "OpenAI 호환 제공자를 선택하세요."
-        },
-        "appleIntelligence": {
-          "unavailable": "이 기기에서는 Apple Intelligence를 사용할 수 없습니다. macOS Tahoe (26.0) 이상을 실행하고 시스템 설정에서 Apple Intelligence가 활성화된 Apple Silicon Mac이 필요합니다."
         },
         "baseUrl": {
           "title": "기본 URL",
@@ -463,10 +438,6 @@
         "lineCount": "{{count}}줄",
         "empty": "로그 대기 중… 앱이 로그를 출력하면 여기에 표시됩니다."
       },
-      "updateChecks": {
-        "label": "업데이트 확인",
-        "description": "Handy의 새 버전을 자동으로 확인합니다"
-      },
       "soundTheme": {
         "label": "사운드 테마",
         "description": "녹음 시작 및 정지 피드백을 위한 사운드 테마를 선택하세요"
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "항상 켜진 마이크",
         "description": "더 빠른 응답을 위해 마이크를 활성 상태로 유지"
-      },
-      "clamshellMicrophone": {
-        "title": "클램셸 마이크",
-        "description": "노트북 덮개가 닫혀 있을 때 사용할 마이크"
       },
       "postProcessingToggle": {
         "label": "후처리",
@@ -531,13 +498,6 @@
         "appData": "앱 데이터:",
         "models": "모델:",
         "settings": "설정:"
-      },
-      "whatsNewPreview": {
-        "title": "새 소식 미리보기",
-        "description": "최신 내장 릴리스 노트를 본 것으로 표시하지 않고 엽니다",
-        "button": "미리보기",
-        "noNotes": "내장 릴리스 노트를 찾을 수 없습니다",
-        "error": "릴리스 노트를 미리 볼 수 없습니다"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "소스 코드",
-        "description": "소스 코드 보기 및 기여",
+        "description": "View the private qq-dictation source repository.",
         "button": "GitHub에서 보기"
-      },
-      "supportDevelopment": {
-        "title": "개발 지원",
-        "description": "Handy 개발을 계속할 수 있도록 도와주세요",
-        "button": "후원하기"
       },
       "acknowledgments": {
         "title": "감사의 말",
@@ -567,25 +522,8 @@
           "description": "OpenAI의 Whisper 자동 음성 인식 모델의 고성능 추론",
           "details": "Handy는 빠르고 로컬 음성-텍스트 처리를 위해 ggml를 사용합니다. Georgi Gerganov와 기여자들의 놀라운 작업에 감사드립니다."
         }
-      },
-      "whatsNewUpdates": {
-        "label": "새 소식 표시",
-        "description": "Handy 업데이트 후 릴리스 노트를 표시합니다"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "업데이트 확인 중...",
-    "updateAvailableShort": "업데이트 사용 가능",
-    "upToDate": "최신 상태",
-    "updateCheckingDisabled": "업데이트 확인 비활성화됨",
-    "downloading": "다운로드 중... {{progress}}%",
-    "installing": "설치 중...",
-    "preparing": "준비 중...",
-    "checkForUpdates": "업데이트 확인",
-    "portableUpdateTitle": "수동 업데이트 필요",
-    "portableUpdateMessage": "포터블 설치는 자동으로 업데이트할 수 없습니다. 업데이트하려면 GitHub Releases에서 최신 NSIS 설치 프로그램을 다운로드하여 같은 폴더에 설치한 다음, 이전 버전의 Data/ 폴더(설정, 모델, 녹음)를 새 버전으로 복사하세요.",
-    "portableUpdateButton": "GitHub Releases 열기"
   },
   "common": {
     "loading": "로딩 중...",
@@ -596,17 +534,11 @@
     "clear": "지우기",
     "noOptionsFound": "옵션을 찾을 수 없습니다"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy는 녹음된 텍스트를 입력하기 위해 접근성 권한이 필요합니다.",
-    "openSettings": "시스템 설정 열기"
-  },
   "errors": {
     "loadDirectory": "디렉토리 로딩 오류: {{error}}",
     "micPermissionDeniedTitle": "마이크 접근이 거부되었습니다",
     "micPermissionDenied": {
       "generic": "운영 체제에서 마이크 접근을 거부했습니다. 시스템 설정에서 마이크 권한을 허용해 주세요.",
-      "windows": "설정 → 개인 정보 및 보안 → 마이크(데스크톱 앱 접근 포함)에서 마이크 접근을 활성화하세요.",
-      "macos": "시스템 설정 → 개인 정보 보호 및 보안 → 마이크에서 마이크 접근을 허용하세요.",
       "linux": "시스템의 소리 또는 개인 정보 설정에서 마이크 접근을 허용하세요."
     },
     "noInputDeviceTitle": "마이크를 찾을 수 없음",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "텍스트로 변환 중...",
     "processing": "처리 중..."
-  },
-  "whatsNew": {
-    "title": "Handy v{{version}}의 새 소식"
   }
 }

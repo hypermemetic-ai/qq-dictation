@@ -1,20 +1,15 @@
 mod actions;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
-mod helpers;
 mod input;
 mod llm_client;
 mod managers;
 mod operation;
 mod overlay;
-pub mod portable;
-#[cfg(target_os = "linux")]
 mod remote;
 mod settings;
 mod shortcut;
@@ -35,7 +30,6 @@ use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
-#[cfg(unix)]
 use signal_hook::iterator::Signals;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -43,7 +37,7 @@ use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
@@ -106,12 +100,6 @@ fn show_main_window(app: &AppHandle) {
         if let Err(e) = main_window.set_focus() {
             log::error!("Failed to focus webview window: {}", e);
         }
-        #[cfg(target_os = "macos")]
-        {
-            if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-                log::error!("Failed to set activation policy to Regular: {}", e);
-            }
-        }
         return;
     }
 
@@ -122,41 +110,12 @@ fn show_main_window(app: &AppHandle) {
     );
 }
 
-#[allow(unused_variables)]
-fn should_force_show_permissions_window(app: &AppHandle) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let model_manager = app.state::<Arc<ModelManager>>();
-        let has_downloaded_models = model_manager
-            .get_available_models()
-            .iter()
-            .any(|model| model.is_downloaded);
-
-        if !has_downloaded_models {
-            return false;
-        }
-
-        let status = commands::audio::get_windows_microphone_permission_status();
-        if status.supported && status.overall_access == commands::audio::PermissionAccess::Denied {
-            log::info!(
-                "Windows microphone permissions are denied; forcing main window visible for onboarding"
-            );
-            return true;
-        }
-    }
-
-    false
-}
-
 fn initialize_core_logic(app_handle: &AppHandle) {
     // A previous process's marker must never make a new Handy instance appear
     // ready before its signal handlers and overlay listeners exist.
     overlay::clear_dictation_overlay_ready();
 
-    // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
-    // The frontend is responsible for calling the `initialize_enigo` command
-    // after onboarding completes. This avoids triggering permission dialogs
-    // on macOS before the user is ready.
+    // The frontend initializes Enigo after model onboarding completes.
 
     // Initialize the managers. The audio recorder receives the streaming router
     // explicitly, so always-on microphone startup can wire live-preview frames
@@ -188,7 +147,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
-    #[cfg(target_os = "linux")]
     match remote::RemoteIngress::start(app_handle.clone()) {
         Ok(ingress) => {
             app_handle.manage(ingress);
@@ -198,33 +156,17 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
     }
 
-    // Note: Shortcuts are NOT initialized here.
-    // The frontend is responsible for calling the `initialize_shortcuts` command
-    // after permissions are confirmed (on macOS) or after onboarding completes.
-    // This matches the pattern used for Enigo initialization.
-
-    #[cfg(unix)]
+    // The frontend initializes shortcuts after model onboarding completes.
     let signals = Signals::new(signal_handle::transcription_signals()).unwrap();
-    // Set up signal handlers for toggling transcription
-    #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone(), signals);
 
-    // Apply macOS Accessory policy if starting hidden and tray is available.
-    // If the tray icon is disabled, keep the dock icon so the user can reopen.
-    #[cfg(target_os = "macos")]
-    {
-        let settings = settings::get_settings(app_handle);
-        if settings.start_hidden && settings.show_tray_icon {
-            let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
-    }
     // Get the current theme to set the appropriate initial icon
     let initial_theme = tray::get_current_theme(app_handle);
 
     // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle);
 
-    let mut tray_builder = TrayIconBuilder::new()
+    let tray_builder = TrayIconBuilder::new()
         .icon(
             Image::from_path(
                 app_handle
@@ -235,48 +177,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             .unwrap(),
         )
         .tooltip(tray::tray_tooltip())
-        .icon_as_template(true);
-
-    // Windows notification-area convention: left click opens the app, right click
-    // shows the menu. Elsewhere (macOS menu bar, Linux) the menu stays on left click.
-    #[cfg(target_os = "windows")]
-    {
-        tray_builder = tray_builder
-            .show_menu_on_left_click(false)
-            .on_tray_icon_event(|tray, event| {
-                use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-                let opens_window = matches!(
-                    event,
-                    TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } | TrayIconEvent::DoubleClick {
-                        button: MouseButton::Left,
-                        ..
-                    }
-                );
-                if opens_window {
-                    show_main_window(tray.app_handle());
-                }
-            });
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        tray_builder = tray_builder.show_menu_on_left_click(true);
-    }
+        .icon_as_template(true)
+        .show_menu_on_left_click(true);
 
     let tray = tray_builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "settings" => {
                 show_main_window(app);
-            }
-            "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
-                    show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
-                }
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
@@ -355,18 +262,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
-}
-
-#[tauri::command]
-#[specta::specta]
-fn trigger_update_check(app: AppHandle) -> Result<(), String> {
-    let settings = settings::get_settings(&app);
-    if !settings.update_checks_enabled {
-        return Ok(());
-    }
-    app.emit("check-for-updates", ())
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -606,11 +501,7 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     0
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
-    // Detect portable mode before anything else
-    portable::init();
-
     // Parse console logging directives from RUST_LOG, falling back to info-level logging
     // when the variable is unset
     let console_filter = build_console_filter();
@@ -662,9 +553,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_app_language_setting,
-            shortcut::change_update_checks_setting,
-            shortcut::change_show_whats_new_on_update_setting,
-            shortcut::change_whats_new_last_seen_version_setting,
             shortcut::change_keyboard_implementation_setting,
             shortcut::get_keyboard_implementation,
             shortcut::change_show_tray_icon_setting,
@@ -674,11 +562,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_available_accelerators,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
-            trigger_update_check,
             show_main_window_command,
             overlay::mark_dictation_overlay_ready,
             commands::cancel_operation,
-            commands::is_portable,
             commands::get_app_dir_path,
             commands::get_app_settings,
             commands::get_default_settings,
@@ -687,7 +573,6 @@ pub fn run(cli_args: CliArgs) {
             commands::open_recordings_folder,
             commands::open_log_dir,
             commands::open_app_data_dir,
-            commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
             commands::models::get_available_models,
@@ -702,8 +587,6 @@ pub fn run(cli_args: CliArgs) {
             commands::models::rescan_local_models,
             commands::audio::update_microphone_mode,
             commands::audio::get_microphone_mode,
-            commands::audio::get_windows_microphone_permission_status,
-            commands::audio::open_microphone_privacy_settings,
             commands::audio::get_available_microphones,
             commands::audio::set_selected_microphone,
             commands::audio::get_selected_microphone,
@@ -712,8 +595,6 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::get_selected_output_device,
             commands::audio::play_test_sound,
             commands::audio::check_custom_sounds,
-            commands::audio::set_clamshell_microphone,
-            commands::audio::get_clamshell_microphone,
             commands::audio::is_recording,
             commands::transcription::set_model_unload_timeout,
             commands::transcription::get_model_load_status,
@@ -725,7 +606,6 @@ pub fn run(cli_args: CliArgs) {
             commands::history::retry_history_entry_transcription,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
-            helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
@@ -772,16 +652,9 @@ pub fn run(cli_args: CliArgs) {
                         let console_filter = console_filter.clone();
                         move |metadata| console_filter.enabled(metadata)
                     }),
-                    // File logs respect the user's settings (stored in FILE_LOG_LEVEL atomic)
-                    Target::new(if let Some(data_dir) = portable::data_dir() {
-                        TargetKind::Folder {
-                            path: data_dir.join("logs"),
-                            file_name: Some("handy".into()),
-                        }
-                    } else {
-                        TargetKind::LogDir {
-                            file_name: Some("handy".into()),
-                        }
+                    // File logs use Tauri's ordinary per-user log directory.
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("handy".into()),
                     })
                     .filter(|metadata| {
                         let file_level = FILE_LOG_LEVEL.load(Ordering::Relaxed);
@@ -799,11 +672,6 @@ pub fn run(cli_args: CliArgs) {
                 ])
                 .build(),
         );
-
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.plugin(tauri_nspanel::init());
-    }
 
     // Single-instance forwards CLI args to an already-running Handy and exits.
     // That would make the headless path
@@ -826,11 +694,8 @@ pub fn run(cli_args: CliArgs) {
 
     builder
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -867,9 +732,7 @@ pub fn run(cli_args: CliArgs) {
                 let args = cli_args.clone();
                 std::thread::spawn(move || {
                     let code = run_headless_guarded(|| run_headless_transcription(&handle, &args));
-                    // Drop the loaded engine before teardown: ggml-metal's global
-                    // device free asserts (SIGABRT) if a model's Metal resources
-                    // are still alive at C++ static-destructor time.
+                    // Drop the loaded engine before process teardown.
                     if let Some(tm) = handle.try_state::<Arc<TranscriptionManager>>() {
                         let _ = tm.unload_model();
                     }
@@ -884,9 +747,8 @@ pub fn run(cli_args: CliArgs) {
                 return Ok(());
             }
 
-            // Create main window programmatically so we can set data_directory
-            // for portable mode (redirects WebView2 cache to portable Data dir)
-            let mut win_builder =
+            // Create the main Linux window programmatically.
+            let win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("Handy")
                     .inner_size(680.0, 570.0)
@@ -895,20 +757,9 @@ pub fn run(cli_args: CliArgs) {
                     .maximizable(false)
                     .visible(false);
 
-            if let Some(data_dir) = portable::data_dir() {
-                win_builder = win_builder.data_directory(data_dir.join("webview"));
-            }
-
             win_builder.build()?;
 
             let mut settings = get_settings(app.handle());
-
-            // Apply the persisted appearance theme to the Windows title bar before
-            // the window is shown, so it matches the in-app palette without a flash
-            // of the wrong theme. On macOS/Linux, Tauri themes are app-wide and
-            // would also affect windows that intentionally keep the system theme.
-            #[cfg(target_os = "windows")]
-            shortcut::apply_window_theme(app.handle(), settings.theme);
 
             // CLI --debug flag overrides debug_mode and log level (runtime-only, not persisted)
             if cli_args.debug {
@@ -951,16 +802,11 @@ pub fn run(cli_args: CliArgs) {
                 tray::set_tray_visibility(&app_handle, false);
             }
 
-            // Show main window only if not starting hidden.
-            // CLI --start-hidden flag overrides the setting.
-            // But if permission onboarding is required, always show the window.
+            // CLI --start-hidden overrides the setting. If the tray is disabled,
+            // keep the main window visible so the user has a way back in.
             let should_hide = settings.start_hidden || cli_args.start_hidden;
-            let should_force_show = should_force_show_permissions_window(&app_handle);
-
-            // If start_hidden but tray is disabled, we must show the window
-            // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_force_show || !should_hide || !tray_available {
+            if !should_hide || !tray_available {
                 show_main_window(&app_handle);
             }
 
@@ -970,23 +816,6 @@ pub fn run(cli_args: CliArgs) {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _res = window.hide();
-
-                #[cfg(target_os = "macos")]
-                {
-                    let settings = get_settings(window.app_handle());
-                    let tray_visible =
-                        settings.show_tray_icon && !window.app_handle().state::<CliArgs>().no_tray;
-                    if tray_visible {
-                        // Tray is available: hide the dock icon, app lives in the tray
-                        let res = window
-                            .app_handle()
-                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                        if let Err(e) = res {
-                            log::error!("Failed to set activation policy: {}", e);
-                        }
-                    }
-                    // No tray: keep the dock icon visible so the user can reopen
-                }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::info!("Theme changed to: {:?}", theme);
@@ -999,13 +828,8 @@ pub fn run(cli_args: CliArgs) {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match &event {
-            #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { .. } => {
-                show_main_window(app);
-            }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
-                #[cfg(target_os = "linux")]
                 if let Some(ingress) = app.try_state::<Arc<remote::RemoteIngress>>() {
                     ingress.shutdown();
                 }

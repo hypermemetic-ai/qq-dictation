@@ -2,16 +2,15 @@
  * Keyboard utility functions for handling keyboard events
  */
 
-export type OSType = "macos" | "windows" | "linux" | "unknown";
+export type OSType = "linux";
 
 /**
  * Extract a consistent key name from a KeyboardEvent
- * This function provides cross-platform keyboard event handling
- * and returns key names appropriate for the target operating system
+ * This function returns Linux key names for shortcut bindings.
  */
 export const getKeyName = (
   e: KeyboardEvent,
-  osType: OSType = "unknown",
+  _osType: OSType = "linux",
 ): string => {
   // Handle special cases first
   if (e.code) {
@@ -37,23 +36,8 @@ export const getKeyName = (
       return code.replace("Numpad", "numpad ").toLowerCase();
     }
 
-    // Handle modifier keys - OS-specific naming
-    const getModifierName = (baseModifier: string): string => {
-      switch (baseModifier) {
-        case "shift":
-          return "shift";
-        case "ctrl":
-          return osType === "macos" ? "ctrl" : "ctrl";
-        case "alt":
-          return osType === "macos" ? "option" : "alt";
-        case "meta":
-          // Windows key on Windows/Linux, Command key on Mac
-          if (osType === "macos") return "command";
-          return "super";
-        default:
-          return baseModifier;
-      }
-    };
+    const getModifierName = (baseModifier: string): string =>
+      baseModifier === "meta" ? "super" : baseModifier;
 
     const modifierMap: Record<string, string> = {
       ShiftLeft: getModifierName("shift"),
@@ -125,15 +109,12 @@ export const getKeyName = (
   if (e.key) {
     const key = e.key;
 
-    // Handle special key names with OS-specific formatting
     const keyMap: Record<string, string> = {
-      Control: osType === "macos" ? "ctrl" : "ctrl",
-      Alt: osType === "macos" ? "option" : "alt",
+      Control: "ctrl",
+      Alt: "alt",
       Shift: "shift",
-      Meta:
-        osType === "macos" ? "command" : osType === "windows" ? "win" : "super",
-      OS:
-        osType === "macos" ? "command" : osType === "windows" ? "win" : "super",
+      Meta: "super",
+      OS: "super",
       CapsLock: "caps lock",
       ArrowUp: "up",
       ArrowDown: "down",
@@ -190,9 +171,7 @@ const formatKeyPart = (part: string): string => {
 };
 
 /**
- * Get display-friendly key combination string for the current OS
- * Formats raw hotkey strings like "option_left+shift+space" into
- * human-readable form like "Left Option + Shift + Space"
+ * Get a display-friendly Linux key combination string.
  */
 export const formatKeyCombination = (
   combination: string,

@@ -482,16 +482,12 @@ impl AudioRecorder {
 
 pub fn is_microphone_access_denied(error_message: &str) -> bool {
     let normalized = error_message.to_lowercase();
-    normalized.contains("access is denied")
-        || normalized.contains("permission denied")
-        || normalized.contains("0x80070005")
+    normalized.contains("access is denied") || normalized.contains("permission denied")
 }
 
 pub fn is_no_input_device_error(error_message: &str) -> bool {
     let normalized = error_message.to_lowercase();
     normalized.contains("no input device found")
-        || (normalized.contains("failed to fetch preferred config")
-            && normalized.contains("coreaudio"))
 }
 
 #[cfg(test)]
@@ -509,11 +505,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_windows_error_code() {
-        assert!(is_microphone_access_denied("WASAPI error: 0x80070005"));
-    }
-
-    #[test]
     fn does_not_match_unrelated_errors() {
         assert!(!is_microphone_access_denied("device not found"));
     }
@@ -521,13 +512,6 @@ mod tests {
     #[test]
     fn detects_no_input_device() {
         assert!(is_no_input_device_error("No input device found"));
-    }
-
-    #[test]
-    fn detects_coreaudio_config_error() {
-        assert!(is_no_input_device_error(
-            "Failed to fetch preferred config: A backend-specific error has occurred: An unknown error unknown to the coreaudio-rs API occurred"
-        ));
     }
 
     #[test]

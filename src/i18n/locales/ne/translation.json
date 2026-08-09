@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "सेटिङहरू...",
-    "checkUpdates": "अपडेटहरू जाँच गर्नुहोस्...",
     "copyLastTranscript": "पछिल्लो ट्रान्सक्रिप्ट कपी गर्नुहोस्",
     "unloadModel": "मोडेल अनलोड गर्नुहोस्",
     "model": "मोडेल",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "मोडेल चयन गर्न सकिएन"
-    },
-    "permissions": {
-      "title": "अनुमतिहरू आवश्यक छन्",
-      "description": "Handy लाई राम्रोसँग काम गर्न केही अनुमतिहरू चाहिन्छ।",
-      "microphone": {
-        "title": "माइक्रोफोन पहुँच",
-        "description": "ट्रान्सक्रिप्सनका लागि तपाईंको आवाज सुन्न आवश्यक छ।"
-      },
-      "accessibility": {
-        "title": "एक्सेसिबिलिटी पहुँच",
-        "description": "ट्रान्सक्राइब गरिएको टेक्स्ट तपाईंका एपहरूमा टाइप गर्न आवश्यक छ।"
-      },
-      "grant": "अनुमति दिनुहोस्",
-      "granted": "अनुमति दिइयो",
-      "waiting": "प्रतीक्षा गरिँदैछ...",
-      "allGranted": "सबै तयार!",
-      "errors": {
-        "checkFailed": "अनुमतिहरू जाँच गर्न सकिएन। कृपया फेरि प्रयास गर्नुहोस्।",
-        "requestFailed": "अनुमति अनुरोध गर्न सकिएन। कृपया फेरि प्रयास गर्नुहोस्।"
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "transcribe.cpp एक्सेलेरेसन",
-          "description": "transcribe.cpp (Whisper परिवार) मोडेलहरूका लागि हार्डवेयर एक्सेलेरेसन। Auto ले उपलब्ध भए GPU प्रयोग गर्छ (macOS मा Metal, Windows/Linux मा Vulkan)।"
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX एक्सेलेरेसन",
-          "description": "ONNX मोडेलहरू (Parakeet, Canary, Moonshine, आदि) का लागि हार्डवेयर एक्सेलेरेसन। Windows मा DirectML प्रयोगात्मक छ। मोडेलहरूले ट्रान्सक्राइब गर्न नसक्न सक्छन्।"
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "स्वतः"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "स्वतः सबमिट",
-        "description": "टेक्स्ट घुसाएपछि चयन गरिएको कि संयोजन स्वतः पठाउनुहोस्। Cmd+Enter macOS मा लागू हुन्छ, भने Windows/Linux ले Super+Enter प्रयोग गर्छ।",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "अफ",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "प्रदायक",
           "description": "OpenAI-अनुकूल प्रदायक चयन गर्नुहोस्।"
-        },
-        "appleIntelligence": {
-          "unavailable": "यो डिभाइसमा Apple Intelligence उपलब्ध छैन। macOS Tahoe (26.0) वा पछिको संस्करण चलिरहेको र System Settings मा Apple Intelligence सक्षम गरिएको Apple Silicon Mac आवश्यक छ।"
         },
         "baseUrl": {
           "title": "आधार URL",
@@ -463,17 +438,6 @@
         "lineCount": "{{count}} लाइनहरू",
         "empty": "लगहरूको प्रतीक्षा गरिँदैछ… एपले लग निकाल्दा यहाँ देखिनेछन्।"
       },
-      "updateChecks": {
-        "label": "अपडेटहरू जाँच गर्नुहोस्",
-        "description": "Handy को नयाँ संस्करण स्वतः जाँच गर्नुहोस्"
-      },
-      "whatsNewPreview": {
-        "title": "नयाँ के छ पूर्वावलोकन",
-        "description": "पछिल्लो बन्डल गरिएको रिलिज नोट हेरिएको चिन्ह नलगाई खोल्नुहोस्",
-        "button": "पूर्वावलोकन",
-        "noNotes": "कुनै बन्डल गरिएको रिलिज नोट भेटिएन",
-        "error": "रिलिज नोट पूर्वावलोकन गर्न सकिएन"
-      },
       "soundTheme": {
         "label": "साउन्ड थिम",
         "description": "रेकर्डिङ सुरु र बन्द फिडब्याकका लागि साउन्ड थिम छान्नुहोस्"
@@ -500,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "सधैँ-सक्रिय माइक्रोफोन",
         "description": "छिटो प्रतिक्रियाका लागि माइक्रोफोन सक्रिय राख्नुहोस्"
-      },
-      "clamshellMicrophone": {
-        "title": "क्ल्यामशेल माइक्रोफोन",
-        "description": "ल्यापटपको ढकनी बन्द हुँदा प्रयोग गर्ने माइक्रोफोन"
       },
       "postProcessingToggle": {
         "label": "पोस्ट प्रोसेसिङ",
@@ -546,23 +506,14 @@
         "title": "संस्करण",
         "description": "Handy को हालको संस्करण"
       },
-      "whatsNewUpdates": {
-        "label": "नयाँ के छ देखाउनुहोस्",
-        "description": "Handy अपडेट भएपछि रिलिज नोटहरू देखाउनुहोस्"
-      },
       "appDataDirectory": {
         "title": "एप डेटा डाइरेक्टरी",
         "description": "Handy ले आफ्नो डेटा भण्डारण गर्ने स्थान"
       },
       "sourceCode": {
         "title": "स्रोत कोड",
-        "description": "स्रोत कोड हेर्नुहोस् र योगदान गर्नुहोस्",
+        "description": "View the private qq-dictation source repository.",
         "button": "GitHub मा हेर्नुहोस्"
-      },
-      "supportDevelopment": {
-        "title": "विकासलाई सहयोग गर्नुहोस्",
-        "description": "Handy निर्माण जारी राख्न हामीलाई सहयोग गर्नुहोस्",
-        "button": "दान गर्नुहोस्"
       },
       "acknowledgments": {
         "title": "आभार",
@@ -574,22 +525,6 @@
       }
     }
   },
-  "footer": {
-    "checkingUpdates": "अपडेटहरू जाँच गरिँदैछ...",
-    "updateAvailableShort": "अपडेट उपलब्ध छ",
-    "upToDate": "अद्यावधिक छ",
-    "updateCheckingDisabled": "अपडेट जाँच अफ छ",
-    "downloading": "डाउनलोड गरिँदैछ... {{progress}}%",
-    "installing": "इन्स्टल गरिँदैछ...",
-    "preparing": "तयारी गरिँदैछ...",
-    "checkForUpdates": "अपडेटहरू जाँच गर्नुहोस्",
-    "portableUpdateTitle": "म्यानुअल अपडेट आवश्यक",
-    "portableUpdateMessage": "पोर्टेबल इन्स्टलहरू स्वतः अपडेट गर्न सकिँदैन। अपडेट गर्न: GitHub Releases बाट पछिल्लो NSIS इन्स्टलर डाउनलोड गर्नुहोस्, उही फोल्डरमा इन्स्टल गर्नुहोस्, अनि पुरानो संस्करणबाट आफ्नो Data/ फोल्डर (सेटिङ, मोडेल, रेकर्डिङ) नयाँमा कपी गर्नुहोस्।",
-    "portableUpdateButton": "GitHub Releases खोल्नुहोस्"
-  },
-  "whatsNew": {
-    "title": "Handy v{{version}} मा नयाँ"
-  },
   "common": {
     "loading": "लोड गरिँदैछ...",
     "delete": "मेटाउनुहोस्",
@@ -599,17 +534,11 @@
     "clear": "खाली गर्नुहोस्",
     "noOptionsFound": "कुनै विकल्प भेटिएन"
   },
-  "accessibility": {
-    "permissionsDescription": "ट्रान्सक्राइब गरिएको टेक्स्ट टाइप गर्न Handy लाई एक्सेसिबिलिटी अनुमति चाहिन्छ।",
-    "openSettings": "सिस्टम सेटिङहरू खोल्नुहोस्"
-  },
   "errors": {
     "loadDirectory": "डाइरेक्टरी लोड गर्दा त्रुटि: {{error}}",
     "micPermissionDeniedTitle": "माइक्रोफोन पहुँच अस्वीकृत गरियो",
     "micPermissionDenied": {
       "generic": "अपरेटिङ सिस्टमले माइक्रोफोन पहुँच अस्वीकार गर्‍यो। कृपया सिस्टम सेटिङहरूमा माइक्रोफोन अनुमति दिनुहोस्।",
-      "windows": "Settings → Privacy & security → Microphone मा माइक्रोफोन पहुँच अन गर्नुहोस् (डेस्कटप एप पहुँचसहित)।",
-      "macos": "System Settings → Privacy & Security → Microphone मा माइक्रोफोन पहुँच दिनुहोस्।",
       "linux": "आफ्नो सिस्टमको साउन्ड वा गोपनीयता सेटिङहरूमा माइक्रोफोन पहुँच दिनुहोस्।"
     },
     "noInputDeviceTitle": "कुनै माइक्रोफोन भेटिएन",

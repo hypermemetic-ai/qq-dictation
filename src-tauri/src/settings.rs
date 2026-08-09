@@ -7,9 +7,6 @@ use std::fmt;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
-pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
-pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
-
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -191,20 +188,13 @@ pub enum KeyboardImplementation {
 
 impl Default for KeyboardImplementation {
     fn default() -> Self {
-        #[cfg(target_os = "linux")]
-        return KeyboardImplementation::Tauri;
-        #[cfg(not(target_os = "linux"))]
-        return KeyboardImplementation::HandyKeys;
+        KeyboardImplementation::Tauri
     }
 }
 
 impl Default for PasteMethod {
     fn default() -> Self {
-        // Default to CtrlV for macOS and Windows, Direct for Linux
-        #[cfg(target_os = "linux")]
-        return PasteMethod::Direct;
-        #[cfg(not(target_os = "linux"))]
-        return PasteMethod::CtrlV;
+        PasteMethod::Direct
     }
 }
 
@@ -296,8 +286,6 @@ pub enum OrtAcceleratorSetting {
     Auto,
     Cpu,
     Cuda,
-    #[serde(rename = "directml")]
-    DirectMl,
     Rocm,
 }
 
@@ -359,16 +347,6 @@ pub struct AppSettings {
     pub start_hidden: bool,
     #[serde(default = "default_autostart_enabled")]
     pub autostart_enabled: bool,
-    #[serde(default = "default_update_checks_enabled")]
-    pub update_checks_enabled: bool,
-    #[serde(default = "default_show_whats_new_on_update")]
-    pub show_whats_new_on_update: bool,
-    /// The app version whose What's New the user has already seen. Fresh installs
-    /// default to the current version (nothing is "new" to them). Existing users
-    /// upgrading from before this key existed are blanked by the migration so they
-    /// see the current release's notes — see `apply_settings_migrations`.
-    #[serde(default = "default_whats_new_last_seen_version")]
-    pub whats_new_last_seen_version: String,
     #[serde(default = "default_model")]
     pub selected_model: String,
     #[serde(default)]
@@ -377,8 +355,6 @@ pub struct AppSettings {
     pub always_on_microphone: bool,
     #[serde(default)]
     pub selected_microphone: Option<String>,
-    #[serde(default)]
-    pub clamshell_microphone: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
     #[serde(default = "default_translate_to_english")]
@@ -498,18 +474,6 @@ fn default_autostart_enabled() -> bool {
     false
 }
 
-fn default_update_checks_enabled() -> bool {
-    true
-}
-
-fn default_show_whats_new_on_update() -> bool {
-    true
-}
-
-fn default_whats_new_last_seen_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
-
 fn default_selected_language() -> String {
     "auto".to_string()
 }
@@ -521,12 +485,7 @@ fn default_overlay_position() -> OverlayPosition {
 }
 
 fn default_overlay_style() -> OverlayStyle {
-    // Linux hides the overlay by default; other platforms show the live overlay.
-    // Position is independent and only selects top vs. bottom placement.
-    #[cfg(target_os = "linux")]
-    return OverlayStyle::None;
-    #[cfg(not(target_os = "linux"))]
-    return OverlayStyle::Live;
+    OverlayStyle::None
 }
 
 fn default_vad_enabled() -> bool {
@@ -651,22 +610,6 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         },
     ];
 
-    // Note: We always include Apple Intelligence on macOS ARM64 without checking availability
-    // at startup. The availability check is deferred to when the user actually tries to use it
-    // (in actions.rs). This prevents crashes on macOS 26.x beta where accessing
-    // SystemLanguageModel.default during early app initialization causes SIGABRT.
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        providers.push(PostProcessProvider {
-            id: APPLE_INTELLIGENCE_PROVIDER_ID.to_string(),
-            label: "Apple Intelligence".to_string(),
-            base_url: "apple-intelligence://local".to_string(),
-            allow_base_url_edit: false,
-            models_endpoint: None,
-            supports_structured_output: true,
-        });
-    }
-
     // AWS Bedrock via Mantle (OpenAI-compatible endpoint)
     providers.push(PostProcessProvider {
         id: "bedrock_mantle".to_string(),
@@ -698,10 +641,7 @@ fn default_post_process_api_keys() -> SecretMap {
     SecretMap(map)
 }
 
-fn default_model_for_provider(provider_id: &str) -> String {
-    if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
-        return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
-    }
+fn default_model_for_provider(_provider_id: &str) -> String {
     String::new()
 }
 
@@ -734,28 +674,46 @@ fn default_typing_tool() -> TypingTool {
 
 fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
-    for provider in default_post_process_providers() {
-        // Use match to do a single lookup - either sync existing or add new
+    let default_providers = default_post_process_providers();
+    let is_current_provider = |id: &str| default_providers.iter().any(|provider| provider.id == id);
+
+    let original_provider_count = settings.post_process_providers.len();
+    settings
+        .post_process_providers
+        .retain(|provider| is_current_provider(&provider.id));
+    changed |= settings.post_process_providers.len() != original_provider_count;
+
+    let original_key_count = settings.post_process_api_keys.0.len();
+    settings
+        .post_process_api_keys
+        .0
+        .retain(|id, _| is_current_provider(id));
+    changed |= settings.post_process_api_keys.0.len() != original_key_count;
+
+    let original_model_count = settings.post_process_models.len();
+    settings
+        .post_process_models
+        .retain(|id, _| is_current_provider(id));
+    changed |= settings.post_process_models.len() != original_model_count;
+
+    if !is_current_provider(&settings.post_process_provider_id) {
+        settings.post_process_provider_id = default_post_process_provider_id();
+        changed = true;
+    }
+
+    for provider in default_providers {
         match settings
             .post_process_providers
             .iter_mut()
-            .find(|p| p.id == provider.id)
+            .find(|existing| existing.id == provider.id)
         {
             Some(existing) => {
-                // Sync supports_structured_output field for existing providers (migration)
                 if existing.supports_structured_output != provider.supports_structured_output {
-                    debug!(
-                        "Updating supports_structured_output for provider '{}' from {} to {}",
-                        provider.id,
-                        existing.supports_structured_output,
-                        provider.supports_structured_output
-                    );
                     existing.supports_structured_output = provider.supports_structured_output;
                     changed = true;
                 }
             }
             None => {
-                // Provider doesn't exist, add it
                 settings.post_process_providers.push(provider.clone());
                 changed = true;
             }
@@ -767,21 +725,12 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 .insert(provider.id.clone(), String::new());
             changed = true;
         }
-
-        let default_model = default_model_for_provider(&provider.id);
-        match settings.post_process_models.get_mut(&provider.id) {
-            Some(existing) => {
-                if existing.is_empty() && !default_model.is_empty() {
-                    *existing = default_model.clone();
-                    changed = true;
-                }
-            }
-            None => {
-                settings
-                    .post_process_models
-                    .insert(provider.id.clone(), default_model);
-                changed = true;
-            }
+        if !settings.post_process_models.contains_key(&provider.id) {
+            settings.post_process_models.insert(
+                provider.id.clone(),
+                default_model_for_provider(&provider.id),
+            );
+            changed = true;
         }
     }
 
@@ -791,14 +740,7 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
 pub fn get_default_settings() -> AppSettings {
-    #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
-    #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
-    #[cfg(target_os = "linux")]
-    let default_shortcut = "ctrl+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_shortcut = "alt+space";
 
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -811,14 +753,7 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_shortcut.to_string(),
         },
     );
-    #[cfg(target_os = "windows")]
     let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(target_os = "macos")]
-    let default_post_process_shortcut = "option+shift+space";
-    #[cfg(target_os = "linux")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_post_process_shortcut = "alt+shift+space";
 
     bindings.insert(
         "transcribe_with_post_process".to_string(),
@@ -851,14 +786,10 @@ pub fn get_default_settings() -> AppSettings {
         sound_theme: default_sound_theme(),
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
-        update_checks_enabled: default_update_checks_enabled(),
-        show_whats_new_on_update: default_show_whats_new_on_update(),
-        whats_new_last_seen_version: default_whats_new_last_seen_version(),
         selected_model: "".to_string(),
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
-        clamshell_microphone: None,
         selected_output_device: None,
         translate_to_english: false,
         selected_language: "auto".to_string(),
@@ -944,7 +875,7 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
     let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .store(SETTINGS_STORE_PATH)
         .expect("Failed to initialize store");
 
     // Settings reads also persist one-time migrations. Migration helpers are
@@ -1042,16 +973,6 @@ fn apply_settings_migrations(
         updated = true;
     }
 
-    // One-time What's New migration: migrations only run on an existing store
-    // (fresh installs stamp the current version via get_default_settings). A
-    // missing key here means a user upgrading from before it existed — blank it
-    // so they see the current release's What's New, mirroring the onboarding
-    // migration's explicit first-run-vs-upgrade decision.
-    if settings_value.get("whats_new_last_seen_version").is_none() {
-        settings.whats_new_last_seen_version = String::new();
-        updated = true;
-    }
-
     let stored_schema_version = settings_value
         .get("settings_schema_version")
         .and_then(|v| v.as_u64())
@@ -1092,7 +1013,7 @@ fn apply_settings_migrations(
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .store(SETTINGS_STORE_PATH)
         .expect("Failed to initialize store");
 
     store.set("settings", serde_json::to_value(&settings).unwrap());
@@ -1140,124 +1061,6 @@ mod tests {
         assert!(!settings.audio_feedback);
         // Bindings default to empty; the load path merges the real defaults in.
         assert!(settings.bindings.is_empty());
-    }
-
-    /// Frozen snapshot of a real v0.9.0-era settings store, as written to
-    /// disk. This pins backwards compatibility: it must always parse strictly
-    /// (no salvage) and require no migration rewrite.
-    ///
-    /// If a schema change breaks this test, do NOT just update the fixture —
-    /// it stands in for the stores on users' machines. Add a
-    /// `#[serde(alias)]`/`#[serde(other)]` or a one-time migration in
-    /// `apply_settings_migrations` so old values keep loading, and only extend
-    /// the fixture alongside that.
-    #[test]
-    fn frozen_v0_9_store_parses_strictly_without_migration() {
-        // Note "log_level": 2 — the legacy numeric format, kept deliberately.
-        let stored: serde_json::Value = serde_json::from_str(
-            r##"{
-            "settings_schema_version": 1,
-            "bindings": {
-                "transcribe": {
-                    "id": "transcribe",
-                    "name": "Transcribe",
-                    "description": "Converts your speech into text.",
-                    "default_binding": "option+space",
-                    "current_binding": "f13"
-                },
-                "transcribe_with_post_process": {
-                    "id": "transcribe_with_post_process",
-                    "name": "Transcribe with Post-Processing",
-                    "description": "Converts your speech into text and applies AI post-processing.",
-                    "default_binding": "option+shift+space",
-                    "current_binding": "option+shift+space"
-                },
-                "cancel": {
-                    "id": "cancel",
-                    "name": "Cancel",
-                    "description": "Cancels the current recording.",
-                    "default_binding": "escape",
-                    "current_binding": "escape"
-                }
-            },
-            "push_to_talk": false,
-            "audio_feedback": true,
-            "audio_feedback_volume": 0.8,
-            "sound_theme": "pop",
-            "start_hidden": false,
-            "autostart_enabled": true,
-            "update_checks_enabled": true,
-            "show_whats_new_on_update": true,
-            "whats_new_last_seen_version": "0.9.0",
-            "selected_model": "whisper-large-v3-turbo",
-            "onboarding_completed": true,
-            "always_on_microphone": false,
-            "selected_microphone": "MacBook Pro Microphone",
-            "clamshell_microphone": null,
-            "selected_output_device": null,
-            "translate_to_english": false,
-            "selected_language": "en",
-            "overlay_position": "bottom",
-            "debug_mode": false,
-            "log_level": 2,
-            "custom_words": ["Handy", "cjpais"],
-            "model_unload_timeout": "min5",
-            "word_correction_threshold": 0.18,
-            "history_limit": 5,
-            "recording_retention_period": "preserve_limit",
-            "paste_method": "ctrl_v",
-            "clipboard_handling": "dont_modify",
-            "auto_submit": false,
-            "auto_submit_key": "enter",
-            "post_process_enabled": false,
-            "post_process_provider_id": "openai",
-            "post_process_providers": [
-                {
-                    "id": "openai",
-                    "label": "OpenAI",
-                    "base_url": "https://api.openai.com/v1",
-                    "allow_base_url_edit": false,
-                    "models_endpoint": null,
-                    "supports_structured_output": true
-                }
-            ],
-            "post_process_api_keys": { "openai": "" },
-            "post_process_models": { "openai": "gpt-4o-mini" },
-            "post_process_prompts": [
-                { "id": "default", "name": "Default", "prompt": "Clean up the transcript." }
-            ],
-            "post_process_selected_prompt_id": null,
-            "mute_while_recording": false,
-            "append_trailing_space": false,
-            "app_language": "en",
-            "experimental_enabled": false,
-            "lazy_stream_close": false,
-            "keyboard_implementation": "handy_keys",
-            "show_tray_icon": true,
-            "paste_delay_ms": 60,
-            "typing_tool": "auto",
-            "external_script_path": null,
-            "custom_filler_words": null,
-            "transcribe_accelerator": "gpu",
-            "ort_accelerator": "auto",
-            "transcribe_gpu_device": 0,
-            "extra_recording_buffer_ms": 0,
-            "vad_enabled": true,
-            "overlay_style": "live"
-        }"##,
-        )
-        .expect("fixture is valid JSON");
-
-        let mut settings: AppSettings = serde_json::from_value(stored.clone())
-            .expect("a stored v0.9.0 settings object must keep parsing strictly");
-
-        assert_eq!(settings.selected_model, "whisper-large-v3-turbo");
-        assert_eq!(settings.bindings["transcribe"].current_binding, "f13");
-        assert_eq!(settings.log_level, LogLevel::Debug);
-        assert_eq!(settings.sound_theme, SoundTheme::Pop);
-
-        // A current-format store must not be rewritten on every read.
-        assert!(!apply_settings_migrations(&mut settings, &stored));
     }
 
     #[test]
@@ -1366,13 +1169,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn default_overlay_style_is_live_when_overlay_defaults_on() {
-        let settings = get_default_settings();
-        assert_eq!(settings.overlay_style, OverlayStyle::Live);
-    }
-
     #[test]
     fn overlay_migration_keeps_disabled_overlay_off() {
         let mut settings = get_default_settings();
@@ -1449,7 +1245,6 @@ mod tests {
         let raw = serde_json::json!({
             "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
             "onboarding_completed": false,
-            "whats_new_last_seen_version": default_whats_new_last_seen_version(),
             "overlay_style": "live",
             "transcribe_accelerator": "gpu",
             "transcribe_gpu_device": 2
