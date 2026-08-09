@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Thin Linux/X11 laptop client for workstation-owned qq-dictation.
 
-The laptop owns only X11 controls, exact-window chord injection, microphone
+The laptop owns only X11 controls, exact-window verification, microphone
 capture, one SSH helper process, and local status. It runs no ASR model.
 """
 
@@ -31,7 +31,6 @@ MAX_PROTOCOL_FRAME_BYTES = 65_536
 MAX_AUDIO_SAMPLES = 4_800
 AUDIO_BYTES_PER_SAMPLE = 2
 AUDIO_CHUNK_BYTES = MAX_AUDIO_SAMPLES * AUDIO_BYTES_PER_SAMPLE
-BIND_TIMEOUT_SECONDS = 5.0
 PROTOCOL_TIMEOUT_SECONDS = 10.0
 PROCESS_STOP_SECONDS = 2.0
 POLL_SECONDS = 0.1
@@ -54,23 +53,17 @@ DEFAULT_CAPTURE_ARGV = [
 DEFAULTS = {
     "ssh_path": "/usr/bin/ssh",
     "remote_helper": "~/.local/bin/handy-remote-stream.py",
-    "xdotool_path": "/usr/bin/xdotool",
     "notify_send_path": "/usr/bin/notify-send",
-    "binder_key": "alt+d",
 }
 REQUIRED_CONFIG = {
     "ssh_host",
     "ghostty_title",
     "ghostty_class",
-    "herdr_prefix",
     "capture_argv",
 }
 ALLOWED_CONFIG = REQUIRED_CONFIG | set(DEFAULTS)
 SAFE_SSH_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,254}\Z")
 SAFE_REMOTE_HELPER = re.compile(r"[A-Za-z0-9_./~+-]{1,512}\Z")
-SAFE_CHORD = re.compile(
-    r"(?:ctrl|alt|shift|super|cmd)(?:\+(?:ctrl|alt|shift|super|cmd))*\+[A-Za-z0-9?_-]+\Z"
-)
 
 
 class ClientError(RuntimeError):
@@ -90,13 +83,10 @@ class ClientConfig:
     ssh_host: str
     ghostty_title: str
     ghostty_class: str
-    herdr_prefix: str
     capture_argv: tuple[str, ...]
     ssh_path: str
     remote_helper: str
-    xdotool_path: str
     notify_send_path: str
-    binder_key: str
 
     @classmethod
     def from_mapping(cls, raw: object) -> "ClientConfig":
@@ -115,12 +105,9 @@ class ClientConfig:
             "ssh_host",
             "ghostty_title",
             "ghostty_class",
-            "herdr_prefix",
             "ssh_path",
             "remote_helper",
-            "xdotool_path",
             "notify_send_path",
-            "binder_key",
         ):
             if not isinstance(values[key], str) or not values[key]:
                 raise ClientError(f"{key} must be a non-empty string")
@@ -131,11 +118,7 @@ class ClientConfig:
             raise ClientError("ssh_host is not a safe SSH host alias")
         if not SAFE_REMOTE_HELPER.fullmatch(values["remote_helper"]):
             raise ClientError("remote_helper contains unsafe shell characters")
-        if not SAFE_CHORD.fullmatch(values["herdr_prefix"]):
-            raise ClientError("herdr_prefix is not one explicit modified key chord")
-        if values["binder_key"] != "alt+d":
-            raise ClientError("binder_key must remain the reserved alt+d chord")
-        for key in ("ssh_path", "xdotool_path", "notify_send_path"):
+        for key in ("ssh_path", "notify_send_path"):
             if not Path(values[key]).is_absolute():
                 raise ClientError(f"{key} must be an absolute executable path")
 
@@ -162,13 +145,10 @@ class ClientConfig:
             ssh_host=values["ssh_host"],
             ghostty_title=values["ghostty_title"],
             ghostty_class=values["ghostty_class"],
-            herdr_prefix=values["herdr_prefix"],
             capture_argv=tuple(capture),
             ssh_path=values["ssh_path"],
             remote_helper=values["remote_helper"],
-            xdotool_path=values["xdotool_path"],
             notify_send_path=values["notify_send_path"],
-            binder_key=values["binder_key"],
         )
 
     @classmethod
@@ -181,7 +161,6 @@ class ClientConfig:
     def validate_runtime_tools(self) -> None:
         for executable in (
             self.ssh_path,
-            self.xdotool_path,
             self.notify_send_path,
             self.capture_argv[0],
         ):
@@ -193,6 +172,7 @@ class ClientConfig:
 @dataclass(frozen=True)
 class WindowIdentity:
     window_id: int
+    process_id: int
     title: str
     window_class: str
 
@@ -259,7 +239,7 @@ def decode_response(payload: bytes) -> dict[str, object]:
         raise ClientError("workstation returned malformed JSON") from error
     if not isinstance(response, dict):
         raise ClientError("workstation returned a non-object response")
-    allowed = {"version", "status", "request_id", "pane_id", "error"}
+    allowed = {"version", "status", "request_id", "error"}
     if set(response) - allowed:
         raise ClientError("workstation response contained unknown fields")
     if type(response.get("version")) is not int or response["version"] != PROTOCOL_VERSION:
@@ -288,10 +268,6 @@ def validate_response(
             raise ClientError("workstation did not mint a request id")
     elif observed_request != request_id:
         raise ClientError("workstation response named a stale or different request")
-    if status == "bound":
-        pane_id = response.get("pane_id")
-        if not isinstance(pane_id, str) or not pane_id:
-            raise ClientError("bound response omitted its exact pane id")
     return response
 
 
@@ -602,16 +578,34 @@ class X11Controller:
         self.display.close()
 
     def active_identity(self) -> WindowIdentity:
-        atom = self.display.intern_atom("_NET_ACTIVE_WINDOW")
-        active = self.root.get_full_property(atom, X.AnyPropertyType)
-        if active is None or not len(active.value):
-            raise ClientError("X11 did not report an active window")
-        window = self.display.create_resource_object("window", int(active.value[0]))
-        title = window.get_wm_name()
-        wm_class = window.get_wm_class()
-        if not isinstance(title, str) or not wm_class or len(wm_class) != 2:
-            raise ClientError("active window omitted its exact title or class")
-        identity = WindowIdentity(int(active.value[0]), title, wm_class[1])
+        try:
+            atom = self.display.intern_atom("_NET_ACTIVE_WINDOW")
+            active = self.root.get_full_property(atom, X.AnyPropertyType)
+            if active is None or not len(active.value):
+                raise ClientError("X11 did not report an active window")
+            window_id = int(active.value[0])
+            window = self.display.create_resource_object("window", window_id)
+            title = window.get_wm_name()
+            wm_class = window.get_wm_class()
+            pid_property = window.get_full_property(
+                self.display.intern_atom("_NET_WM_PID"), X.AnyPropertyType
+            )
+            if (
+                not isinstance(title, str)
+                or not wm_class
+                or len(wm_class) != 2
+                or pid_property is None
+                or len(pid_property.value) != 1
+            ):
+                raise ClientError("active window omitted its exact title, class, or PID")
+            process_id = int(pid_property.value[0])
+        except XError as error:
+            raise ClientError("active X11 window disappeared during identity check") from error
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ClientError("active X11 window reported a malformed identity") from error
+        if process_id <= 0:
+            raise ClientError("active window reported an invalid PID")
+        identity = WindowIdentity(window_id, process_id, title, wm_class[1])
         if (
             identity.title != self.config.ghostty_title
             or identity.window_class != self.config.ghostty_class
@@ -621,47 +615,13 @@ class X11Controller:
 
     def require_same_active(self, expected: WindowIdentity) -> None:
         if self.active_identity() != expected:
-            raise ClientError("active Ghostty window changed during target binding")
-
-    def inject_binder(self, expected: WindowIdentity) -> None:
-        inject_binder_chord(self.config, expected, self.require_same_active)
+            raise ClientError("active Ghostty window changed before remote commit")
 
     def next_event(self, timeout: float = POLL_SECONDS):
         if self.display.pending_events():
             return self.display.next_event()
         ready, _, _ = select.select([self.display.fileno()], [], [], timeout)
         return self.display.next_event() if ready else None
-
-
-def inject_binder_chord(
-    config: ClientConfig,
-    expected: WindowIdentity,
-    require_same_active: Callable[[WindowIdentity], None],
-) -> None:
-    require_same_active(expected)
-    try:
-        result = subprocess.run(
-            [
-                config.xdotool_path,
-                "key",
-                "--window",
-                str(expected.window_id),
-                "--clearmodifiers",
-                config.herdr_prefix,
-                config.binder_key,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            shell=False,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ClientError(f"could not inject the Herdr binder chord: {error}") from error
-    if result.returncode != 0:
-        raise ClientError("xdotool refused exact-window binder chord injection")
-    require_same_active(expected)
 
 
 class LaptopApplication:
@@ -687,6 +647,8 @@ class LaptopApplication:
         self.transport: ProtocolTransport | None = None
         self.capture: MicrophoneCapture | None = None
         self.request_id: str | None = None
+        self.start_window: WindowIdentity | None = None
+        self.commit_attempted = False
         self._failure_lock = threading.Lock()
         self._async_failure: str | None = None
         self._set_state(ClientState.OFF, "Right-Control arms remote dictation")
@@ -729,6 +691,8 @@ class LaptopApplication:
             status = self._cancel_request()
             if status == "cancelled":
                 self.request_id = None
+                self.start_window = None
+                self.commit_attempted = False
                 self._set_state(ClientState.ARMED, "Remote request cancelled")
             elif status == "cancelling":
                 self._set_state(
@@ -759,21 +723,11 @@ class LaptopApplication:
                         },
                     }
                 ),
-                {"pending"},
+                {"recording"},
             )
             self.request_id = str(response["request_id"])
-            self.x11.require_same_active(intended)
-            self.x11.inject_binder(intended)
-            deadline = time.monotonic() + BIND_TIMEOUT_SECONDS
-            while True:
-                if time.monotonic() >= deadline:
-                    raise ClientError("exact Herdr pane binding timed out")
-                status = self._status()
-                if status["status"] == "bound":
-                    break
-                if status["status"] != "pending":
-                    raise ClientError("workstation left pending state before exact binding")
-                time.sleep(POLL_SECONDS)
+            self.start_window = intended
+            self.commit_attempted = False
             capture = self.capture_factory(
                 self.config, self._send_audio, self._record_async_failure
             )
@@ -830,9 +784,9 @@ class LaptopApplication:
         return validate_response(
             response,
             {
-                "pending",
-                "bound",
+                "recording",
                 "processing",
+                "ready",
                 "cancelling",
                 "succeeded",
                 "failed",
@@ -853,18 +807,56 @@ class LaptopApplication:
         if self.state == ClientState.PROCESSING:
             try:
                 status = self._status()["status"]
-                if status == "succeeded":
+                if status == "ready":
+                    result = self._commit_ready_request()
+                    if result == "succeeded":
+                        self.request_id = None
+                        self.start_window = None
+                        self._set_state(
+                            ClientState.ARMED,
+                            "Delivered to the Herdr pane selected at commit",
+                        )
+                    elif result == "failed":
+                        self.fail("workstation delivery failed")
+                    else:
+                        raise ClientError(f"unexpected commit result: {result}")
+                elif status == "succeeded":
+                    # Blank output has nothing to commit or deliver.
                     self.request_id = None
-                    self._set_state(ClientState.ARMED, "Delivered to the bound Herdr pane")
+                    self.start_window = None
+                    self._set_state(ClientState.ARMED, "No nonblank text to deliver")
                 elif status == "failed":
                     self.fail("workstation transcription or delivery failed")
                 elif status == "cancelled":
                     self.request_id = None
+                    self.start_window = None
                     self._set_state(ClientState.ARMED, "Remote request cancelled")
                 elif status not in {"processing", "cancelling"}:
                     raise ClientError(f"unexpected processing state: {status}")
             except ClientError as error:
                 self.fail(str(error))
+
+    def _commit_ready_request(self) -> str:
+        transport = self.transport
+        request_id = self.request_id
+        start_window = self.start_window
+        if transport is None or request_id is None or start_window is None:
+            raise ClientError("ready request is missing its original window identity")
+        if self.commit_attempted:
+            raise ClientError("remote commit was already attempted and will not be retried")
+        self.x11.require_same_active(start_window)
+        # Set this before the exchange. A lost response is effect-uncertain and
+        # must never cause this client to issue the commit a second time.
+        self.commit_attempted = True
+        response = transport.exchange(
+            {
+                "type": "commit",
+                "version": PROTOCOL_VERSION,
+                "request_id": request_id,
+            }
+        )
+        validated = validate_response(response, {"succeeded", "failed"}, request_id)
+        return str(validated["status"])
 
     def _record_async_failure(self, detail: str) -> None:
         with self._failure_lock:
@@ -902,6 +894,8 @@ class LaptopApplication:
             except ClientError:
                 pass
         self.request_id = None
+        self.start_window = None
+        self.commit_attempted = False
         if self.transport is not None:
             self.transport.close()
             self.transport = None

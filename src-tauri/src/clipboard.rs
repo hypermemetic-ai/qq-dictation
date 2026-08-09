@@ -635,6 +635,32 @@ fn herdr_target(
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn paste_remote_commit(text: String, app_handle: AppHandle) -> Result<(), String> {
+    let settings = get_settings(&app_handle);
+    let paste_method = settings.paste_method;
+    let text = if settings.append_trailing_space {
+        format!("{} ", text)
+    } else {
+        text
+    };
+    let pane_id = crate::target_binding::deliver_remote(
+        &text,
+        should_send_auto_submit(settings.auto_submit, paste_method),
+        paste_method != PasteMethod::None,
+    )
+    .map_err(|error| format!("Failed remote Herdr commit delivery: {error}"))?;
+    info!("Remote commit selected Herdr pane {}", pane_id);
+
+    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+        app_handle
+            .clipboard()
+            .write_text(&text)
+            .map_err(|error| format!("Failed to copy to clipboard: {error}"))?;
+    }
+    Ok(())
+}
+
 pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> Result<(), String> {
     // Used only by the Linux herdr binding path.
     #[cfg(not(target_os = "linux"))]
@@ -769,7 +795,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn herdr_target_distinguishes_legacy_bound_and_failed_capture() {
+    fn local_herdr_target_is_capture_only_and_never_selects_remote_focus() {
         use crate::target_binding::CaptureOutcome;
 
         assert_eq!(

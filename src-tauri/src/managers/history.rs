@@ -104,10 +104,29 @@ pub struct HistoryEntry {
 pub(crate) struct PendingAudioGuard<'a> {
     pending_audio_files: &'a Mutex<HashSet<OsString>>,
     file_name: OsString,
+    path: PathBuf,
+    history_owned: bool,
+}
+
+impl PendingAudioGuard<'_> {
+    fn mark_history_owned(&mut self) {
+        self.history_owned = true;
+    }
 }
 
 impl Drop for PendingAudioGuard<'_> {
     fn drop(&mut self) {
+        if !self.history_owned {
+            match fs::remove_file(&self.path) {
+                Ok(()) => debug!("Deleted uncommitted WAV file: {}", self.path.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => error!(
+                    "Failed to delete uncommitted WAV file {}: {}",
+                    self.path.display(),
+                    error
+                ),
+            }
+        }
         self.pending_audio_files
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -310,7 +329,9 @@ impl HistoryManager {
             .insert(file_name.clone());
         PendingAudioGuard {
             pending_audio_files: &self.pending_audio_files,
+            path: self.recordings_dir.join(&file_name),
             file_name,
+            history_owned: false,
         }
     }
 
@@ -465,9 +486,35 @@ impl HistoryManager {
         &self.recordings_dir
     }
 
-    /// Save a new history entry to the database.
-    /// The WAV file should already have been written to the recordings directory.
-    pub fn save_entry(
+    /// Atomically transfers a published WAV from the teardown guard to
+    /// history ownership as soon as its database row is inserted.
+    pub(crate) fn save_pending_entry(
+        &self,
+        pending: &mut PendingAudioGuard<'_>,
+        transcription_text: String,
+        post_process_requested: bool,
+        post_processed_text: Option<String>,
+        post_process_prompt: Option<String>,
+        post_process_model: Option<String>,
+    ) -> Result<HistoryEntry> {
+        let file_name = pending.file_name.to_string_lossy().into_owned();
+        if pending.path != self.recordings_dir.join(&file_name) {
+            return Err(anyhow!(
+                "pending WAV does not belong to this history manager"
+            ));
+        }
+        self.save_entry_with_ownership(
+            file_name,
+            transcription_text,
+            post_process_requested,
+            post_processed_text,
+            post_process_prompt,
+            post_process_model,
+            || pending.mark_history_owned(),
+        )
+    }
+
+    fn save_entry_with_ownership(
         &self,
         file_name: String,
         transcription_text: String,
@@ -475,6 +522,7 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
         post_process_model: Option<String>,
+        history_owned: impl FnOnce(),
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -507,6 +555,10 @@ impl HistoryManager {
                 audio_available,
             ],
         )?;
+        // From this point the database owns the WAV. Mark the publication
+        // guard before policy cleanup so a later cleanup error cannot cause
+        // Drop to delete audio still recorded as available in history.
+        history_owned();
 
         let mut entry = HistoryEntry {
             id: conn.last_insert_rowid(),
@@ -1359,6 +1411,46 @@ mod tests {
         assert!(wav_directory.is_dir());
         #[cfg(unix)]
         assert!(wav_symlink.is_symlink());
+    }
+
+    #[test]
+    fn published_audio_guard_unlinks_uncommitted_and_preserves_history_owned_wav() {
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let pending_audio_files = Mutex::new(HashSet::new());
+
+        let cancelled_name = OsString::from("synthetic-cancelled.wav");
+        let cancelled_path = temp_dir.path().join(&cancelled_name);
+        fs::write(&cancelled_path, b"synthetic cancelled audio").expect("publish cancelled WAV");
+        pending_audio_files
+            .lock()
+            .unwrap()
+            .insert(cancelled_name.clone());
+        drop(PendingAudioGuard {
+            pending_audio_files: &pending_audio_files,
+            file_name: cancelled_name,
+            path: cancelled_path.clone(),
+            history_owned: false,
+        });
+        assert!(!cancelled_path.exists());
+        assert!(pending_audio_files.lock().unwrap().is_empty());
+
+        let tracked_name = OsString::from("synthetic-tracked.wav");
+        let tracked_path = temp_dir.path().join(&tracked_name);
+        fs::write(&tracked_path, b"synthetic tracked audio").expect("publish tracked WAV");
+        pending_audio_files
+            .lock()
+            .unwrap()
+            .insert(tracked_name.clone());
+        let mut tracked = PendingAudioGuard {
+            pending_audio_files: &pending_audio_files,
+            file_name: tracked_name,
+            path: tracked_path.clone(),
+            history_owned: false,
+        };
+        tracked.mark_history_owned();
+        drop(tracked);
+        assert!(tracked_path.is_file());
+        assert!(pending_audio_files.lock().unwrap().is_empty());
     }
 
     #[test]

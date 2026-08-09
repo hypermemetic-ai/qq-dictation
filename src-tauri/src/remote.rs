@@ -64,10 +64,6 @@ enum WireRequest {
         version: u8,
         audio: AudioFormat,
     },
-    Bind {
-        version: u8,
-        pane_id: String,
-    },
     Audio {
         version: u8,
         request_id: String,
@@ -81,6 +77,10 @@ enum WireRequest {
         version: u8,
         request_id: String,
     },
+    Commit {
+        version: u8,
+        request_id: String,
+    },
     Status {
         version: u8,
         request_id: String,
@@ -91,10 +91,10 @@ impl WireRequest {
     fn version(&self) -> u8 {
         match self {
             Self::Start { version, .. }
-            | Self::Bind { version, .. }
             | Self::Audio { version, .. }
             | Self::Finish { version, .. }
             | Self::Cancel { version, .. }
+            | Self::Commit { version, .. }
             | Self::Status { version, .. } => *version,
         }
     }
@@ -107,18 +107,15 @@ struct WireResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pane_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
 impl WireResponse {
-    fn status(status: &str, request_id: Option<&str>, pane_id: Option<&str>) -> Self {
+    fn status(status: &str, request_id: Option<&str>) -> Self {
         Self {
             version: PROTOCOL_VERSION,
             status: status.to_string(),
             request_id: request_id.map(str::to_string),
-            pane_id: pane_id.map(str::to_string),
             error: None,
         }
     }
@@ -128,7 +125,6 @@ impl WireResponse {
             version: PROTOCOL_VERSION,
             status: "error".to_string(),
             request_id: None,
-            pane_id: None,
             error: Some(error.to_string()),
         }
     }
@@ -137,7 +133,6 @@ impl WireResponse {
 #[derive(Default)]
 struct ConnectionSession {
     request_id: Option<String>,
-    bound_acknowledged: bool,
 }
 
 impl ConnectionSession {
@@ -146,7 +141,6 @@ impl ConnectionSession {
             return Err("A helper connection may own only one active request".to_string());
         }
         self.request_id = Some(request_id);
-        self.bound_acknowledged = false;
         Ok(())
     }
 
@@ -158,19 +152,9 @@ impl ConnectionSession {
         }
     }
 
-    fn authorize_audio(&self, request_id: &str) -> Result<(), String> {
-        self.authorize(request_id)?;
-        if self.bound_acknowledged {
-            Ok(())
-        } else {
-            Err("Audio is forbidden before exact-pane acknowledgement".to_string())
-        }
-    }
-
     fn retire(&mut self, request_id: &str) -> Result<(), String> {
         self.authorize(request_id)?;
         self.request_id = None;
-        self.bound_acknowledged = false;
         Ok(())
     }
 
@@ -468,33 +452,29 @@ fn dispatch_request(
             session.begin(request_id.clone())?;
             coordinator.remote_start(connection_id, request_id)?;
             let request_id = session.request_id.as_deref().expect("request was stored");
-            Ok(WireResponse::status("pending", Some(request_id), None))
-        }
-        WireRequest::Bind { pane_id, .. } => {
-            if session.request_id.is_some() {
-                return Err("A stream-owner connection cannot act as binder".to_string());
-            }
-            let request_id = coordinator.remote_bind(pane_id)?;
-            // The binder only needs the immutable claim acknowledgement. It does
-            // not become request owner and disconnect cannot cancel the stream.
-            Ok(WireResponse::status("bound", Some(&request_id), None))
+            Ok(WireResponse::status("recording", Some(request_id)))
         }
         WireRequest::Audio {
             request_id, pcm, ..
         } => {
-            session.authorize_audio(&request_id)?;
+            session.authorize(&request_id)?;
             coordinator.remote_audio(connection_id, request_id.clone(), pcm)?;
-            Ok(WireResponse::status("accepted", Some(&request_id), None))
+            Ok(WireResponse::status("accepted", Some(&request_id)))
         }
         WireRequest::Finish { request_id, .. } => {
             session.authorize(&request_id)?;
             coordinator.remote_finish(connection_id, request_id.clone())?;
-            Ok(WireResponse::status("processing", Some(&request_id), None))
+            Ok(WireResponse::status("processing", Some(&request_id)))
         }
         WireRequest::Cancel { request_id, .. } => {
             session.authorize(&request_id)?;
             let status = coordinator.remote_cancel(connection_id, request_id.clone())?;
             cancel_response(session, &request_id, status)
+        }
+        WireRequest::Commit { request_id, .. } => {
+            session.authorize(&request_id)?;
+            let status = coordinator.remote_commit(connection_id, request_id.clone())?;
+            status_response(session, &request_id, status)
         }
         WireRequest::Status { request_id, .. } => {
             session.authorize(&request_id)?;
@@ -516,7 +496,7 @@ fn cancel_response(
         }
         RemoteCancelStatus::Cancelling => "cancelling",
     };
-    Ok(WireResponse::status(wire_status, Some(request_id), None))
+    Ok(WireResponse::status(wire_status, Some(request_id)))
 }
 
 fn status_response(
@@ -528,19 +508,16 @@ fn status_response(
         status,
         RemoteStatus::Succeeded | RemoteStatus::Failed | RemoteStatus::Cancelled
     );
-    let (wire_status, pane_id) = match &status {
-        RemoteStatus::Pending => ("pending", None),
-        RemoteStatus::Bound { pane_id } => {
-            session.bound_acknowledged = true;
-            ("bound", Some(pane_id.as_str()))
-        }
-        RemoteStatus::Processing => ("processing", None),
-        RemoteStatus::Cancelling => ("cancelling", None),
-        RemoteStatus::Succeeded => ("succeeded", None),
-        RemoteStatus::Failed => ("failed", None),
-        RemoteStatus::Cancelled => ("cancelled", None),
+    let wire_status = match &status {
+        RemoteStatus::Recording => "recording",
+        RemoteStatus::Processing => "processing",
+        RemoteStatus::Ready => "ready",
+        RemoteStatus::Cancelling => "cancelling",
+        RemoteStatus::Succeeded => "succeeded",
+        RemoteStatus::Failed => "failed",
+        RemoteStatus::Cancelled => "cancelled",
     };
-    let response = WireResponse::status(wire_status, Some(request_id), pane_id);
+    let response = WireResponse::status(wire_status, Some(request_id));
     if terminal {
         session.retire(request_id)?;
     }
@@ -663,6 +640,17 @@ mod tests {
         assert!(
             serde_json::from_slice::<WireRequest>(br#"{"type":"guess","version":1}"#,).is_err()
         );
+        assert!(serde_json::from_slice::<WireRequest>(
+            br#"{"type":"bind","version":1,"pane_id":"wA:p1"}"#
+        )
+        .is_err());
+        assert!(matches!(
+            serde_json::from_slice::<WireRequest>(
+                br#"{"type":"commit","version":1,"request_id":"r"}"#
+            )
+            .unwrap(),
+            WireRequest::Commit { request_id, .. } if request_id == "r"
+        ));
     }
 
     #[test]
@@ -739,23 +727,16 @@ mod tests {
         let mut session = ConnectionSession::default();
         session.begin("request-a".into()).unwrap();
         assert_eq!(session.authorize("request-a"), Ok(()));
-        assert!(session.authorize_audio("request-a").is_err());
         assert!(session.authorize("request-b").is_err());
         assert!(session.begin("request-b".into()).is_err());
 
-        status_response(&mut session, "request-a", RemoteStatus::Pending).unwrap();
-        status_response(
-            &mut session,
-            "request-a",
-            RemoteStatus::Bound {
-                pane_id: "wA:p1".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(session.authorize_audio("request-a"), Ok(()));
+        status_response(&mut session, "request-a", RemoteStatus::Recording).unwrap();
         status_response(&mut session, "request-a", RemoteStatus::Processing).unwrap();
+        status_response(&mut session, "request-a", RemoteStatus::Ready).unwrap();
         assert!(!session.is_idle());
 
+        // A terminal commit response retires the exact request. A second commit
+        // or any replay is then unauthorized before it can reach delivery.
         status_response(&mut session, "request-a", RemoteStatus::Succeeded).unwrap();
         assert!(session.is_idle());
         assert!(session.authorize("request-a").is_err());

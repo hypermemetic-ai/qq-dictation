@@ -39,6 +39,7 @@ struct FinishGuard {
     app: AppHandle,
     owner: OperationOwner,
     outcome: OperationOutcome,
+    notify_on_drop: bool,
 }
 
 impl FinishGuard {
@@ -47,6 +48,7 @@ impl FinishGuard {
             app,
             owner,
             outcome: OperationOutcome::Failed,
+            notify_on_drop: true,
         }
     }
 
@@ -57,12 +59,18 @@ impl FinishGuard {
     fn cancelled(&mut self) {
         self.outcome = OperationOutcome::Cancelled;
     }
+
+    fn staged_for_remote_commit(&mut self) {
+        self.notify_on_drop = false;
+    }
 }
 
 impl Drop for FinishGuard {
     fn drop(&mut self) {
-        if let Some(coordinator) = self.app.try_state::<TranscriptionCoordinator>() {
-            coordinator.notify_processing_finished(self.owner.clone(), self.outcome);
+        if self.notify_on_drop {
+            if let Some(coordinator) = self.app.try_state::<TranscriptionCoordinator>() {
+                coordinator.notify_processing_finished(self.owner.clone(), self.outcome);
+            }
         }
     }
 }
@@ -705,20 +713,29 @@ impl ShortcutAction for TranscribeAction {
         shortcut::unregister_cancel_shortcut(app);
         let owner = OperationOwner::local(binding_id);
         let target_token = crate::target_binding::latest_token();
-        finish_operation(app, owner, self.post_process, target_token);
+        finish_operation(
+            app,
+            owner,
+            self.post_process,
+            FinishDelivery::Local { target_token },
+        );
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteOperationPlan {
     pub(crate) post_process: bool,
-    pub(crate) target_token: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FinishDelivery {
+    Local { target_token: u64 },
+    Remote,
 }
 
 pub(crate) fn start_remote_operation(
     app: &AppHandle,
     request_id: &str,
-    pane_id: &str,
 ) -> Result<RemoteOperationPlan, String> {
     let transcription = app.state::<Arc<TranscriptionManager>>();
     let recording = app.state::<Arc<AudioRecordingManager>>();
@@ -745,10 +762,8 @@ pub(crate) fn start_remote_operation(
         return Err(error);
     }
 
-    // The binder supplied this pane from HERDR_ACTIVE_PANE_ID and liveness was
-    // checked before this call. Store an explicit capture directly: remote
-    // requests never invoke workstation X11 capture or global Herdr focus.
-    let target_token = crate::target_binding::bind_explicit(pane_id.to_string());
+    // Remote requests deliberately start without a pane. Their only target
+    // lookup occurs after processing, at the matching serialized commit.
     change_tray_icon(app, TrayIconState::Recording);
     match settings.overlay_style {
         OverlayStyle::Live if supports_streaming => utils::show_streaming_overlay(app),
@@ -758,7 +773,6 @@ pub(crate) fn start_remote_operation(
 
     Ok(RemoteOperationPlan {
         post_process: settings.post_process_enabled,
-        target_token,
     })
 }
 
@@ -771,11 +785,16 @@ pub(crate) fn finish_remote_operation(
         app,
         OperationOwner::remote(request_id),
         plan.post_process,
-        plan.target_token,
+        FinishDelivery::Remote,
     );
 }
 
-fn finish_operation(app: &AppHandle, owner: OperationOwner, post_process: bool, target_token: u64) {
+fn finish_operation(
+    app: &AppHandle,
+    owner: OperationOwner,
+    post_process: bool,
+    delivery: FinishDelivery,
+) {
     let stop_time = Instant::now();
     debug!("Finishing transcription for {owner}");
 
@@ -842,7 +861,7 @@ fn finish_operation(app: &AppHandle, owner: OperationOwner, post_process: bool, 
                 // Register before publishing the file. Orphan cleanup holds
                 // the same registry lock while scanning, so it cannot
                 // mistake this in-flight recording for an abandoned WAV.
-                let _pending_audio_guard = hm.protect_pending_audio_file(&file_name);
+                let mut pending_audio_guard = hm.protect_pending_audio_file(&file_name);
                 let wav_path = hm.recordings_dir().join(&file_name);
                 let wav_path_for_verify = wav_path.clone();
                 let samples_for_wav = samples.clone();
@@ -936,8 +955,8 @@ fn finish_operation(app: &AppHandle, owner: OperationOwner, post_process: bool, 
 
                         // Save to history if WAV was saved
                         if wav_saved {
-                            if let Err(err) = hm.save_entry(
-                                file_name,
+                            if let Err(err) = hm.save_pending_entry(
+                                &mut pending_audio_guard,
                                 transcription,
                                 post_process,
                                 processed.post_processed_text.clone(),
@@ -948,50 +967,95 @@ fn finish_operation(app: &AppHandle, owner: OperationOwner, post_process: bool, 
                             }
                         }
 
-                        if processed.final_text.is_empty() {
+                        if processed.final_text.trim().is_empty() {
                             finish_guard.succeeded();
                             utils::hide_recording_overlay(&ah);
                             change_tray_icon(&ah, TrayIconState::Idle);
                         } else {
-                            let ah_clone = ah.clone();
-                            let paste_time = Instant::now();
                             let final_text = processed.final_text;
-                            let rm_for_paste = Arc::clone(&rm);
-                            ah.run_on_main_thread(move || {
-                                let mut finish_guard = finish_guard;
-                                // Processing remains active until delivery/teardown has
-                                // actually run on the main thread. Moving the guard here
-                                // keeps cancellation effective while this closure is queued.
-                                if rm_for_paste.was_cancelled_since(cancel_generation) {
-                                    finish_guard.cancelled();
-                                    debug!("Transcription operation cancelled before paste");
-                                    utils::hide_recording_overlay(&ah_clone);
-                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                    return;
+                            match delivery {
+                                FinishDelivery::Remote => {
+                                    let Some(request_id) = owner.remote_request_id() else {
+                                        error!("Remote delivery plan has a local owner");
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                        return;
+                                    };
+                                    let staged = ah
+                                        .try_state::<TranscriptionCoordinator>()
+                                        .ok_or_else(|| {
+                                            "Transcription coordinator is unavailable".to_string()
+                                        })
+                                        .and_then(|coordinator| {
+                                            coordinator.stage_remote_delivery(
+                                                request_id.to_string(),
+                                                final_text,
+                                            )
+                                        });
+                                    match staged {
+                                        Ok(()) => {
+                                            finish_guard.staged_for_remote_commit();
+                                            debug!(
+                                                "Remote transcription staged for request {}",
+                                                request_id
+                                            );
+                                        }
+                                        Err(error) => {
+                                            if rm.was_cancelled_since(cancel_generation) {
+                                                finish_guard.cancelled();
+                                            }
+                                            error!("Failed to stage remote delivery: {error}");
+                                            utils::hide_recording_overlay(&ah);
+                                            change_tray_icon(&ah, TrayIconState::Idle);
+                                        }
+                                    }
                                 }
+                                FinishDelivery::Local { target_token } => {
+                                    let ah_clone = ah.clone();
+                                    let paste_time = Instant::now();
+                                    let rm_for_paste = Arc::clone(&rm);
+                                    ah.run_on_main_thread(move || {
+                                        let mut finish_guard = finish_guard;
+                                        // Processing remains active until delivery/teardown has
+                                        // actually run on the main thread. Moving the guard here
+                                        // keeps cancellation effective while this closure is queued.
+                                        if rm_for_paste.was_cancelled_since(cancel_generation) {
+                                            finish_guard.cancelled();
+                                            debug!(
+                                                "Transcription operation cancelled before paste"
+                                            );
+                                            utils::hide_recording_overlay(&ah_clone);
+                                            change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                            return;
+                                        }
 
-                                match utils::paste(final_text, ah_clone.clone(), Some(target_token))
-                                {
-                                    Ok(()) => {
-                                        finish_guard.succeeded();
-                                        debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to paste transcription: {}", e);
-                                        let _ = ah_clone.emit("paste-error", ());
-                                    }
+                                        match utils::paste(
+                                            final_text,
+                                            ah_clone.clone(),
+                                            Some(target_token),
+                                        ) {
+                                            Ok(()) => {
+                                                finish_guard.succeeded();
+                                                debug!(
+                                                    "Text pasted successfully in {:?}",
+                                                    paste_time.elapsed()
+                                                );
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to paste transcription: {}", e);
+                                                let _ = ah_clone.emit("paste-error", ());
+                                            }
+                                        }
+                                        utils::hide_recording_overlay(&ah_clone);
+                                        change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                    })
+                                    .unwrap_or_else(|e| {
+                                        error!("Failed to run paste on main thread: {:?}", e);
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    });
                                 }
-                                utils::hide_recording_overlay(&ah_clone);
-                                change_tray_icon(&ah_clone, TrayIconState::Idle);
-                            })
-                            .unwrap_or_else(|e| {
-                                error!("Failed to run paste on main thread: {:?}", e);
-                                utils::hide_recording_overlay(&ah);
-                                change_tray_icon(&ah, TrayIconState::Idle);
-                            });
+                            }
                         }
                     }
                     Err(err) => {
@@ -1009,8 +1073,8 @@ fn finish_operation(app: &AppHandle, owner: OperationOwner, post_process: bool, 
                         let _ = ah.emit("transcription-error", err.to_string());
                         // Save entry with empty text so user can retry
                         if wav_saved {
-                            if let Err(save_err) = hm.save_entry(
-                                file_name,
+                            if let Err(save_err) = hm.save_pending_entry(
+                                &mut pending_audio_guard,
                                 String::new(),
                                 post_process,
                                 None,

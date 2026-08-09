@@ -36,13 +36,10 @@ def config(**updates):
         "ssh_host": "workstation-alias",
         "ghostty_title": "operator remote herdr",
         "ghostty_class": "com.mitchellh.ghostty",
-        "herdr_prefix": "ctrl+b",
         "capture_argv": list(client.DEFAULT_CAPTURE_ARGV),
         "ssh_path": "/usr/bin/ssh",
         "remote_helper": "~/.local/bin/handy-remote-stream.py",
-        "xdotool_path": "/usr/bin/xdotool",
         "notify_send_path": "/usr/bin/notify-send",
-        "binder_key": "alt+d",
     }
     raw.update(updates)
     return client.ClientConfig.from_mapping(raw)
@@ -54,8 +51,6 @@ class ConfigAndProtocolTests(unittest.TestCase):
         for update, message in [
             ({"ssh_host": "host; touch /tmp/no"}, "safe SSH"),
             ({"remote_helper": "helper;bad"}, "unsafe shell"),
-            ({"binder_key": "alt+x"}, r"reserved alt\+d"),
-            ({"herdr_prefix": "b"}, "modified key chord"),
             ({"ghostty_title": "bad\ntitle"}, "control character"),
             ({"capture_argv": ["/usr/bin/pw-record", "-"]}, "--rate"),
             (
@@ -74,7 +69,6 @@ class ConfigAndProtocolTests(unittest.TestCase):
                     "ssh_host": "host",
                     "ghostty_title": "title",
                     "ghostty_class": "class",
-                    "herdr_prefix": "ctrl+b",
                     "capture_argv": list(client.DEFAULT_CAPTURE_ARGV),
                     "password": "not allowed",
                 }
@@ -84,14 +78,14 @@ class ConfigAndProtocolTests(unittest.TestCase):
         frame = client.encode_message({"type": "status", "version": 1})
         self.assertEqual(int.from_bytes(frame[:4], "big"), len(frame) - 4)
         good = client.decode_response(
-            b'{"version":1,"status":"bound","request_id":"r1","pane_id":"wA:p1"}'
+            b'{"version":1,"status":"ready","request_id":"r1"}'
         )
         self.assertEqual(
-            client.validate_response(good, {"bound"}, "r1")["pane_id"], "wA:p1"
+            client.validate_response(good, {"ready"}, "r1")["status"], "ready"
         )
         for payload, message in [
-            (b'{"version":2,"status":"pending","request_id":"r"}', "version"),
-            (b'{"version":1,"status":"pending","request_id":"r","extra":1}', "unknown"),
+            (b'{"version":2,"status":"recording","request_id":"r"}', "version"),
+            (b'{"version":1,"status":"recording","request_id":"r","extra":1}', "unknown"),
             (b'{"version":1,"status":"error","error":"refused"}', "refused"),
             (b"[]", "non-object"),
         ]:
@@ -99,7 +93,7 @@ class ConfigAndProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(client.ClientError, message):
                     client.decode_response(payload)
         with self.assertRaisesRegex(client.ClientError, "stale or different"):
-            client.validate_response(good, {"bound"}, "r2")
+            client.validate_response(good, {"ready"}, "r2")
 
     def test_pcm_decoder_is_little_endian_bounded_and_refuses_partial_samples(self):
         self.assertEqual(client.pcm_s16le_samples(b"\x01\x00\x00\x80"), [1, -32768])
@@ -165,11 +159,10 @@ class FakeNotifier:
 class FakeX11:
     def __init__(self, fail_recheck=False):
         self.identity = client.WindowIdentity(
-            1234, "operator remote herdr", "com.mitchellh.ghostty"
+            1234, 5678, "operator remote herdr", "com.mitchellh.ghostty"
         )
         self.dynamic = False
         self.released = 0
-        self.injected = []
         self.fail_recheck = fail_recheck
         self.rechecks = 0
 
@@ -190,10 +183,6 @@ class FakeX11:
             raise client.ClientError("active Ghostty window changed")
         if identity != self.identity:
             raise client.ClientError("wrong identity")
-
-    def inject_binder(self, identity):
-        self.require_same_active(identity)
-        self.injected.append(identity)
 
 
 class FakeTransport:
@@ -219,25 +208,17 @@ class FakeTransport:
                 raise client.ClientError("overlapping fake request")
             self.request_number += 1
             self.active_request = f"r{self.request_number}"
-            self.phase = "pending"
+            self.phase = "recording"
             self.processing_polls = 0
             return {
                 "version": 1,
-                "status": "pending",
+                "status": "recording",
                 "request_id": self.active_request,
             }
 
         request = message.get("request_id")
         if request != self.active_request:
             raise client.ClientError("stale fake request")
-        if kind == "status" and self.phase == "pending":
-            self.phase = "recording"
-            return {
-                "version": 1,
-                "status": "bound",
-                "request_id": request,
-                "pane_id": "wA:p1",
-            }
         if kind == "audio" and self.phase == "recording":
             return {"version": 1, "status": "accepted", "request_id": request}
         if kind == "finish" and self.phase == "recording":
@@ -245,10 +226,26 @@ class FakeTransport:
             return {"version": 1, "status": "processing", "request_id": request}
         if kind == "status" and self.phase == "processing":
             self.processing_polls += 1
-            status = "processing" if self.processing_polls == 1 else self.terminal
-            if status in {"succeeded", "failed", "cancelled"}:
+            if self.processing_polls == 1:
+                status = "processing"
+            elif self.terminal == "blank":
+                status = "succeeded"
                 self.active_request = None
                 self.phase = None
+            elif self.terminal == "failed":
+                status = "failed"
+                self.active_request = None
+                self.phase = None
+            else:
+                status = "ready"
+                self.phase = "ready"
+            return {"version": 1, "status": status, "request_id": request}
+        if kind == "status" and self.phase == "ready":
+            return {"version": 1, "status": "ready", "request_id": request}
+        if kind == "commit" and self.phase == "ready":
+            status = self.terminal
+            self.active_request = None
+            self.phase = None
             return {"version": 1, "status": status, "request_id": request}
         if kind == "status" and self.phase == "cancelling":
             self.processing_polls += 1
@@ -322,16 +319,16 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertFalse(x11.dynamic)
         self.assertEqual(transports, [])
 
-    def test_arm_bind_audio_finish_and_terminal_states_are_ordered(self):
+    def test_start_audio_finish_ready_commit_and_terminal_states_are_ordered(self):
         app, x11, notifier, transports, captures = self.make_app()
         app.right_control()
         self.assertEqual(app.state, client.ClientState.ARMED)
         self.assertTrue(x11.dynamic)
         app.space()
         self.assertEqual(app.state, client.ClientState.RECORDING)
-        self.assertEqual(len(x11.injected), 1)
+        self.assertEqual(app.start_window, x11.identity)
         kinds = [message["type"] for message in transports[0].messages]
-        self.assertEqual(kinds[:3], ["start", "status", "audio"])
+        self.assertEqual(kinds[:2], ["start", "audio"])
         app.space()
         self.assertEqual(app.state, client.ClientState.PROCESSING)
         self.assertTrue(captures[0].stopped)
@@ -339,6 +336,11 @@ class ApplicationStateTests(unittest.TestCase):
         self.assertEqual(app.state, client.ClientState.PROCESSING)
         app.tick()
         self.assertEqual(app.state, client.ClientState.ARMED)
+        self.assertEqual(
+            [message["type"] for message in transports[0].messages][-2:],
+            ["status", "commit"],
+        )
+        self.assertEqual(x11.rechecks, 1)
         self.assertEqual(
             [state for state, _ in notifier.history],
             [
@@ -350,20 +352,22 @@ class ApplicationStateTests(unittest.TestCase):
             ],
         )
 
-    def test_window_mismatch_after_pending_cancels_without_audio_and_releases_grabs(self):
+    def test_window_mismatch_at_ready_sends_no_commit_and_releases_resources(self):
         app, x11, _notifier, transports, captures = self.make_app(
             FakeX11(fail_recheck=True)
         )
         app.arm()
         app.space()
+        app.space()
+        app.tick()
+        app.tick()
         self.assertEqual(app.state, client.ClientState.FAILED)
         self.assertFalse(x11.dynamic)
         self.assertTrue(transports[0].closed)
-        self.assertEqual(captures, [])
-        self.assertEqual(
-            [message["type"] for message in transports[0].messages],
-            ["start", "cancel"],
-        )
+        self.assertTrue(captures[0].stopped)
+        kinds = [message["type"] for message in transports[0].messages]
+        self.assertNotIn("commit", kinds)
+        self.assertEqual(kinds[-1], "cancel")
 
     def test_one_armed_helper_reuses_sequential_requests_and_recording_cancel(self):
         app, _x11, _notifier, transports, _captures = self.make_app()
@@ -395,6 +399,42 @@ class ApplicationStateTests(unittest.TestCase):
             [message["type"] for message in transports[0].messages].count("start"),
             3,
         )
+
+    def test_blank_terminal_success_never_commits_or_manufactures_delivery(self):
+        app, _x11, _notifier, transports, _captures = self.make_app(terminal="blank")
+        app.arm()
+        app.space()
+        app.space()
+        app.tick()
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.ARMED)
+        self.assertNotIn(
+            "commit", [message["type"] for message in transports[0].messages]
+        )
+
+    def test_effect_uncertain_commit_is_attempted_once_then_resources_release(self):
+        app, x11, _notifier, transports, _captures = self.make_app()
+        app.arm()
+        app.space()
+        app.space()
+        app.tick()
+        original_exchange = transports[0].exchange
+        commit_calls = 0
+
+        def uncertain(message):
+            nonlocal commit_calls
+            if message["type"] == "commit":
+                transports[0].messages.append(message)
+                commit_calls += 1
+                raise client.ClientError("commit response was lost")
+            return original_exchange(message)
+
+        transports[0].exchange = uncertain
+        app.tick()
+        self.assertEqual(app.state, client.ClientState.FAILED)
+        self.assertEqual(commit_calls, 1)
+        self.assertFalse(x11.dynamic)
+        self.assertTrue(transports[0].closed)
 
     def test_processing_cancel_remains_nonrecording_until_terminal_completion(self):
         app, _x11, notifier, transports, _captures = self.make_app()
@@ -455,7 +495,7 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
             directory / "ssh-fake",
             f"""
             #!/usr/bin/python3
-            import json, os, sys
+            import json, os
             log = {str(log)!r}
             def event(value):
                 with open(log, "a", encoding="utf-8") as stream:
@@ -486,27 +526,26 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
                     if active is not None: raise SystemExit(3)
                     request_number += 1
                     active = f"r-real-{{request_number}}"
-                    phase = "pending"
+                    phase = "recording"
                     processing_polls = 0
-                    send({{"version":1,"status":"pending","request_id":active}})
+                    send({{"version":1,"status":"recording","request_id":active}})
                     continue
                 request = message.get("request_id")
                 if request != active: raise SystemExit(4)
-                if kind == "status" and phase == "pending":
-                    phase = "recording"
-                    send({{"version":1,"status":"bound","request_id":request,"pane_id":"wA:p1"}})
-                elif kind == "audio" and phase == "recording":
+                if kind == "audio" and phase == "recording":
                     send({{"version":1,"status":"accepted","request_id":request}})
                 elif kind == "finish" and phase == "recording":
                     phase = "processing"
                     send({{"version":1,"status":"processing","request_id":request}})
                 elif kind == "status" and phase == "processing":
                     processing_polls += 1
-                    status = "processing" if processing_polls == 1 else "succeeded"
+                    status = "processing" if processing_polls == 1 else "ready"
+                    if status == "ready": phase = "ready"
                     send({{"version":1,"status":status,"request_id":request}})
-                    if status == "succeeded":
-                        active = None
-                        phase = None
+                elif kind == "commit" and phase == "ready":
+                    send({{"version":1,"status":"succeeded","request_id":request}})
+                    active = None
+                    phase = None
                 elif kind == "cancel" and phase == "processing":
                     phase = "cancelling"
                     processing_polls = 0
@@ -526,15 +565,6 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
             event("ssh-exit")
             """,
         )
-        xdotool = executable(
-            directory / "xdotool-fake",
-            f"""
-            #!/usr/bin/python3
-            import sys
-            with open({str(log)!r}, "a", encoding="utf-8") as stream:
-                stream.write("xdotool:" + "|".join(sys.argv[1:]) + "\\n")
-            """,
-        )
         if capture_body is None:
             capture_body = f"""
                 #!/usr/bin/python3
@@ -548,7 +578,6 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
         capture = executable(directory / "pw-record", capture_body)
         configured = config(
             ssh_path=str(ssh),
-            xdotool_path=str(xdotool),
             notify_send_path="/bin/true",
             capture_argv=[
                 str(capture),
@@ -563,16 +592,10 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
         )
         return configured, log
 
-    def test_full_production_client_crosses_real_ssh_capture_and_injection_pipes(self):
+    def test_full_production_client_crosses_ssh_capture_ready_commit_without_binder(self):
         with tempfile.TemporaryDirectory() as temporary:
             configured, log = self.make_fixture(Path(temporary))
             x11 = FakeX11()
-
-            def inject(identity):
-                client.inject_binder_chord(configured, identity, x11.require_same_active)
-                x11.injected.append(identity)
-
-            x11.inject_binder = inject
             notifier = FakeNotifier()
             transports = []
             captures = []
@@ -640,20 +663,23 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
             self.assertEqual(events.count("ssh-start"), 1)
             self.assertEqual(events.count("ssh:start"), 4)
             self.assertEqual(events.count("ssh:cancel"), 1)
+            self.assertEqual(events.count("ssh:commit"), 3)
+            self.assertFalse(any("bind" in event for event in events))
             start = events.index("ssh:start")
-            chord = next(index for index, value in enumerate(events) if value.startswith("xdotool:"))
-            bound_poll = events.index("ssh:status")
             capture_start = events.index("capture-start")
             audio = events.index("ssh:audio")
             finish = events.index("ssh:finish")
-            self.assertLess(start, chord)
-            self.assertLess(chord, bound_poll)
-            self.assertLess(bound_poll, capture_start)
+            ready_poll = max(
+                index
+                for index, event in enumerate(events[: events.index("ssh:commit")])
+                if event == "ssh:status"
+            )
+            commit = events.index("ssh:commit")
+            self.assertLess(start, capture_start)
             self.assertLess(capture_start, audio)
             self.assertLess(audio, finish)
-            chord_args = events[chord]
-            self.assertIn("--window|1234", chord_args)
-            self.assertIn("ctrl+b|alt+d", chord_args)
+            self.assertLess(finish, ready_poll)
+            self.assertLess(ready_poll, commit)
 
     def test_truncated_real_capture_fails_and_reaps_both_children(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -664,9 +690,6 @@ class ProductionPipeIntegrationTests(unittest.TestCase):
             """
             configured, _log = self.make_fixture(Path(temporary), body)
             x11 = FakeX11()
-            x11.inject_binder = lambda identity: client.inject_binder_chord(
-                configured, identity, x11.require_same_active
-            )
             transports = []
             captures = []
 

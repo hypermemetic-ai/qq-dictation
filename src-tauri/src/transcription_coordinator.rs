@@ -14,7 +14,6 @@ use tauri::{AppHandle, Manager};
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
 const REMOTE_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
-pub(crate) const REMOTE_PENDING_CLAIM_LIFETIME: Duration = Duration::from_secs(5);
 pub(crate) const REMOTE_REQUEST_LIFETIME: Duration = Duration::from_secs(10 * 60);
 pub(crate) const REMOTE_MAX_AUDIO_CHUNK_SAMPLES: usize = 4_800;
 pub(crate) const REMOTE_MAX_TOTAL_AUDIO_SAMPLES: usize = 16_000 * 60 * 10;
@@ -40,9 +39,9 @@ struct PendingRelease {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RemoteStatus {
-    Pending,
-    Bound { pane_id: String },
+    Recording,
     Processing,
+    Ready,
     Cancelling,
     Succeeded,
     Failed,
@@ -55,17 +54,9 @@ pub(crate) enum RemoteCancelStatus {
     Cancelling,
 }
 
-struct PendingRemote {
+struct RecordingRemote {
     request_id: String,
     connection_id: u64,
-    claim_deadline: Instant,
-    request_deadline: Instant,
-}
-
-struct BoundRemote {
-    request_id: String,
-    connection_id: u64,
-    pane_id: String,
     request_deadline: Instant,
     total_audio_samples: usize,
     plan: RemoteOperationPlan,
@@ -75,30 +66,36 @@ struct ProcessingRemote {
     request_id: String,
     connection_id: u64,
     request_deadline: Instant,
-    target_token: u64,
     cancelled: bool,
 }
 
+struct ReadyRemote {
+    request_id: String,
+    connection_id: u64,
+    request_deadline: Instant,
+    text: String,
+}
+
 enum ActiveRemote {
-    Pending(PendingRemote),
-    Bound(BoundRemote),
+    Recording(RecordingRemote),
     Processing(ProcessingRemote),
+    Ready(ReadyRemote),
 }
 
 impl ActiveRemote {
     fn request_id(&self) -> &str {
         match self {
-            Self::Pending(remote) => &remote.request_id,
-            Self::Bound(remote) => &remote.request_id,
+            Self::Recording(remote) => &remote.request_id,
             Self::Processing(remote) => &remote.request_id,
+            Self::Ready(remote) => &remote.request_id,
         }
     }
 
     fn connection_id(&self) -> u64 {
         match self {
-            Self::Pending(remote) => remote.connection_id,
-            Self::Bound(remote) => remote.connection_id,
+            Self::Recording(remote) => remote.connection_id,
             Self::Processing(remote) => remote.connection_id,
+            Self::Ready(remote) => remote.connection_id,
         }
     }
 }
@@ -137,10 +134,6 @@ enum Command {
         request_id: String,
         reply: Sender<Result<(), String>>,
     },
-    RemoteBind {
-        pane_id: String,
-        reply: Sender<Result<String, String>>,
-    },
     RemoteAudio {
         connection_id: u64,
         request_id: String,
@@ -151,6 +144,16 @@ enum Command {
         connection_id: u64,
         request_id: String,
         reply: Sender<Result<(), String>>,
+    },
+    RemoteReady {
+        request_id: String,
+        text: String,
+        reply: Sender<Result<(), String>>,
+    },
+    RemoteCommit {
+        connection_id: u64,
+        request_id: String,
+        reply: Sender<Result<RemoteStatus, String>>,
     },
     RemoteCancel {
         connection_id: u64,
@@ -172,7 +175,6 @@ enum Command {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
     Idle,
-    RemotePending(String),
     Recording(OperationOwner),
     Processing(OperationOwner),
 }
@@ -240,9 +242,7 @@ fn classify_mode_space(armed: bool, stage: &Stage) -> ModeSpaceAction {
         Stage::Recording(owner) if owner.is_local() => ModeSpaceAction::Stop,
         // Local controls never stop a remote owner, and presses while any
         // transcript is in flight never invert into a later start.
-        Stage::RemotePending(_) | Stage::Recording(_) | Stage::Processing(_) => {
-            ModeSpaceAction::Ignore
-        }
+        Stage::Recording(_) | Stage::Processing(_) => ModeSpaceAction::Ignore,
     }
 }
 
@@ -268,12 +268,10 @@ fn remote_matches(remote: &ActiveRemote, connection_id: u64, request_id: &str) -
 
 fn active_remote_status(remote: &ActiveRemote) -> RemoteStatus {
     match remote {
-        ActiveRemote::Pending(_) => RemoteStatus::Pending,
-        ActiveRemote::Bound(remote) => RemoteStatus::Bound {
-            pane_id: remote.pane_id.clone(),
-        },
+        ActiveRemote::Recording(_) => RemoteStatus::Recording,
         ActiveRemote::Processing(remote) if remote.cancelled => RemoteStatus::Cancelling,
         ActiveRemote::Processing(_) => RemoteStatus::Processing,
+        ActiveRemote::Ready(_) => RemoteStatus::Ready,
     }
 }
 
@@ -282,6 +280,62 @@ fn processing_finish_status(remote: &ProcessingRemote, outcome: OperationOutcome
         RemoteStatus::Cancelled
     } else {
         finish_status(outcome)
+    }
+}
+
+fn stage_ready_state(
+    stage: &Stage,
+    active_remote: &mut Option<ActiveRemote>,
+    request_id: &str,
+    text: String,
+) -> Result<(), String> {
+    match active_remote.take() {
+        Some(ActiveRemote::Processing(remote))
+            if remote.request_id == request_id
+                && !remote.cancelled
+                && matches!(
+                    stage,
+                    Stage::Processing(owner)
+                        if owner.remote_request_id() == Some(request_id)
+                ) =>
+        {
+            if text.trim().is_empty() {
+                *active_remote = Some(ActiveRemote::Processing(remote));
+                Err("Blank remote output cannot enter ready state".to_string())
+            } else {
+                *active_remote = Some(ActiveRemote::Ready(ReadyRemote {
+                    request_id: remote.request_id,
+                    connection_id: remote.connection_id,
+                    request_deadline: remote.request_deadline,
+                    text,
+                }));
+                Ok(())
+            }
+        }
+        Some(other) => {
+            *active_remote = Some(other);
+            Err("Remote ready result is stale or cancellation-owned".to_string())
+        }
+        None => Err("No remote request can become ready".to_string()),
+    }
+}
+
+fn take_ready_for_commit(
+    active_remote: &mut Option<ActiveRemote>,
+    connection_id: u64,
+    request_id: &str,
+) -> Result<ReadyRemote, String> {
+    match active_remote.take() {
+        Some(ActiveRemote::Ready(remote))
+            if remote.connection_id == connection_id && remote.request_id == request_id =>
+        {
+            Ok(remote)
+        }
+        Some(other) => {
+            *active_remote = Some(other);
+            Err("Commit is early, replayed, or not request owner".to_string())
+        }
+        None => Err("No ready remote request exists".to_string()),
     }
 }
 
@@ -341,20 +395,29 @@ fn finish_status(outcome: OperationOutcome) -> RemoteStatus {
     }
 }
 
+fn commit_delivery_status(deliver: impl FnOnce() -> Result<(), String>) -> RemoteStatus {
+    match deliver() {
+        Ok(()) => RemoteStatus::Succeeded,
+        Err(error) => {
+            error!("Remote commit delivery failed: {error}");
+            RemoteStatus::Failed
+        }
+    }
+}
+
 fn expire_remote(
     app: &AppHandle,
     stage: &mut Stage,
     active_remote: &mut Option<ActiveRemote>,
+    terminals: &mut VecDeque<RemoteTerminal>,
     now: Instant,
 ) {
     let expired = match active_remote.as_ref() {
-        Some(ActiveRemote::Pending(remote)) => {
-            now >= remote.claim_deadline || now >= remote.request_deadline
-        }
-        Some(ActiveRemote::Bound(remote)) => now >= remote.request_deadline,
+        Some(ActiveRemote::Recording(remote)) => now >= remote.request_deadline,
         Some(ActiveRemote::Processing(remote)) => {
             now >= remote.request_deadline && !remote.cancelled
         }
+        Some(ActiveRemote::Ready(remote)) => now >= remote.request_deadline,
         None => false,
     };
     if !expired {
@@ -362,16 +425,17 @@ fn expire_remote(
     }
 
     match active_remote.as_mut() {
-        Some(ActiveRemote::Pending(remote)) => {
-            warn!("Remote pending request {} expired", remote.request_id);
-            *active_remote = None;
-            *stage = Stage::Idle;
-        }
-        Some(ActiveRemote::Bound(remote)) => {
+        Some(ActiveRemote::Recording(remote)) => {
             warn!("Remote recording request {} expired", remote.request_id);
             let owner = OperationOwner::remote(&remote.request_id);
             crate::utils::cancel_owned_operation(app, &owner, true);
-            crate::target_binding::discard(remote.plan.target_token);
+            push_terminal(
+                terminals,
+                remote.request_id.clone(),
+                remote.connection_id,
+                RemoteStatus::Cancelled,
+                now,
+            );
             *active_remote = None;
             *stage = Stage::Idle;
         }
@@ -379,8 +443,24 @@ fn expire_remote(
             warn!("Remote processing request {} expired", remote.request_id);
             let owner = OperationOwner::remote(&remote.request_id);
             crate::utils::cancel_owned_operation(app, &owner, false);
-            crate::target_binding::discard(remote.target_token);
             remote.cancelled = true;
+        }
+        Some(ActiveRemote::Ready(remote)) => {
+            warn!(
+                "Remote ready request {} expired before commit",
+                remote.request_id
+            );
+            push_terminal(
+                terminals,
+                remote.request_id.clone(),
+                remote.connection_id,
+                RemoteStatus::Cancelled,
+                now,
+            );
+            *active_remote = None;
+            *stage = Stage::Idle;
+            crate::utils::hide_recording_overlay(app);
+            crate::tray::change_tray_icon(app, crate::tray::TrayIconState::Idle);
         }
         None => {}
     }
@@ -531,20 +611,28 @@ impl TranscriptionCoordinator {
                         }
                         Command::ProcessingFinished { owner, outcome } => {
                             if matches!(&stage, Stage::Processing(active) if active == &owner) {
-                                if let Some(ActiveRemote::Processing(remote)) = active_remote.take()
-                                {
-                                    if owner.remote_request_id() == Some(&remote.request_id) {
-                                        let status = processing_finish_status(&remote, outcome);
-                                        crate::target_binding::discard(remote.target_token);
-                                        push_terminal(
-                                            &mut terminals,
-                                            remote.request_id,
-                                            remote.connection_id,
-                                            status,
-                                            Instant::now(),
-                                        );
-                                    } else {
-                                        active_remote = Some(ActiveRemote::Processing(remote));
+                                if let Some(remote_state) = active_remote.take() {
+                                    match remote_state {
+                                        ActiveRemote::Processing(remote)
+                                            if owner.remote_request_id()
+                                                == Some(&remote.request_id) =>
+                                        {
+                                            let status = processing_finish_status(&remote, outcome);
+                                            push_terminal(
+                                                &mut terminals,
+                                                remote.request_id,
+                                                remote.connection_id,
+                                                status,
+                                                Instant::now(),
+                                            );
+                                        }
+                                        other => {
+                                            active_remote = Some(other);
+                                            warn!(
+                                                "Ignoring completion that does not own active remote state"
+                                            );
+                                            continue;
+                                        }
                                     }
                                 }
                                 stage = Stage::Idle;
@@ -641,7 +729,13 @@ impl TranscriptionCoordinator {
                             reply,
                         } => {
                             let now = Instant::now();
-                            expire_remote(&app, &mut stage, &mut active_remote, now);
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                now,
+                            );
                             let reused = active_remote
                                 .as_ref()
                                 .is_some_and(|remote| remote.request_id() == request_id)
@@ -653,58 +747,22 @@ impl TranscriptionCoordinator {
                             } else if !remote_slot_available(&stage, &active_remote) {
                                 Err("Dictation pipeline is owned by another source".to_string())
                             } else {
-                                active_remote = Some(ActiveRemote::Pending(PendingRemote {
-                                    request_id: request_id.clone(),
-                                    connection_id,
-                                    claim_deadline: now + REMOTE_PENDING_CLAIM_LIFETIME,
-                                    request_deadline: now + REMOTE_REQUEST_LIFETIME,
-                                }));
-                                stage = Stage::RemotePending(request_id);
-                                Ok(())
-                            };
-                            let _ = reply.send(result);
-                        }
-                        Command::RemoteBind { pane_id, reply } => {
-                            let now = Instant::now();
-                            expire_remote(&app, &mut stage, &mut active_remote, now);
-                            let result = match active_remote.take() {
-                                Some(ActiveRemote::Pending(pending)) if matches!(&stage, Stage::RemotePending(id) if id == &pending.request_id) => {
-                                    match crate::target_binding::pane_is_live(&pane_id).and_then(
-                                        |()| {
-                                            start_remote_operation(
-                                                &app,
-                                                &pending.request_id,
-                                                &pane_id,
-                                            )
-                                        },
-                                    ) {
-                                        Ok(plan) => {
-                                            let request_id = pending.request_id.clone();
-                                            stage = Stage::Recording(OperationOwner::remote(
-                                                &request_id,
-                                            ));
-                                            active_remote =
-                                                Some(ActiveRemote::Bound(BoundRemote {
-                                                    request_id: request_id.clone(),
-                                                    connection_id: pending.connection_id,
-                                                    pane_id,
-                                                    request_deadline: pending.request_deadline,
-                                                    total_audio_samples: 0,
-                                                    plan,
-                                                }));
-                                            Ok(request_id)
-                                        }
-                                        Err(error) => {
-                                            stage = Stage::Idle;
-                                            Err(error)
-                                        }
+                                match start_remote_operation(&app, &request_id) {
+                                    Ok(plan) => {
+                                        stage =
+                                            Stage::Recording(OperationOwner::remote(&request_id));
+                                        active_remote =
+                                            Some(ActiveRemote::Recording(RecordingRemote {
+                                                request_id,
+                                                connection_id,
+                                                request_deadline: now + REMOTE_REQUEST_LIFETIME,
+                                                total_audio_samples: 0,
+                                                plan,
+                                            }));
+                                        Ok(())
                                     }
+                                    Err(error) => Err(error),
                                 }
-                                Some(other) => {
-                                    active_remote = Some(other);
-                                    Err("There is no sole pending target claim".to_string())
-                                }
-                                None => Err("There is no pending target claim".to_string()),
                             };
                             let _ = reply.send(result);
                         }
@@ -715,10 +773,16 @@ impl TranscriptionCoordinator {
                             reply,
                         } => {
                             let now = Instant::now();
-                            expire_remote(&app, &mut stage, &mut active_remote, now);
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                now,
+                            );
                             let result =
                                 match active_remote.as_mut() {
-                                    Some(ActiveRemote::Bound(remote))
+                                    Some(ActiveRemote::Recording(remote))
                                         if remote.connection_id == connection_id
                                             && remote.request_id == request_id =>
                                     {
@@ -750,14 +814,20 @@ impl TranscriptionCoordinator {
                             reply,
                         } => {
                             let now = Instant::now();
-                            expire_remote(&app, &mut stage, &mut active_remote, now);
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                now,
+                            );
                             let result = match active_remote.take() {
-                                Some(ActiveRemote::Bound(remote))
+                                Some(ActiveRemote::Recording(remote))
                                     if remote.connection_id == connection_id
                                         && remote.request_id == request_id =>
                                 {
                                     if remote.total_audio_samples == 0 {
-                                        active_remote = Some(ActiveRemote::Bound(remote));
+                                        active_remote = Some(ActiveRemote::Recording(remote));
                                         Err("Cannot finish before audio is accepted".to_string())
                                     } else {
                                         let owner = OperationOwner::remote(&request_id);
@@ -766,7 +836,6 @@ impl TranscriptionCoordinator {
                                             request_id: request_id.clone(),
                                             connection_id,
                                             request_deadline: remote.request_deadline,
-                                            target_token: remote.plan.target_token,
                                             cancelled: false,
                                         };
                                         finish_remote_operation(&app, &request_id, remote.plan);
@@ -781,6 +850,60 @@ impl TranscriptionCoordinator {
                                 }
                                 None => Err("No remote request is active".to_string()),
                             };
+                            let _ = reply.send(result);
+                        }
+                        Command::RemoteReady {
+                            request_id,
+                            text,
+                            reply,
+                        } => {
+                            let result =
+                                stage_ready_state(&stage, &mut active_remote, &request_id, text);
+                            let _ = reply.send(result);
+                        }
+                        Command::RemoteCommit {
+                            connection_id,
+                            request_id,
+                            reply,
+                        } => {
+                            let now = Instant::now();
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                now,
+                            );
+                            let result = take_ready_for_commit(
+                                &mut active_remote,
+                                connection_id,
+                                &request_id,
+                            )
+                            .map(|remote| {
+                                // Taking Ready is the serialized irrevocable boundary.
+                                // The coordinator cannot process disconnect/cancel/another
+                                // commit until this one explicit delivery attempt completes.
+                                let status = commit_delivery_status(|| {
+                                    crate::clipboard::paste_remote_commit(remote.text, app.clone())
+                                });
+                                push_terminal(
+                                    &mut terminals,
+                                    remote.request_id,
+                                    remote.connection_id,
+                                    status.clone(),
+                                    Instant::now(),
+                                );
+                                stage = Stage::Idle;
+                                crate::utils::hide_recording_overlay(&app);
+                                crate::tray::change_tray_icon(
+                                    &app,
+                                    crate::tray::TrayIconState::Idle,
+                                );
+                                if armed {
+                                    crate::overlay::show_armed_overlay(&app);
+                                }
+                                status
+                            });
                             let _ = reply.send(result);
                         }
                         Command::RemoteCancel {
@@ -803,7 +926,13 @@ impl TranscriptionCoordinator {
                             reply,
                         } => {
                             let now = Instant::now();
-                            expire_remote(&app, &mut stage, &mut active_remote, now);
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                now,
+                            );
                             let result = match active_remote.as_ref() {
                                 Some(remote)
                                     if remote_matches(remote, connection_id, &request_id) =>
@@ -834,7 +963,13 @@ impl TranscriptionCoordinator {
                             }
                         }
                         Command::RemoteTick => {
-                            expire_remote(&app, &mut stage, &mut active_remote, Instant::now());
+                            expire_remote(
+                                &app,
+                                &mut stage,
+                                &mut active_remote,
+                                &mut terminals,
+                                Instant::now(),
+                            );
                         }
                     }
                 }
@@ -915,10 +1050,6 @@ impl TranscriptionCoordinator {
         })
     }
 
-    pub(crate) fn remote_bind(&self, pane_id: String) -> Result<String, String> {
-        self.request(|reply| Command::RemoteBind { pane_id, reply })
-    }
-
     pub(crate) fn remote_audio(
         &self,
         connection_id: u64,
@@ -939,6 +1070,30 @@ impl TranscriptionCoordinator {
         request_id: String,
     ) -> Result<(), String> {
         self.request(|reply| Command::RemoteFinish {
+            connection_id,
+            request_id,
+            reply,
+        })
+    }
+
+    pub(crate) fn stage_remote_delivery(
+        &self,
+        request_id: String,
+        text: String,
+    ) -> Result<(), String> {
+        self.request(|reply| Command::RemoteReady {
+            request_id,
+            text,
+            reply,
+        })
+    }
+
+    pub(crate) fn remote_commit(
+        &self,
+        connection_id: u64,
+        request_id: String,
+    ) -> Result<RemoteStatus, String> {
+        self.request(|reply| Command::RemoteCommit {
             connection_id,
             request_id,
             reply,
@@ -1015,15 +1170,9 @@ fn cancel_remote(
     }
 
     match remote {
-        ActiveRemote::Pending(_) => {
-            *active_remote = None;
-            *stage = Stage::Idle;
-            Ok(RemoteCancelStatus::Cancelled)
-        }
-        ActiveRemote::Bound(remote) => {
+        ActiveRemote::Recording(remote) => {
             let owner = OperationOwner::remote(&remote.request_id);
             crate::utils::cancel_owned_operation(app, &owner, true);
-            crate::target_binding::discard(remote.plan.target_token);
             *active_remote = None;
             *stage = Stage::Idle;
             Ok(RemoteCancelStatus::Cancelled)
@@ -1034,9 +1183,15 @@ fn cancel_remote(
         ActiveRemote::Processing(remote) => {
             let owner = OperationOwner::remote(&remote.request_id);
             crate::utils::cancel_owned_operation(app, &owner, false);
-            crate::target_binding::discard(remote.target_token);
             remote.cancelled = true;
             Ok(RemoteCancelStatus::Cancelling)
+        }
+        ActiveRemote::Ready(_) => {
+            *active_remote = None;
+            *stage = Stage::Idle;
+            crate::utils::hide_recording_overlay(app);
+            crate::tray::change_tray_icon(app, crate::tray::TrayIconState::Idle);
+            Ok(RemoteCancelStatus::Cancelled)
         }
     }
 }
@@ -1142,10 +1297,6 @@ mod tests {
             classify_mode_space(true, &remote_recording("request-a")),
             ModeSpaceAction::Ignore
         );
-        assert_eq!(
-            classify_mode_space(true, &Stage::RemotePending("request-a".into())),
-            ModeSpaceAction::Ignore
-        );
         assert!(mode_delete_is_active(
             true,
             &Stage::Processing(OperationOwner::local("transcribe"))
@@ -1157,20 +1308,26 @@ mod tests {
     }
 
     #[test]
-    fn remote_pending_claim_is_a_single_global_slot() {
+    fn remote_start_acquires_recording_slot_without_a_target_state() {
         let mut stage = Stage::Idle;
         let mut active = None;
         assert!(remote_slot_available(&stage, &active));
 
-        stage = Stage::RemotePending("request-a".into());
-        active = Some(ActiveRemote::Pending(PendingRemote {
+        stage = Stage::Recording(OperationOwner::remote("request-a"));
+        active = Some(ActiveRemote::Recording(RecordingRemote {
             request_id: "request-a".into(),
             connection_id: 7,
-            claim_deadline: Instant::now() + REMOTE_PENDING_CLAIM_LIFETIME,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
+            total_audio_samples: 0,
+            plan: RemoteOperationPlan {
+                post_process: false,
+            },
         }));
         assert!(!remote_slot_available(&stage, &active));
-        assert_eq!(active.as_ref().unwrap().request_id(), "request-a");
+        assert_eq!(
+            active_remote_status(active.as_ref().unwrap()),
+            RemoteStatus::Recording
+        );
     }
 
     #[test]
@@ -1180,7 +1337,6 @@ mod tests {
             request_id: "request-a".into(),
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
-            target_token: 41,
             cancelled: true,
         }));
 
@@ -1200,6 +1356,65 @@ mod tests {
         active = None;
         stage = Stage::Idle;
         assert!(remote_slot_available(&stage, &active));
+    }
+
+    #[test]
+    fn ready_retains_exclusive_processing_ownership_until_one_commit_attempt() {
+        let stage = Stage::Processing(OperationOwner::remote("request-a"));
+        let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
+            request_id: "request-a".into(),
+            connection_id: 7,
+            request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
+            cancelled: false,
+        }));
+        stage_ready_state(&stage, &mut active, "request-a", "staged text".into()).unwrap();
+        assert_eq!(
+            active_remote_status(active.as_ref().unwrap()),
+            RemoteStatus::Ready
+        );
+        assert!(!remote_slot_available(&stage, &active));
+
+        assert!(take_ready_for_commit(&mut active, 8, "request-a").is_err());
+        assert!(matches!(active, Some(ActiveRemote::Ready(_))));
+        let ready = take_ready_for_commit(&mut active, 7, "request-a").unwrap();
+        assert_eq!(ready.text, "staged text");
+        assert!(active.is_none());
+        assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
+
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(
+            commit_delivery_status(|| {
+                calls.set(calls.get() + 1);
+                Ok(())
+            }),
+            RemoteStatus::Succeeded
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            commit_delivery_status(|| Err("closed pane".to_string())),
+            RemoteStatus::Failed
+        );
+    }
+
+    #[test]
+    fn early_commit_and_cancelled_or_blank_ready_are_refused_without_state_loss() {
+        let stage = Stage::Processing(OperationOwner::remote("request-a"));
+        let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
+            request_id: "request-a".into(),
+            connection_id: 7,
+            request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
+            cancelled: false,
+        }));
+        assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
+        assert!(stage_ready_state(&stage, &mut active, "request-a", "  ".into()).is_err());
+        assert!(matches!(active, Some(ActiveRemote::Processing(_))));
+
+        let Some(ActiveRemote::Processing(processing)) = active.as_mut() else {
+            panic!("processing state was not preserved")
+        };
+        processing.cancelled = true;
+        assert!(stage_ready_state(&stage, &mut active, "request-a", "text".into()).is_err());
+        assert!(matches!(active, Some(ActiveRemote::Processing(_))));
     }
 
     #[test]

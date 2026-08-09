@@ -97,22 +97,6 @@ pub fn latest_token() -> u64 {
     LATEST_TOKEN.load(Ordering::SeqCst)
 }
 
-/// Bind a remotely supplied, already-validated pane without consulting X11 or
-/// Herdr's session-global focus. The returned token is immutable delivery
-/// authority for this operation.
-pub(crate) fn bind_explicit(pane_id: String) -> u64 {
-    let token = NEXT_TOKEN.fetch_add(1, Ordering::SeqCst);
-    store_capture(token, CaptureOutcome::Bound(pane_id));
-    token
-}
-
-pub(crate) fn discard(token: u64) {
-    let mut captures = CAPTURES.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(captures) = captures.as_mut() {
-        captures.remove(&token);
-    }
-}
-
 fn store_capture(token: u64, capture: CaptureOutcome) {
     // into_inner: a poisoned map must remain usable so paste can still see an
     // explicit outcome (or fail closed on timeout).
@@ -261,6 +245,32 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotEnvelope {
+    result: RemoteSnapshotResult,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotResult {
+    snapshot: RemoteSnapshot,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshot {
+    focused_pane_id: String,
+    panes: Vec<RemoteSnapshotPane>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotPane {
+    pane_id: String,
+    focused: bool,
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
     if pane_id.is_empty() || pane_id.len() > 64 || !pane_id.is_ascii() {
         return false;
@@ -278,41 +288,84 @@ pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn require_live_pane(
-    pane_id: &str,
-    probe: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<(), String> {
-    if !validate_pane_id(pane_id) {
-        return Err("malformed Herdr pane id".to_string());
+fn parse_remote_delivery_pane(json_bytes: &[u8]) -> Result<String, String> {
+    let envelope: RemoteSnapshotEnvelope = serde_json::from_slice(json_bytes)
+        .map_err(|error| format!("Herdr session snapshot was malformed: {error}"))?;
+    let snapshot = envelope.result.snapshot;
+    if !validate_pane_id(&snapshot.focused_pane_id) {
+        return Err("Herdr session snapshot has an invalid focused pane id".to_string());
     }
-    probe(pane_id)
+
+    let mut identities = std::collections::HashSet::new();
+    let mut focused_panes = Vec::new();
+    for pane in snapshot.panes {
+        if !validate_pane_id(&pane.pane_id) || !identities.insert(pane.pane_id.clone()) {
+            return Err(
+                "Herdr session snapshot has an invalid or duplicate pane identity".to_string(),
+            );
+        }
+        if pane.focused {
+            focused_panes.push(pane.pane_id);
+        }
+    }
+    if focused_panes.len() != 1 || focused_panes[0] != snapshot.focused_pane_id {
+        return Err(
+            "Herdr session snapshot does not contain exactly its one live focused pane".to_string(),
+        );
+    }
+    Ok(snapshot.focused_pane_id)
 }
 
-/// Verify that an exact pane id still resolves in the live Herdr server. This
-/// command addresses the supplied pane directly and never reads global focus.
+/// Read remote delivery focus once, freeze that exact pane, and make one
+/// literal explicit send. This path is remote-only and never consults X11 or
+/// the local per-recording capture map.
 #[cfg(target_os = "linux")]
-pub(crate) fn pane_is_live(pane_id: &str) -> Result<(), String> {
-    require_live_pane(pane_id, |pane_id| {
-        let herdr = resolve_herdr()?;
-        let output = run_with_timeout(&herdr, &["pane", "get", pane_id], Duration::from_secs(2))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Herdr pane is not live: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Herdr pane response was malformed: {error}"))?;
-        let returned = value
-            .get("result")
-            .and_then(|result| result.get("pane"))
-            .and_then(|pane| pane.get("pane_id"))
-            .and_then(serde_json::Value::as_str);
-        if returned != Some(pane_id) {
-            return Err("Herdr pane response did not name the claimed pane".to_string());
-        }
-        Ok(())
-    })
+pub(crate) fn deliver_remote(
+    text: &str,
+    auto_submit: bool,
+    delivery_enabled: bool,
+) -> Result<String, String> {
+    let herdr = resolve_herdr()?;
+    let output = run_with_timeout(&herdr, &["api", "snapshot"], Duration::from_secs(2))?;
+    if !output.status.success() {
+        return Err(format!(
+            "herdr api snapshot failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    deliver_remote_snapshot(
+        &output.stdout,
+        text,
+        auto_submit,
+        delivery_enabled,
+        |pane_id, payload| {
+            let args = send_text_args(pane_id, payload);
+            let output = run_with_timeout(&herdr, &args, Duration::from_secs(2))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "herdr pane send-text failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(())
+        },
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn deliver_remote_snapshot(
+    snapshot: &[u8],
+    text: &str,
+    auto_submit: bool,
+    delivery_enabled: bool,
+    deliver: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> Result<String, String> {
+    let pane_id = parse_remote_delivery_pane(snapshot)?;
+    if delivery_enabled {
+        let payload = send_text_payload(text, auto_submit);
+        deliver(&pane_id, &payload)?;
+    }
+    Ok(pane_id)
 }
 
 /// Types `text` into the pane's PTY. Newlines are collapsed to spaces: a raw
@@ -452,10 +505,57 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn remote_claim_requires_a_live_exact_pane() {
-        assert_eq!(require_live_pane("w2H:p13", |_| Ok(())), Ok(()));
-        assert!(require_live_pane("malformed", |_| Ok(())).is_err());
-        assert!(require_live_pane("w2H:p13", |_| Err("not live".into())).is_err());
+    fn remote_snapshot_requires_one_valid_live_focused_pane() {
+        let valid = br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p14","focused":false}]}}}"#;
+        assert_eq!(parse_remote_delivery_pane(valid), Ok("w2H:p13".to_string()));
+
+        for invalid in [
+            br#"{"result":{"snapshot":{"panes":[]}}}"#.as_slice(),
+            br#"{"result":{"snapshot":{"focused_pane_id":"","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"bad","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":false}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p14","focused":true}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p13","focused":true}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","focused_pane_id":"w2H:p14","panes":[]}}}"#,
+            b"not json",
+        ] {
+            assert!(parse_remote_delivery_pane(invalid).is_err());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_delivery_uses_only_commit_snapshot_pane_once() {
+        let start = br#"{"result":{"snapshot":{"focused_pane_id":"wA:p1","panes":[{"pane_id":"wA:p1","focused":true}]}}}"#;
+        let commit = br#"{"result":{"snapshot":{"focused_pane_id":"wB:p2","panes":[{"pane_id":"wA:p1","focused":false},{"pane_id":"wB:p2","focused":true}]}}}"#;
+        assert_eq!(parse_remote_delivery_pane(start).unwrap(), "wA:p1");
+
+        let calls = std::cell::RefCell::new(Vec::new());
+        let selected =
+            deliver_remote_snapshot(commit, "first\nsecond", true, true, |pane, payload| {
+                calls
+                    .borrow_mut()
+                    .push((pane.to_string(), payload.to_string()));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(selected, "wB:p2");
+        assert_eq!(
+            calls.into_inner(),
+            [("wB:p2".to_string(), "first second\r".to_string())]
+        );
+
+        let failures = std::cell::Cell::new(0);
+        assert!(
+            deliver_remote_snapshot(commit, "text", true, true, |_pane, _payload| {
+                failures.set(failures.get() + 1);
+                Err("pane closed".to_string())
+            })
+            .is_err()
+        );
+        assert_eq!(failures.get(), 1);
     }
 
     #[cfg(target_os = "linux")]
@@ -499,17 +599,6 @@ mod tests {
             take_for_recording(902),
             CaptureOutcome::Bound("wB:p2".to_string())
         );
-
-        let explicit = bind_explicit("wRemote:pBound".to_string());
-        assert_eq!(
-            take_for_recording(explicit),
-            CaptureOutcome::Bound("wRemote:pBound".to_string())
-        );
-        // Explicit tokens are one-shot and cannot be replayed into a later paste.
-        assert!(matches!(
-            take_for_recording(explicit),
-            CaptureOutcome::Failed(_)
-        ));
 
         for token in 1000..1012 {
             store_capture(token, CaptureOutcome::Bound(format!("wX:p{}", token)));

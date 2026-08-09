@@ -20,8 +20,7 @@ test -x /usr/bin/setsid
 
 mkdir -p "$install_parent" "$local_bin" "$user_units"
 /usr/bin/python3 "${repository_root}/scripts/install-remote-workstation.py" \
-    --home "$HOME" \
-    --config "${XDG_CONFIG_HOME:-${HOME}/.config}/herdr/config.toml"
+    --home "$HOME"
 
 staging_dir="$(mktemp -d "${install_parent}/Handy.AppDir.staging.XXXXXX")"
 cleanup() {

@@ -82,13 +82,10 @@ def requested_config(arguments) -> dict | None:
         "ssh_host": arguments.ssh_host,
         "ghostty_title": arguments.ghostty_title,
         "ghostty_class": arguments.ghostty_class,
-        "herdr_prefix": arguments.herdr_prefix,
         "capture_argv": capture,
         "ssh_path": arguments.ssh_path,
         "remote_helper": arguments.remote_helper,
-        "xdotool_path": arguments.xdotool_path,
         "notify_send_path": arguments.notify_send_path,
-        "binder_key": "alt+d",
     }
 
 
@@ -119,7 +116,6 @@ def validate_laptop_runtime(config: Path) -> None:
     value = json.loads(config.read_text(encoding="utf-8"))
     executables = [
         value["ssh_path"],
-        value["xdotool_path"],
         value["notify_send_path"],
         value["capture_argv"][0],
     ]
@@ -136,11 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ssh-host")
     parser.add_argument("--ghostty-title")
     parser.add_argument("--ghostty-class")
-    parser.add_argument("--herdr-prefix", default="ctrl+b")
     parser.add_argument("--capture-argv-json", default=json.dumps(DEFAULT_CAPTURE_ARGV))
     parser.add_argument("--ssh-path", default="/usr/bin/ssh")
     parser.add_argument("--remote-helper", default="~/.local/bin/handy-remote-stream.py")
-    parser.add_argument("--xdotool-path", default="/usr/bin/xdotool")
     parser.add_argument("--notify-send-path", default="/usr/bin/notify-send")
     parser.add_argument("--systemctl", type=Path, default=Path("/usr/bin/systemctl"))
     arguments = parser.parse_args(argv)

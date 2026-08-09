@@ -1,39 +1,45 @@
 # Remote Linux/X11 laptop dictation
 
-This workflow keeps transcription authority on the workstation. The laptop captures 16 kHz mono signed 16-bit little-endian PCM, controls one request over one ordinary authenticated SSH connection, and displays local state. It installs no ASR library or model. The workstation retains VAD, streaming ASR, selected language/model/custom words, second-pass settings, history, cancellation, exact-pane delivery, and auto-submit.
+This supported path is Ghostty -> ordinary authenticated SSH -> the full normal workstation Herdr application. The laptop captures 16 kHz mono signed 16-bit little-endian PCM, controls one request over one SSH helper connection while armed, and displays local state. It installs no ASR runtime or model. The workstation remains the only VAD, streaming model/language/custom-word, second-pass, history/WAV-retention, cancellation, delivery, and auto-submit authority.
+
+## Target convention
+
+For this laptop-over-SSH path only, keep the intended Herdr pane session-globally selected until text arrives. No pane is captured at Space-start. When processing is ready, the laptop automatically verifies the original Ghostty window is still active and unchanged, then commits. The workstation selects one live pane from one Herdr session snapshot at that moment and sends explicitly only to it.
+
+Another Herdr client changing session-global focus before commit can redirect this remote result. This path does **not** promise the pane selected at Space-start or safety under intervening focus changes. Workstation-local dictation remains different: it retains its independently captured exact target and never uses this delivery-time selector.
+
+There is no Herdr binder, reserved chord, config edit/reload, custom command, direct terminal attach, popup, proxy, or fork. The workstation installer does not inspect or modify Herdr config or a config symlink/target.
 
 ## Workstation install
 
-The normal per-user workstation installer now installs these stable executables:
+The normal local installer installs only:
 
-- `~/.local/bin/handy-remote-stream.py`, the SSH stdio-to-app-socket byte bridge;
-- `~/.local/bin/handy-remote-bind.py`, the detached exact-pane claimant.
+- `~/.local/bin/handy-remote-stream.py`, the SSH stdio-to-app-socket byte bridge.
 
-It also runs `scripts/configure-remote-herdr.py` against the active Herdr config. The utility supports Herdr 0.7.5 only. It appends or updates one marked detached-shell `prefix+alt+d` command, validates a same-directory candidate through `HERDR_CONFIG_PATH`, atomically replaces only the resolved regular target, reloads, and checks the running server. A config symlink remains the same symlink. The resolved target is backed up with a `.before-qq-dictation.*` suffix. Missing, foreign-owned, world-writable, chained-symlink, hard-linked, malformed, duplicate-marker, scalar/array/indexed occupied-chord, and conflicting-command states are refused. Every failure after replacement atomically restores the fixed inspected target and makes a best-effort running-config rollback.
-
-The standalone hermetic/install surface is:
+The standalone hermetic surface is:
 
 ```bash
 /usr/bin/python3 scripts/install-remote-workstation.py
 ```
 
-Do not run either installer until the reviewed Change reaches the approved live-install step.
+Do not run installers until the reviewed Change reaches its approved live-install step.
 
 ## Laptop requirements and install
 
-Supported scope is one Linux/X11 laptop running Ghostty, ordinary SSH, and workstation Herdr. Required tools are `/usr/bin/python3` with `python-xlib`, `ssh`, `xdotool`, `notify-send`, and PipeWire's `pw-record`. The configured SSH alias uses the operator's existing SSH authentication; no password, key, token, or secret command is stored by qq-dictation.
+Scope is one Linux/X11 laptop running Ghostty, ordinary SSH, and workstation Herdr. Required tools are `/usr/bin/python3` with `python-xlib`, `ssh`, `notify-send`, and PipeWire's `pw-record`. The configured SSH alias uses the operator's existing authentication; no password, key, token, or secret command is stored by qq-dictation.
 
-Install with exact facts from that laptop, for example:
+Install with exact facts from that laptop:
 
 ```bash
 /usr/bin/python3 scripts/install-remote-laptop.py \
   --ssh-host WORKSTATION_SSH_ALIAS \
   --ghostty-title EXACT_ACTIVE_GHOSTTY_TITLE \
-  --ghostty-class EXACT_GHOSTTY_WM_CLASS \
-  --herdr-prefix ctrl+b
+  --ghostty-class EXACT_GHOSTTY_WM_CLASS
 ```
 
-The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. An existing config must still be an operator-owned regular file with exact mode `0600`; differing or less private configuration is refused before client/service replacement or systemd. The microphone command is a JSON argv array, defaults to:
+The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. An existing config must be an operator-owned regular file with exact mode `0600`; differing or less-private configuration is refused before client/service replacement or systemd.
+
+The microphone command is a JSON argv array and defaults to:
 
 ```json
 [
@@ -48,32 +54,31 @@ The placeholders are not source defaults. The installer writes mode `0600` `~/.c
 ]
 ```
 
-A PipeWire `--target` may be added to that argv during installation. The client validates the exact `pw-record` sample contract and executes every local process without a shell. The remote helper value is restricted to a shell-safe executable path because OpenSSH necessarily passes the remote command to the remote login shell.
+A PipeWire `--target` may be added during installation. The client validates this sample contract and executes local processes without a shell. The remote helper is restricted to a shell-safe executable path because OpenSSH passes the remote command to the login shell.
 
-## Controls and target handshake
+## Controls and lifecycle
 
 - Right-Control arms or exits remote mode.
-- Space starts or finishes a recording.
+- Space starts or finishes recording.
 - Delete cancels recording or processing while remaining armed.
 
-Arming creates exactly one SSH helper process and dynamically grabs Space/Delete. Start captures the active X11 window ID and requires its exact configured title and class. After the workstation returns `pending`, the client rechecks that same active window and asks `xdotool` to inject the configured Herdr prefix followed by the reserved `alt+d` into that exact window ID. It rechecks the active identity, waits for `bound`, and starts `pw-record` only after the bound response. It never reads Herdr global focus and never opens a second SSH connection.
+Arming creates one SSH helper and dynamically grabs Space/Delete. Space-start captures the active configured Ghostty window's exact X11 ID, PID, title, and class. A valid workstation `start` immediately returns `recording`; capture begins and PCM streams before Space-stop. Stop terminates/reaps capture, sends `finish`, and shows `processing`—never recording—until a terminal result.
 
-PCM is framed and sent as it arrives, before Space-stop. Stop terminates and reaps capture, sends `finish`, and shows `processing` until the workstation reports a terminal result. Recording cancellation returns to armed immediately; processing cancellation remains visibly non-recording and in progress until the workstation completion guard reports terminal cancellation. Each terminal request is retired so Space can start another request on the same one SSH helper. Normal idle armed periods do not expire that helper. Notifications expose `off`, `armed`, `recording`, `processing`, and `failed` states.
+For nonblank output, the workstation reports `ready`. With no new physical gesture, the laptop requires the original exact window to still exist and be active, then attempts one matching commit. Window mismatch/loss sends no commit, cancels when possible, reaps resources, releases grabs, and shows failure. A commit whose response is lost is never retried because delivery may already have happened.
 
-Bound-pane delivery issues one Herdr `pane send-text` call to the immutable pane. With auto-submit enabled its literal payload is normalized transcript text plus one trailing carriage return; no separate `send-keys` process or current-focus fallback exists.
+Recording cancellation returns to armed immediately. Processing cancellation remains visibly non-recording and busy until workstation completion is terminal. Terminal requests retire so another Space can start on the same helper. Notifications expose only `off`, `armed`, `recording`, `processing`, and `failed`.
 
-Window mismatch, chord failure, missing/late binding, malformed/stale response, active-request timeout, SSH EOF/replacement, microphone truncation/exit, app/Herdr loss, and unexpected state all fail closed. Failure cancels the owned request when possible, terminates and reaps both children, releases Space/Delete, and leaves a visible failed non-recording state. No automatic reconnect can attach an orphan request to later delivery.
+SSH/helper, capture, app, or Herdr replacement; malformed/stale responses; timeout; and unexpected state all fail closed. Failure cancels the owned pre-commit request when possible, reaps children, releases Space/Delete, and leaves a visible non-recording state. No reconnect can attach an orphan request to later delivery.
 
 ## Approved later live proof
 
-After source review and owner Checks, batch these operator-only steps into one session:
+After source review and owner Checks:
 
-1. Record the existing laptop's local stop-to-visible-text baseline.
-2. Confirm the laptop's real SSH alias, exact active Ghostty title/class, Herdr prefix, PipeWire target/argv, and that `prefix+alt+d` has no operator collision.
-3. Run the workstation and laptop per-user installers; record the Herdr target path, pre-install hash/owner/mode, backup, unchanged symlink identity, helper/service status, and healthy Herdr reload check.
-4. Arm in the intended Ghostty/SSH/Herdr client and perform one normal remote dictation with the configured workstation second pass.
-5. After target binding, move Herdr focus to another pane before completion. Verify text and Enter reach only the originally bound pane.
-6. Record one SSH helper, PCM frames arriving before stop, workstation streaming/process timing, stop-to-delivery time lower than the captured local baseline, and the resulting history row's destination/second-pass metadata.
-7. Exercise Delete and Right-Control cancellation and one helper-loss case; verify mode/status, released grabs, and no delayed delivery.
+1. Capture the laptop's existing local stop-to-visible-text baseline.
+2. Confirm its real SSH alias, exact active Ghostty title/class/PID behavior, and PipeWire target/argv without recording secrets.
+3. Install workstation and laptop per-user surfaces and verify one helper, mode `0600`, and unchanged Herdr config/symlink/target.
+4. Keep the intended session-global Herdr pane selected through one normal remote dictation using the configured workstation second pass.
+5. Record PCM arriving before stop, workstation processing timing, lower stop-to-delivery delay, exact selected destination, and resulting history/second-pass metadata.
+6. Exercise Delete, Right-Control, window mismatch, and helper loss before commit; verify truthful state, released grabs, immediate temporary-audio policy, and no delayed text/Enter.
 
-No paid provider request, live config edit, service restart, laptop connection, or history mutation belongs in source-level Checks.
+No paid provider request, live config edit, service restart, laptop connection, or live history/settings mutation belongs in source-level Checks.

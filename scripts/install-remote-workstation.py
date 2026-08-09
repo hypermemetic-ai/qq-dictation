@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Install workstation SSH/binder helpers and the guarded Herdr binding."""
+"""Install the workstation SSH stream helper without touching Herdr config."""
 
 from __future__ import annotations
 
 import argparse
 import os
 import stat
-import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -57,46 +56,18 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
-    parser.add_argument("--config", type=Path)
-    parser.add_argument(
-        "--herdr", type=Path, default=Path("/home/linuxbrew/.linuxbrew/bin/herdr")
-    )
     arguments = parser.parse_args(argv)
     home = arguments.home.absolute()
-    config = arguments.config or home / ".config" / "herdr" / "config.toml"
     local_bin = home / ".local" / "bin"
     try:
         home_metadata = home.stat()
         if not stat.S_ISDIR(home_metadata.st_mode) or home_metadata.st_uid != os.geteuid():
             raise InstallError("installation home must be an operator-owned directory")
-        destinations = []
-        for name in ("handy-remote-stream.py", "handy-remote-bind.py"):
-            destination = local_bin / name
-            install_file(root / "packaging" / name, destination, 0o755)
-            destinations.append(destination)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(root / "scripts" / "configure-remote-herdr.py"),
-                "--config",
-                str(config),
-                "--binder",
-                str(destinations[1]),
-                "--herdr",
-                str(arguments.herdr),
-            ],
-            stdin=subprocess.DEVNULL,
-            text=True,
-            capture_output=True,
-            check=False,
-            shell=False,
-        )
-        if result.returncode != 0:
-            raise InstallError(result.stderr.strip() or "Herdr configuration failed")
-        print(result.stdout.strip())
-        print(f"Installed remote workstation helpers in {local_bin}")
+        destination = local_bin / "handy-remote-stream.py"
+        install_file(root / "packaging" / destination.name, destination, 0o755)
+        print(f"Installed remote workstation stream helper at {destination}")
         return 0
-    except (InstallError, OSError, subprocess.SubprocessError) as error:
+    except (InstallError, OSError) as error:
         print(f"install-remote-workstation: {error}", file=sys.stderr)
         return 1
 
