@@ -497,6 +497,42 @@ class ApplicationStateTests(unittest.TestCase):
         )
         self.assertIn("X11-focused window", notifier.history[-1][1])
 
+    def test_local_success_releases_dynamic_grabs_around_one_injection_before_armed(self):
+        app, x11, notifier, _transports, _captures, injector = self.make_app(
+            delivery_mode="local"
+        )
+        ordered = mock.Mock()
+        for name, owner in (
+            ("grab_dynamic", x11),
+            ("release_dynamic", x11),
+            ("inject", injector),
+            ("show", notifier),
+        ):
+            wrapped = mock.Mock(wraps=getattr(owner, name))
+            setattr(owner, name, wrapped)
+            ordered.attach_mock(wrapped, name)
+
+        app.arm()
+        app.space()
+        app.space()
+        app.tick()
+        app.tick()
+
+        plan = client.InjectionPlan("workstation text ", "ctrl_enter")
+        self.assertEqual(
+            ordered.mock_calls[-4:],
+            [
+                mock.call.release_dynamic(),
+                mock.call.inject(plan),
+                mock.call.grab_dynamic(),
+                mock.call.show(
+                    client.ClientState.ARMED,
+                    "Injected into the X11-focused window at delivery",
+                ),
+            ],
+        )
+        self.assertEqual(app.state, client.ClientState.ARMED)
+
     def test_local_focus_refusal_before_or_after_handoff_never_injects(self):
         for failure_at, expected_commits in ((1, 0), (2, 1)):
             with self.subTest(failure_at=failure_at):
@@ -521,11 +557,14 @@ class ApplicationStateTests(unittest.TestCase):
         app, x11, notifier, transports, _captures, injector = self.make_app(
             delivery_mode="local", injector=failing
         )
-        app.arm()
-        app.space()
-        app.space()
-        app.tick()
-        app.tick()
+        with mock.patch.object(
+            x11, "grab_dynamic", wraps=x11.grab_dynamic
+        ) as grab_dynamic:
+            app.arm()
+            app.space()
+            app.space()
+            app.tick()
+            app.tick()
 
         self.assertEqual(app.state, client.ClientState.FAILED)
         self.assertTrue(app.injection_attempted is False)  # cleared only during terminal teardown
@@ -533,8 +572,44 @@ class ApplicationStateTests(unittest.TestCase):
             injector.plans,
             [client.InjectionPlan("workstation text ", "ctrl_enter")],
         )
+        self.assertEqual(grab_dynamic.call_count, 1)
         self.assertFalse(x11.dynamic)
         self.assertIn("adapter-reported failure", notifier.history[-1][1])
+        self.assertEqual(
+            [message["type"] for message in transports[0].messages].count("commit"), 1
+        )
+        app.tick()
+        self.assertEqual(len(injector.plans), 1)
+
+    def test_local_reacquisition_failure_after_injection_fails_without_repeat(self):
+        app, x11, notifier, transports, _captures, injector = self.make_app(
+            delivery_mode="local"
+        )
+        original_grab_dynamic = x11.grab_dynamic
+        grab_attempts = 0
+
+        def fail_reacquisition():
+            nonlocal grab_attempts
+            grab_attempts += 1
+            if grab_attempts == 2:
+                raise client.ClientError("Space or Delete reacquisition failed")
+            original_grab_dynamic()
+
+        x11.grab_dynamic = fail_reacquisition
+        app.arm()
+        app.space()
+        app.space()
+        app.tick()
+        app.tick()
+
+        self.assertEqual(app.state, client.ClientState.FAILED)
+        self.assertEqual(grab_attempts, 2)
+        self.assertEqual(
+            injector.plans,
+            [client.InjectionPlan("workstation text ", "ctrl_enter")],
+        )
+        self.assertFalse(x11.dynamic)
+        self.assertIn("reacquisition failed", notifier.history[-1][1])
         self.assertEqual(
             [message["type"] for message in transports[0].messages].count("commit"), 1
         )

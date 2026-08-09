@@ -1009,7 +1009,9 @@ class LaptopApplication:
         # Mark the effectful adapter attempt first. A timeout, tool failure, or
         # uncertain effect can only become a truthful local failure, never a retry.
         self.injection_attempted = True
+        self.x11.release_dynamic()
         injector.inject(plan)
+        self.x11.grab_dynamic()
         return status
 
     def _record_async_failure(self, detail: str) -> None:
