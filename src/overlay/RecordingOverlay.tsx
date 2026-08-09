@@ -10,8 +10,6 @@ import type {
   StreamTextEvent,
   StreamWorkKind,
 } from "@/bindings";
-import i18n, { syncLanguageFromSettings } from "@/i18n";
-import { getLanguageDirection } from "@/lib/utils/rtl";
 
 type OverlayState =
   | "armed"
@@ -24,10 +22,8 @@ type OverlayState =
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
 const WAVE_BARS = 9;
 
-// Armed dictation-mode legend (qq-dictation local Space mode). Deliberately
-// English-only constants rather than i18n keys: the mode ships solely in the
-// qq-dictation local distribution, so its legend does not mint an upstream-wide
-// translation commitment across every Handy locale.
+// Armed dictation-mode legend (qq-dictation local Space mode). These constants
+// are English-only like the rest of the application UI.
 const ARMED_TITLE = "DICTATION MODE";
 const ARMED_KEYS = "SPACE STARTS/STOPS · DELETE CANCELS · RIGHT CTRL EXITS";
 
@@ -59,12 +55,10 @@ const RecordingOverlay: React.FC = () => {
   // until they scroll back down.
   const capRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
-  const direction = getLanguageDirection(i18n.language);
 
   useEffect(() => {
     const setupEventListeners = async () => {
       const unlistenShow = await listen("show-overlay", async (event) => {
-        await syncLanguageFromSettings();
         // The Live panel flows downward from a top overlay and upward from a
         // bottom one; read the placement so the layout can flip to match.
         try {
@@ -172,7 +166,6 @@ const RecordingOverlay: React.FC = () => {
   if (state === "armed") {
     return (
       <div
-        dir={direction}
         className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
       >
         <div className="scard compact armed">
@@ -257,7 +250,7 @@ const RecordingOverlay: React.FC = () => {
     const collapsed = working && !hasText;
 
     return (
-      <div dir={direction} className={`ov-stage ${position}`}>
+      <div className={`ov-stage ${position}`}>
         <div
           key={session}
           className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""} ${
@@ -306,10 +299,7 @@ const RecordingOverlay: React.FC = () => {
       : t("overlay.transcribing");
 
   return (
-    <div
-      dir={direction}
-      className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
-    >
+    <div className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}>
       <div
         className={`scard compact ${working && isVisible ? "cworking" : ""}`}
       >

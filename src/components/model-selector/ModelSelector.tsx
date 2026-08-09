@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
-import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
 import ModelStatusButton from "./ModelStatusButton";
 import ModelDropdown from "./ModelDropdown";
@@ -160,7 +159,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
         const modelId = verifyingKeys[0];
         const model = models.find((m) => m.id === modelId);
         const modelName = model
-          ? getTranslatedModelName(model, t)
+          ? model.name
           : t("modelSelector.verifyingGeneric").replace("...", "");
         return t("modelSelector.verifying", { modelName });
       } else {
@@ -174,7 +173,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
         const modelId = extractingKeys[0];
         const model = models.find((m) => m.id === modelId);
         const modelName = model
-          ? getTranslatedModelName(model, t)
+          ? model.name
           : t("modelSelector.extractingGeneric").replace("...", "");
         return t("modelSelector.extracting", { modelName });
       } else {
@@ -205,31 +204,27 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     switch (modelStatus) {
       case "ready":
         return currentModelInfo
-          ? getTranslatedModelName(currentModelInfo, t)
+          ? currentModelInfo.name
           : t("modelSelector.modelReady");
       case "loading":
         return currentModelInfo
-          ? t("modelSelector.loading", {
-              modelName: getTranslatedModelName(currentModelInfo, t),
-            })
+          ? t("modelSelector.loading", { modelName: currentModelInfo.name })
           : t("modelSelector.loadingGeneric");
       case "extracting":
         return currentModelInfo
-          ? t("modelSelector.extracting", {
-              modelName: getTranslatedModelName(currentModelInfo, t),
-            })
+          ? t("modelSelector.extracting", { modelName: currentModelInfo.name })
           : t("modelSelector.extractingGeneric");
       case "error":
         return modelError || t("modelSelector.modelError");
       case "unloaded":
         return currentModelInfo
-          ? getTranslatedModelName(currentModelInfo, t)
+          ? currentModelInfo.name
           : t("modelSelector.modelUnloaded");
       case "none":
         return t("modelSelector.noModelDownloadRequired");
       default:
         return currentModelInfo
-          ? getTranslatedModelName(currentModelInfo, t)
+          ? currentModelInfo.name
           : t("modelSelector.modelUnloaded");
     }
   };

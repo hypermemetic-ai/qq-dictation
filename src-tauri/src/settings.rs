@@ -405,8 +405,6 @@ pub struct AppSettings {
     pub append_trailing_space: bool,
     #[serde(default = "default_herdr_binding_enabled")]
     pub herdr_binding_enabled: bool,
-    #[serde(default = "default_app_language")]
-    pub app_language: String,
     #[serde(default = "default_theme")]
     pub theme: Theme,
     #[serde(default)]
@@ -542,12 +540,6 @@ fn default_theme() -> Theme {
 
 fn default_post_process_enabled() -> bool {
     false
-}
-
-fn default_app_language() -> String {
-    tauri_plugin_os::locale()
-        .map(|l| l.replace('_', "-"))
-        .unwrap_or_else(|| "en".to_string())
 }
 
 fn default_show_tray_icon() -> bool {
@@ -815,7 +807,6 @@ pub fn get_default_settings() -> AppSettings {
         mute_while_recording: false,
         append_trailing_space: false,
         herdr_binding_enabled: default_herdr_binding_enabled(),
-        app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
         lazy_stream_close: false,

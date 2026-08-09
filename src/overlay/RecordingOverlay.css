@@ -180,9 +180,7 @@
 /* Armed dictation-mode indicator (qq-dictation local Space mode): a persistent
    two-line legend — mode title over the Space/Delete/Right-Control key map.
    Fixed width so the English legend fits on one line; the native window size
-   lives in overlay.rs (OVERLAY_ARMED_*). English-only on purpose: the mode
-   ships only in the local distribution, so no upstream-wide translation
-   commitment is minted for it. */
+   lives in overlay.rs (OVERLAY_ARMED_*). */
 .scard.compact.armed {
   width: var(--ov-armed-w);
   border-radius: 16px;

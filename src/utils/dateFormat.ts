@@ -1,10 +1,11 @@
+const ENGLISH_LOCALE = "en";
+
 /**
- * Format a date string or timestamp to a localized date and time string
+ * Format a date string or timestamp as an English date and time.
  * @param timestamp - Unix timestamp in seconds (as string)
- * @param locale - BCP 47 language tag (e.g., 'en', 'es', 'fr')
  * @returns Formatted date string
  */
-export const formatDateTime = (timestamp: string, locale: string): string => {
+export const formatDateTime = (timestamp: string): string => {
   try {
     // Convert Unix timestamp (seconds) to milliseconds
     const timestampMs = parseInt(timestamp, 10) * 1000;
@@ -15,7 +16,7 @@ export const formatDateTime = (timestamp: string, locale: string): string => {
       return timestamp; // Return original if invalid
     }
 
-    return new Intl.DateTimeFormat(locale, {
+    return new Intl.DateTimeFormat(ENGLISH_LOCALE, {
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -29,12 +30,11 @@ export const formatDateTime = (timestamp: string, locale: string): string => {
 };
 
 /**
- * Format a date string or timestamp to a localized date string (no time)
+ * Format a date string or timestamp as an English date (no time).
  * @param timestamp - Unix timestamp in seconds (as string)
- * @param locale - BCP 47 language tag (e.g., 'en', 'es', 'fr')
  * @returns Formatted date string
  */
-export const formatDate = (timestamp: string, locale: string): string => {
+export const formatDate = (timestamp: string): string => {
   try {
     // Convert Unix timestamp (seconds) to milliseconds
     const timestampMs = parseInt(timestamp, 10) * 1000;
@@ -45,7 +45,7 @@ export const formatDate = (timestamp: string, locale: string): string => {
       return timestamp; // Return original if invalid
     }
 
-    return new Intl.DateTimeFormat(locale, {
+    return new Intl.DateTimeFormat(ENGLISH_LOCALE, {
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -57,15 +57,11 @@ export const formatDate = (timestamp: string, locale: string): string => {
 };
 
 /**
- * Format a date string or timestamp to a relative time string (e.g., "2 hours ago")
+ * Format a date string or timestamp as English relative time (e.g., "2 hours ago").
  * @param timestamp - Unix timestamp in seconds (as string)
- * @param locale - BCP 47 language tag (e.g., 'en', 'es', 'fr')
  * @returns Relative time string
  */
-export const formatRelativeTime = (
-  timestamp: string,
-  locale: string,
-): string => {
+export const formatRelativeTime = (timestamp: string): string => {
   try {
     // Convert Unix timestamp (seconds) to milliseconds
     const timestampMs = parseInt(timestamp, 10) * 1000;
@@ -79,8 +75,9 @@ export const formatRelativeTime = (
 
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
-    // Use Intl.RelativeTimeFormat for proper localization
-    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+    const rtf = new Intl.RelativeTimeFormat(ENGLISH_LOCALE, {
+      numeric: "auto",
+    });
 
     // Less than a minute
     if (diffInSeconds < 60) {
@@ -122,6 +119,6 @@ export const formatRelativeTime = (
     return rtf.format(-diffInYears, "year");
   } catch (error) {
     console.error("Failed to format relative time:", error);
-    return formatDateTime(timestamp, locale); // Fallback to absolute time
+    return formatDateTime(timestamp); // Fallback to absolute time
   }
 };

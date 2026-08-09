@@ -135,7 +135,6 @@ const settingUpdaters: {
   herdr_binding_enabled: (value) =>
     commands.changeHerdrBindingEnabledSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),
-  app_language: (value) => commands.changeAppLanguageSetting(value as string),
   theme: (value) => commands.changeThemeSetting(value as string),
   experimental_enabled: (value) =>
     commands.changeExperimentalEnabledSetting(value as boolean),

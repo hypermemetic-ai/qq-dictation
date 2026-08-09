@@ -17,7 +17,6 @@ mod signal_handle;
 mod target_binding;
 mod transcription_coordinator;
 mod tray;
-mod tray_i18n;
 mod utils;
 
 pub use cli::CliArgs;
@@ -224,7 +223,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                             log::error!("Failed to switch model via tray: {}", e);
                         }
                     }
-                    tray::update_tray_menu(&app_clone, None);
+                    tray::update_tray_menu(&app_clone);
                 });
             }
             _ => {}
@@ -234,7 +233,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(tray);
 
     // Initialize tray menu with idle state
-    utils::update_tray_menu(app_handle, None);
+    utils::update_tray_menu(app_handle);
 
     // Apply show_tray_icon setting
     let settings = settings::get_settings(app_handle);
@@ -245,7 +244,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Refresh tray menu when model state changes
     let app_handle_for_listener = app_handle.clone();
     app_handle.listen("model-state-changed", move |_| {
-        tray::update_tray_menu(&app_handle_for_listener, None);
+        tray::update_tray_menu(&app_handle_for_listener);
     });
 
     // Get the autostart manager and configure based on user setting
@@ -552,7 +551,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_herdr_binding_enabled_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
-            shortcut::change_app_language_setting,
             shortcut::change_keyboard_implementation_setting,
             shortcut::get_keyboard_implementation,
             shortcut::change_show_tray_icon_setting,
@@ -694,7 +692,6 @@ pub fn run(cli_args: CliArgs) {
 
     builder
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())

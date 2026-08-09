@@ -13,10 +13,6 @@ import {
 import type { ModelInfo } from "@/bindings";
 import { formatModelSize } from "../../lib/utils/format";
 import {
-  getTranslatedModelDescription,
-  getTranslatedModelName,
-} from "../../lib/utils/modelTranslation";
-import {
   getLanguageLabel,
   getUniqueCapabilityLanguages,
 } from "../../lib/constants/languages";
@@ -100,9 +96,8 @@ const ModelCard: React.FC<ModelCardProps> = ({
   // gain, so it is deliberately not clickable.
   const isClickable = status === "available" || status === "downloadable";
 
-  // Get translated model name and description
-  const displayName = getTranslatedModelName(model, t);
-  const displayDescription = getTranslatedModelDescription(model, t);
+  const displayName = model.name;
+  const displayDescription = model.description;
   const showModelSize =
     status === "downloadable" || status === "available" || status === "active";
   const formattedModelSize = formatModelSize(Number(model.size_mb));
