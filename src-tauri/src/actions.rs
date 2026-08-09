@@ -725,6 +725,7 @@ impl ShortcutAction for TranscribeAction {
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteOperationPlan {
     pub(crate) post_process: bool,
+    pub(crate) herdr_identity: crate::target_binding::HerdrSessionIdentity,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -737,6 +738,9 @@ pub(crate) fn start_remote_operation(
     app: &AppHandle,
     request_id: &str,
 ) -> Result<RemoteOperationPlan, String> {
+    // Remote start is authorized only while the configured/default Herdr
+    // session has a bounded live identity. This reads no pane or focus state.
+    let herdr_identity = crate::target_binding::capture_remote_session_identity()?;
     let transcription = app.state::<Arc<TranscriptionManager>>();
     let recording = app.state::<Arc<AudioRecordingManager>>();
     transcription.initiate_model_load();
@@ -773,6 +777,7 @@ pub(crate) fn start_remote_operation(
 
     Ok(RemoteOperationPlan {
         post_process: settings.post_process_enabled,
+        herdr_identity,
     })
 }
 
@@ -855,19 +860,34 @@ fn finish_operation(
                 utils::hide_recording_overlay(&ah);
                 change_tray_icon(&ah, TrayIconState::Idle);
             } else {
-                // Save WAV concurrently with transcription
+                // Reserve and save the WAV concurrently with transcription.
+                // Reservation holds history's pending mutex across create_new
+                // and registration; the writer is the exact exclusive file
+                // handle and never reopens a truncating path.
                 let sample_count = samples.len();
-                let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
-                // Register before publishing the file. Orphan cleanup holds
-                // the same registry lock while scanning, so it cannot
-                // mistake this in-flight recording for an abandoned WAV.
-                let mut pending_audio_guard = hm.protect_pending_audio_file(&file_name);
-                let wav_path = hm.recordings_dir().join(&file_name);
-                let wav_path_for_verify = wav_path.clone();
+                let mut pending_audio_guard = match hm.reserve_pending_audio_file() {
+                    Ok(guard) => Some(guard),
+                    Err(error) => {
+                        error!("Failed to reserve WAV file: {}", error);
+                        None
+                    }
+                };
+                let wav_path_for_verify = pending_audio_guard
+                    .as_ref()
+                    .map(|guard| guard.path().to_path_buf());
                 let samples_for_wav = samples.clone();
-                let wav_handle = tauri::async_runtime::spawn_blocking(move || {
-                    crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
-                });
+                let wav_handle =
+                    pending_audio_guard
+                        .as_mut()
+                        .and_then(|guard| match guard.take_writer() {
+                            Ok(writer) => Some(tauri::async_runtime::spawn_blocking(move || {
+                                crate::audio_toolkit::write_wav_file(writer, &samples_for_wav)
+                            })),
+                            Err(error) => {
+                                error!("Failed to acquire reserved WAV writer: {}", error);
+                                None
+                            }
+                        });
 
                 // Transcribe concurrently with WAV save. If a live stream was
                 // running, finalize it and use its text (all audio was already
@@ -886,27 +906,30 @@ fn finish_operation(
                 };
 
                 // Await WAV save and verify
-                let wav_saved = match wav_handle.await {
-                    Ok(Ok(())) => {
-                        match crate::audio_toolkit::verify_wav_file(
-                            &wav_path_for_verify,
-                            sample_count,
-                        ) {
-                            Ok(()) => true,
-                            Err(e) => {
-                                error!("WAV verification failed: {}", e);
-                                false
+                let wav_saved = match (wav_handle, wav_path_for_verify) {
+                    (Some(wav_handle), Some(wav_path_for_verify)) => match wav_handle.await {
+                        Ok(Ok(())) => {
+                            match crate::audio_toolkit::verify_wav_file(
+                                &wav_path_for_verify,
+                                sample_count,
+                            ) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    error!("WAV verification failed: {}", e);
+                                    false
+                                }
                             }
                         }
-                    }
-                    Ok(Err(e)) => {
-                        error!("Failed to save WAV file: {}", e);
-                        false
-                    }
-                    Err(e) => {
-                        error!("WAV save task panicked: {}", e);
-                        false
-                    }
+                        Ok(Err(e)) => {
+                            error!("Failed to save WAV file: {}", e);
+                            false
+                        }
+                        Err(e) => {
+                            error!("WAV save task panicked: {}", e);
+                            false
+                        }
+                    },
+                    _ => false,
                 };
 
                 if rm.was_cancelled_since(cancel_generation) {
@@ -955,15 +978,17 @@ fn finish_operation(
 
                         // Save to history if WAV was saved
                         if wav_saved {
-                            if let Err(err) = hm.save_pending_entry(
-                                &mut pending_audio_guard,
-                                transcription,
-                                post_process,
-                                processed.post_processed_text.clone(),
-                                processed.post_process_prompt.clone(),
-                                processed.post_process_model.clone(),
-                            ) {
-                                error!("Failed to save history entry: {}", err);
+                            if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
+                                if let Err(err) = hm.save_pending_entry(
+                                    pending_audio_guard,
+                                    transcription,
+                                    post_process,
+                                    processed.post_processed_text.clone(),
+                                    processed.post_process_prompt.clone(),
+                                    processed.post_process_model.clone(),
+                                ) {
+                                    error!("Failed to save history entry: {}", err);
+                                }
                             }
                         }
 
@@ -1073,15 +1098,17 @@ fn finish_operation(
                         let _ = ah.emit("transcription-error", err.to_string());
                         // Save entry with empty text so user can retry
                         if wav_saved {
-                            if let Err(save_err) = hm.save_pending_entry(
-                                &mut pending_audio_guard,
-                                String::new(),
-                                post_process,
-                                None,
-                                None,
-                                None,
-                            ) {
-                                error!("Failed to save failed history entry: {}", save_err);
+                            if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
+                                if let Err(save_err) = hm.save_pending_entry(
+                                    pending_audio_guard,
+                                    String::new(),
+                                    post_process,
+                                    None,
+                                    None,
+                                    None,
+                                ) {
+                                    error!("Failed to save failed history entry: {}", save_err);
+                                }
                             }
                         }
                         utils::hide_recording_overlay(&ah);

@@ -636,7 +636,11 @@ fn herdr_target(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn paste_remote_commit(text: String, app_handle: AppHandle) -> Result<(), String> {
+pub(crate) fn paste_remote_commit(
+    text: String,
+    herdr_identity: &crate::target_binding::HerdrSessionIdentity,
+    app_handle: AppHandle,
+) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let text = if settings.append_trailing_space {
@@ -645,6 +649,7 @@ pub(crate) fn paste_remote_commit(text: String, app_handle: AppHandle) -> Result
         text
     };
     let pane_id = crate::target_binding::deliver_remote(
+        herdr_identity,
         &text,
         should_send_auto_submit(settings.auto_submit, paste_method),
         paste_method != PasteMethod::None,

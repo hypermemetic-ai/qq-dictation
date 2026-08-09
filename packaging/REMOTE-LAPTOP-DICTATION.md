@@ -4,7 +4,7 @@ This supported path is Ghostty -> ordinary authenticated SSH -> the full normal 
 
 ## Target convention
 
-For this laptop-over-SSH path only, keep the intended Herdr pane session-globally selected until text arrives. No pane is captured at Space-start. When processing is ready, the laptop automatically verifies the original Ghostty window is still active and unchanged, then commits. The workstation selects one live pane from one Herdr session snapshot at that moment and sends explicitly only to it.
+For this laptop-over-SSH path only, keep the intended Herdr pane session-globally selected until text arrives. No pane is captured at Space-start. Instead, workstation start records the configured/default live Herdr server/session identity from public status, owned Unix-socket metadata, Linux peer credentials, and peer process start time without reading focus or layout. When processing is ready, the laptop automatically verifies the original Ghostty window is still active and unchanged, then commits. The workstation first requires the same exact server/session identity, then selects one live pane from one Herdr session snapshot and sends explicitly only to it.
 
 Another Herdr client changing session-global focus before commit can redirect this remote result. This path does **not** promise the pane selected at Space-start or safety under intervening focus changes. Workstation-local dictation remains different: it retains its independently captured exact target and never uses this delivery-time selector.
 
@@ -62,13 +62,13 @@ A PipeWire `--target` may be added during installation. The client validates thi
 - Space starts or finishes recording.
 - Delete cancels recording or processing while remaining armed.
 
-Arming creates one SSH helper and dynamically grabs Space/Delete. Space-start captures the active configured Ghostty window's exact X11 ID, PID, title, and class. A valid workstation `start` immediately returns `recording`; capture begins and PCM streams before Space-stop. Stop terminates/reaps capture, sends `finish`, and shows `processing`—never recording—until a terminal result.
+Arming creates one SSH helper and dynamically grabs Space/Delete. Space-start captures the active configured Ghostty window's exact X11 ID, PID, title, and class. The workstation independently captures the exact live Herdr server/session identity without capturing a pane. A valid workstation `start` immediately returns `recording`; capture begins and PCM streams before Space-stop. Stop terminates/reaps capture, sends `finish`, and shows `processing`—never recording—until a terminal result.
 
-For nonblank output, the workstation reports `ready`. With no new physical gesture, the laptop requires the original exact window to still exist and be active, then attempts one matching commit. Window mismatch/loss sends no commit, cancels when possible, reaps resources, releases grabs, and shows failure. A commit whose response is lost is never retried because delivery may already have happened.
+For nonblank output, the workstation reports `ready`. With no new physical gesture, the laptop requires the original exact window to still exist and be active, then attempts one matching commit. The serialized workstation commit revalidates the start-owned Herdr server/session identity before reading focus or sending; a mismatch terminally fails with no snapshot, send, or fallback. Exact identity equality begins the irrevocable snapshot/send boundary, so a commit whose response is lost is never retried because delivery may already have happened.
 
 Recording cancellation returns to armed immediately. Processing cancellation remains visibly non-recording and busy until workstation completion is terminal. Terminal requests retire so another Space can start on the same helper. Notifications expose only `off`, `armed`, `recording`, `processing`, and `failed`.
 
-SSH/helper, capture, app, or Herdr replacement; malformed/stale responses; timeout; and unexpected state all fail closed. Failure cancels the owned pre-commit request when possible, reaps children, releases Space/Delete, and leaves a visible non-recording state. No reconnect can attach an orphan request to later delivery.
+SSH/helper, capture, or app replacement; malformed/stale responses; timeout; and unexpected state all fail closed. Herdr server/session replacement is fenced separately from the laptop window: public status, owned socket path/device/inode, peer PID/credentials, and peer process start identity must match from workstation start to serialized commit even if Ghostty's X11 identity remains unchanged. Failure before matching identity validation cancels or terminally fails the owned request with no focus snapshot or send, reaps children, releases Space/Delete, and leaves a visible non-recording state. No reconnect can attach an orphan request to later delivery.
 
 ## Approved later live proof
 

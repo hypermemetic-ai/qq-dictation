@@ -67,6 +67,7 @@ struct ProcessingRemote {
     connection_id: u64,
     request_deadline: Instant,
     cancelled: bool,
+    herdr_identity: crate::target_binding::HerdrSessionIdentity,
 }
 
 struct ReadyRemote {
@@ -74,6 +75,7 @@ struct ReadyRemote {
     connection_id: u64,
     request_deadline: Instant,
     text: String,
+    herdr_identity: crate::target_binding::HerdrSessionIdentity,
 }
 
 enum ActiveRemote {
@@ -308,6 +310,7 @@ fn stage_ready_state(
                     connection_id: remote.connection_id,
                     request_deadline: remote.request_deadline,
                     text,
+                    herdr_identity: remote.herdr_identity,
                 }));
                 Ok(())
             }
@@ -837,6 +840,7 @@ impl TranscriptionCoordinator {
                                             connection_id,
                                             request_deadline: remote.request_deadline,
                                             cancelled: false,
+                                            herdr_identity: remote.plan.herdr_identity.clone(),
                                         };
                                         finish_remote_operation(&app, &request_id, remote.plan);
                                         active_remote = Some(ActiveRemote::Processing(processing));
@@ -880,11 +884,16 @@ impl TranscriptionCoordinator {
                                 &request_id,
                             )
                             .map(|remote| {
-                                // Taking Ready is the serialized irrevocable boundary.
-                                // The coordinator cannot process disconnect/cancel/another
-                                // commit until this one explicit delivery attempt completes.
+                                // Taking Ready serializes this commit against disconnect,
+                                // cancel, and replay. The irrevocable boundary remains inside
+                                // paste_remote_commit, after the start-owned Herdr identity is
+                                // revalidated and before its one snapshot/send attempt.
                                 let status = commit_delivery_status(|| {
-                                    crate::clipboard::paste_remote_commit(remote.text, app.clone())
+                                    crate::clipboard::paste_remote_commit(
+                                        remote.text,
+                                        &remote.herdr_identity,
+                                        app.clone(),
+                                    )
                                 });
                                 push_terminal(
                                     &mut terminals,
@@ -1321,6 +1330,7 @@ mod tests {
             total_audio_samples: 0,
             plan: RemoteOperationPlan {
                 post_process: false,
+                herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
             },
         }));
         assert!(!remote_slot_available(&stage, &active));
@@ -1338,6 +1348,7 @@ mod tests {
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: true,
+            herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
         }));
 
         assert_eq!(
@@ -1361,11 +1372,13 @@ mod tests {
     #[test]
     fn ready_retains_exclusive_processing_ownership_until_one_commit_attempt() {
         let stage = Stage::Processing(OperationOwner::remote("request-a"));
+        let identity = crate::target_binding::synthetic_remote_session_identity(1);
         let mut active = Some(ActiveRemote::Processing(ProcessingRemote {
             request_id: "request-a".into(),
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: false,
+            herdr_identity: identity.clone(),
         }));
         stage_ready_state(&stage, &mut active, "request-a", "staged text".into()).unwrap();
         assert_eq!(
@@ -1378,6 +1391,7 @@ mod tests {
         assert!(matches!(active, Some(ActiveRemote::Ready(_))));
         let ready = take_ready_for_commit(&mut active, 7, "request-a").unwrap();
         assert_eq!(ready.text, "staged text");
+        assert_eq!(ready.herdr_identity, identity);
         assert!(active.is_none());
         assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
 
@@ -1404,6 +1418,7 @@ mod tests {
             connection_id: 7,
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             cancelled: false,
+            herdr_identity: crate::target_binding::synthetic_remote_session_identity(1),
         }));
         assert!(take_ready_for_commit(&mut active, 7, "request-a").is_err());
         assert!(stage_ready_state(&stage, &mut active, "request-a", "  ".into()).is_err());
