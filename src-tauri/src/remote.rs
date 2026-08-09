@@ -878,8 +878,7 @@ mod tests {
         let mut cancelled = ConnectionSession::default();
         cancelled.begin("request-cancelled".into()).unwrap();
         let cancelled_response =
-            status_response(&mut cancelled, "request-cancelled", RemoteStatus::Cancelled)
-                .unwrap();
+            status_response(&mut cancelled, "request-cancelled", RemoteStatus::Cancelled).unwrap();
         assert!(cancelled_response.injection.is_none());
         assert!(cancelled.is_idle());
     }

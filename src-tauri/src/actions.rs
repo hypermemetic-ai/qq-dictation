@@ -756,9 +756,9 @@ pub(crate) fn start_remote_operation(
     // Herdr delivery retains its start-owned exact server/session identity.
     // Laptop-local delivery deliberately captures no workstation or laptop target.
     let delivery = match delivery_mode {
-        RemoteDeliveryMode::Herdr => RemoteDeliveryPlan::Herdr(
-            crate::target_binding::capture_remote_session_identity()?,
-        ),
+        RemoteDeliveryMode::Herdr => {
+            RemoteDeliveryPlan::Herdr(crate::target_binding::capture_remote_session_identity()?)
+        }
         RemoteDeliveryMode::Local => RemoteDeliveryPlan::Local,
     };
     let transcription = app.state::<Arc<TranscriptionManager>>();
