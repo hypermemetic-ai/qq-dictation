@@ -77,6 +77,15 @@ class ClientState(str, Enum):
     FAILED = "failed"
 
 
+NOTIFICATION_EXPIRE_MILLISECONDS = {
+    ClientState.OFF: 2000,
+    ClientState.ARMED: 2000,
+    ClientState.RECORDING: 2000,
+    ClientState.PROCESSING: 2000,
+    ClientState.FAILED: 8000,
+}
+
+
 class DeliveryMode(str, Enum):
     HERDR = "herdr"
     LOCAL = "local"
@@ -539,6 +548,7 @@ class StatusNotifier:
                     self.executable,
                     "--app-name=qq-dictation",
                     "--replace-id=25160",
+                    f"--expire-time={NOTIFICATION_EXPIRE_MILLISECONDS[state]}",
                     summary,
                     detail,
                 ],
@@ -581,7 +591,10 @@ class XdotoolInjector:
             raise ClientError(f"xdotool {action} failed with status {result.returncode}{suffix}")
 
     def inject(self, plan: InjectionPlan) -> None:
-        self._run(["type", "--clearmodifiers", "--", plan.text], "text injection")
+        self._run(
+            ["type", "--delay", "0", "--clearmodifiers", "--", plan.text],
+            "text injection",
+        )
         if plan.submit_key is not None:
             key = {
                 "enter": "Return",

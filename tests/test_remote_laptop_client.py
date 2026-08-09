@@ -147,6 +147,40 @@ class ConfigAndProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(client.ClientError, message):
                     client.decode_response(payload)
 
+    def test_status_notifier_uses_complete_finite_argv_for_every_state(self):
+        notifier = client.StatusNotifier("/usr/bin/notify-send")
+        expiries = {
+            client.ClientState.OFF: "2000",
+            client.ClientState.ARMED: "2000",
+            client.ClientState.RECORDING: "2000",
+            client.ClientState.PROCESSING: "2000",
+            client.ClientState.FAILED: "8000",
+        }
+        self.assertEqual(set(expiries), set(client.ClientState))
+
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(client.subprocess, "run", return_value=completed) as run:
+            for state in client.ClientState:
+                notifier.show(state, f"{state.value} detail")
+
+        self.assertEqual(run.call_count, len(client.ClientState))
+        for call, state in zip(run.call_args_list, client.ClientState, strict=True):
+            self.assertEqual(
+                call.args[0],
+                [
+                    "/usr/bin/notify-send",
+                    "--app-name=qq-dictation",
+                    "--replace-id=25160",
+                    f"--expire-time={expiries[state]}",
+                    f"qq-dictation: {state.value}",
+                    f"{state.value} detail",
+                ],
+            )
+        self.assertEqual(
+            notifier.history,
+            [(state, f"{state.value} detail") for state in client.ClientState],
+        )
+
     def test_xdotool_adapter_uses_argv_only_exact_text_and_one_submit_key(self):
         injector = client.XdotoolInjector(config(delivery_mode="local"))
         completed = subprocess.CompletedProcess([], 0, "", "")
@@ -158,6 +192,8 @@ class ConfigAndProtocolTests(unittest.TestCase):
             [
                 "/usr/bin/xdotool",
                 "type",
+                "--delay",
+                "0",
                 "--clearmodifiers",
                 "--",
                 "exact -- Unicode Δ ",
@@ -181,6 +217,18 @@ class ConfigAndProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(client.ClientError, "synthetic adapter failure"):
                 injector.inject(client.InjectionPlan("one attempt", "enter"))
         self.assertEqual(run.call_count, 1)
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "/usr/bin/xdotool",
+                "type",
+                "--delay",
+                "0",
+                "--clearmodifiers",
+                "--",
+                "one attempt",
+            ],
+        )
 
     def test_pcm_decoder_is_little_endian_bounded_and_refuses_partial_samples(self):
         self.assertEqual(client.pcm_s16le_samples(b"\x01\x00\x00\x80"), [1, -32768])
