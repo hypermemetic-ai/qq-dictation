@@ -1,4 +1,5 @@
 use crate::audio_toolkit::{
+    audio::{accept_16khz_frame, AudioFrameCallback, FrameResampler, VadConfig},
     list_input_devices,
     vad::{
         SmoothedVad, VAD_OFFLINE_HANGOVER_FRAMES, VAD_ONSET_FRAMES, VAD_PREFILL_FRAMES,
@@ -8,6 +9,7 @@ use crate::audio_toolkit::{
 };
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
+use crate::operation::OperationOwner;
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info, warn};
@@ -235,10 +237,10 @@ const WHISPER_SAMPLE_RATE: usize = 16000;
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone, Debug)]
-pub enum RecordingState {
+pub(crate) enum RecordingState {
     Idle,
-    Recording { binding_id: String },
-    Stopping,
+    Recording { owner: OperationOwner },
+    Stopping { owner: OperationOwner },
 }
 
 #[derive(Clone, Debug)]
@@ -259,33 +261,38 @@ struct MuteState {
 
 /* ──────────────────────────────────────────────────────────────── */
 
-fn create_audio_recorder(
-    vad_path: &Path,
-    app_handle: &tauri::AppHandle,
-    stream_router: Arc<StreamRouter>,
-) -> Result<AudioRecorder, anyhow::Error> {
+fn create_vad_config(vad_path: &Path) -> Result<VadConfig, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
-    // active at once within a recording), so the recorder reconfigures its
+    // active at once within a recording), so the processor reconfigures its
     // hangover tail per session rather than keeping two ONNX sessions resident.
     let silero = SileroVad::new(vad_path, VAD_THRESHOLD)
-        .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
+        .map_err(|error| anyhow::anyhow!("Failed to create SileroVad: {error}"))?;
     let smoothed_vad = SmoothedVad::new(
         Box::new(silero),
         VAD_PREFILL_FRAMES,
         VAD_OFFLINE_HANGOVER_FRAMES,
         VAD_ONSET_FRAMES,
     );
+    Ok(VadConfig::new(
+        Box::new(smoothed_vad),
+        VAD_OFFLINE_HANGOVER_FRAMES,
+        VAD_STREAMING_HANGOVER_FRAMES,
+    ))
+}
+
+fn create_audio_recorder(
+    vad_path: &Path,
+    app_handle: &tauri::AppHandle,
+    stream_router: Arc<StreamRouter>,
+) -> Result<AudioRecorder, anyhow::Error> {
+    let vad = create_vad_config(vad_path)?;
 
     // Recorder with VAD, a spectrum-level callback that forwards level updates to
     // the frontend, and an audio-frame callback that feeds live streaming via a
     // shared `StreamRouter` (captured directly, not via Tauri state — see its docs).
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
-        .with_vad(
-            Box::new(smoothed_vad),
-            VAD_OFFLINE_HANGOVER_FRAMES,
-            VAD_STREAMING_HANGOVER_FRAMES,
-        )
+        .with_vad_config(vad)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -302,6 +309,79 @@ fn create_audio_recorder(
     Ok(recorder)
 }
 
+struct RemoteAudioCapture {
+    frames: FrameResampler,
+    vad: Option<VadConfig>,
+    vad_policy: VadPolicy,
+    audio_callback: Option<AudioFrameCallback>,
+    accepted_samples: Vec<f32>,
+}
+
+impl RemoteAudioCapture {
+    fn new(vad: VadConfig, vad_policy: VadPolicy, stream_router: Arc<StreamRouter>) -> Self {
+        let audio_callback: AudioFrameCallback = Arc::new(move |frame| stream_router.feed(frame));
+        Self::with_callback(vad, vad_policy, audio_callback)
+    }
+
+    fn with_callback(
+        vad: VadConfig,
+        vad_policy: VadPolicy,
+        audio_callback: AudioFrameCallback,
+    ) -> Self {
+        vad.prepare(vad_policy);
+        Self {
+            frames: FrameResampler::new(
+                WHISPER_SAMPLE_RATE,
+                WHISPER_SAMPLE_RATE,
+                Duration::from_millis(30),
+            ),
+            vad: Some(vad),
+            vad_policy,
+            audio_callback: Some(audio_callback),
+            accepted_samples: Vec::new(),
+        }
+    }
+
+    fn push_pcm_s16le(&mut self, pcm: &[i16]) {
+        let normalized = pcm
+            .iter()
+            .map(|sample| f32::from(*sample) / 32768.0)
+            .collect::<Vec<_>>();
+        let vad = &self.vad;
+        let vad_policy = self.vad_policy;
+        let audio_callback = &self.audio_callback;
+        let accepted_samples = &mut self.accepted_samples;
+        self.frames.push(&normalized, |frame| {
+            accept_16khz_frame(
+                frame,
+                true,
+                vad_policy,
+                vad,
+                audio_callback,
+                accepted_samples,
+            )
+        });
+    }
+
+    fn finish(mut self) -> Vec<f32> {
+        let vad = &self.vad;
+        let vad_policy = self.vad_policy;
+        let audio_callback = &self.audio_callback;
+        let accepted_samples = &mut self.accepted_samples;
+        self.frames.finish(|frame| {
+            accept_16khz_frame(
+                frame,
+                true,
+                vad_policy,
+                vad,
+                audio_callback,
+                accepted_samples,
+            )
+        });
+        self.accepted_samples
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone)]
@@ -311,6 +391,7 @@ pub struct AudioRecordingManager {
     app_handle: tauri::AppHandle,
 
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
+    remote_capture: Arc<Mutex<Option<RemoteAudioCapture>>>,
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
     mute_state: Arc<Mutex<MuteState>>,
@@ -346,6 +427,7 @@ impl AudioRecordingManager {
             app_handle: app.clone(),
 
             recorder: Arc::new(Mutex::new(None)),
+            remote_capture: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
             mute_state: Arc::new(Mutex::new(MuteState::default())),
@@ -658,11 +740,12 @@ impl AudioRecordingManager {
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 if rec.start(vad_policy).is_ok() {
+                    let owner = OperationOwner::local(binding_id);
                     *self.is_recording.lock().unwrap() = true;
                     *state = RecordingState::Recording {
-                        binding_id: binding_id.to_string(),
+                        owner: owner.clone(),
                     };
-                    debug!("Recording started for binding {binding_id}");
+                    debug!("Recording started for {owner}");
                     return Ok(());
                 }
             }
@@ -670,6 +753,51 @@ impl AudioRecordingManager {
         } else {
             Err("Already recording".to_string())
         }
+    }
+
+    pub(crate) fn try_start_remote(
+        &self,
+        request_id: &str,
+        vad_policy: VadPolicy,
+    ) -> Result<(), String> {
+        let vad_path = self
+            .app_handle
+            .path()
+            .resolve(
+                "resources/models/silero_vad_v4.onnx",
+                tauri::path::BaseDirectory::Resource,
+            )
+            .map_err(|error| format!("Failed to resolve VAD path: {error}"))?;
+        let vad = create_vad_config(&vad_path).map_err(|error| error.to_string())?;
+        let capture = RemoteAudioCapture::new(vad, vad_policy, Arc::clone(&self.stream_router));
+
+        let mut state = self.state.lock().unwrap();
+        if !matches!(*state, RecordingState::Idle) {
+            return Err("Another recording owns the audio pipeline".to_string());
+        }
+        let owner = OperationOwner::remote(request_id);
+        *self.remote_capture.lock().unwrap() = Some(capture);
+        *self.is_recording.lock().unwrap() = true;
+        *state = RecordingState::Recording {
+            owner: owner.clone(),
+        };
+        debug!("Remote recording started for {owner}");
+        Ok(())
+    }
+
+    pub(crate) fn feed_remote_pcm(&self, request_id: &str, pcm: &[i16]) -> Result<(), String> {
+        let owner = OperationOwner::remote(request_id);
+        let state = self.state.lock().unwrap();
+        if !matches!(&*state, RecordingState::Recording { owner: active } if active == &owner) {
+            return Err("Remote request does not own the recording pipeline".to_string());
+        }
+        self.remote_capture
+            .lock()
+            .unwrap()
+            .as_mut()
+            .ok_or_else(|| "Remote capture pipeline is unavailable".to_string())?
+            .push_pcm_s16le(pcm);
+        Ok(())
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
@@ -694,56 +822,68 @@ impl AudioRecordingManager {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
 
-    pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
+    pub(crate) fn stop_owned(
+        &self,
+        owner: &OperationOwner,
+        cancel_generation: u64,
+    ) -> Option<Vec<f32>> {
         let mut state = self.state.lock().unwrap();
 
-        match *state {
-            RecordingState::Recording {
-                binding_id: ref active,
-            } if active == binding_id => {
-                *state = RecordingState::Stopping;
+        match &*state {
+            RecordingState::Recording { owner: active } if active == owner => {
+                *state = RecordingState::Stopping {
+                    owner: owner.clone(),
+                };
                 drop(state);
 
-                // Optionally keep recording for a bit longer to capture trailing audio.
-                // This is only the explicit user setting; streaming VAD must not add
-                // hidden post-release capture time.
-                let settings = get_settings(&self.app_handle);
-                let buffer_ms = settings.extra_recording_buffer_ms;
-                if buffer_ms > 0 {
-                    debug!(
-                        "Extra recording buffer: sleeping {}ms before stopping",
-                        buffer_ms
-                    );
-                    let started = Instant::now();
-                    let buffer = Duration::from_millis(buffer_ms);
-                    while started.elapsed() < buffer {
-                        if self.was_cancelled_since(cancel_generation) {
-                            debug!("Recording stop cancelled during extra buffer");
-                            break;
+                // The local microphone may keep capturing for the configured
+                // trailing buffer. A remote sender has already stopped its
+                // microphone before Finish, so delaying here cannot add audio.
+                if owner.is_local() {
+                    let buffer_ms = get_settings(&self.app_handle).extra_recording_buffer_ms;
+                    if buffer_ms > 0 {
+                        debug!("Extra recording buffer: sleeping {buffer_ms}ms before stopping");
+                        let started = Instant::now();
+                        let buffer = Duration::from_millis(buffer_ms);
+                        while started.elapsed() < buffer {
+                            if self.was_cancelled_since(cancel_generation) {
+                                debug!("Recording stop cancelled during extra buffer");
+                                break;
+                            }
+                            let remaining = buffer.saturating_sub(started.elapsed());
+                            std::thread::sleep(remaining.min(Duration::from_millis(25)));
                         }
-                        let remaining = buffer.saturating_sub(started.elapsed());
-                        std::thread::sleep(remaining.min(Duration::from_millis(25)));
                     }
                 }
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    match rec.stop() {
-                        Ok(buf) => buf,
-                        Err(e) => {
-                            error!("stop() failed: {e}");
-                            Vec::new()
+                let samples = if owner.is_local() {
+                    if let Some(recorder) = self.recorder.lock().unwrap().as_ref() {
+                        match recorder.stop() {
+                            Ok(samples) => samples,
+                            Err(error) => {
+                                error!("stop() failed: {error}");
+                                Vec::new()
+                            }
                         }
+                    } else {
+                        error!("Recorder not available");
+                        Vec::new()
                     }
                 } else {
-                    error!("Recorder not available");
-                    Vec::new()
+                    self.remote_capture
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .map(RemoteAudioCapture::finish)
+                        .unwrap_or_default()
                 };
 
                 *self.is_recording.lock().unwrap() = false;
                 *self.state.lock().unwrap() = RecordingState::Idle;
 
-                // In on-demand mode, close the mic (lazily if the setting is enabled)
-                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                if owner.is_local()
+                    && matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand)
+                {
                     if get_settings(&self.app_handle).lazy_stream_close {
                         self.schedule_lazy_close();
                     } else {
@@ -756,10 +896,8 @@ impl AudioRecordingManager {
                     return None;
                 }
 
-                // Pad if very short
-                let s_len = samples.len();
-                // debug!("Got {} samples", s_len);
-                if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
+                // Preserve the existing short-recording padding for both sources.
+                if samples.len() < WHISPER_SAMPLE_RATE && !samples.is_empty() {
                     let mut padded = samples;
                     padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
                     Some(padded)
@@ -770,42 +908,106 @@ impl AudioRecordingManager {
             _ => None,
         }
     }
+
     pub fn is_recording(&self) -> bool {
         matches!(
             *self.state.lock().unwrap(),
-            RecordingState::Recording { .. } | RecordingState::Stopping
+            RecordingState::Recording { .. } | RecordingState::Stopping { .. }
         )
     }
 
-    /// Cancel any ongoing recording without returning audio samples
-    pub fn cancel_recording(&self) {
-        self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-        let mut state = self.state.lock().unwrap();
+    pub(crate) fn active_owner(&self) -> Option<OperationOwner> {
+        match &*self.state.lock().unwrap() {
+            RecordingState::Recording { owner } | RecordingState::Stopping { owner } => {
+                Some(owner.clone())
+            }
+            RecordingState::Idle => None,
+        }
+    }
 
-        match *state {
+    pub(crate) fn cancel_processing(&self) {
+        self.cancel_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Cancel only when the caller names the source that currently owns capture.
+    pub(crate) fn cancel_owned(&self, owner: &OperationOwner) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let active_matches = matches!(
+            &*state,
+            RecordingState::Recording { owner: active }
+                | RecordingState::Stopping { owner: active }
+                if active == owner
+        );
+        if !active_matches {
+            return false;
+        }
+        self.cancel_generation.fetch_add(1, Ordering::AcqRel);
+
+        match &*state {
             RecordingState::Recording { .. } => {
                 *state = RecordingState::Idle;
                 drop(state);
 
-                if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    let _ = rec.stop(); // Discard the result
-                }
-
-                *self.is_recording.lock().unwrap() = false;
-
-                // In on-demand mode, close the mic (lazily if the setting is enabled)
-                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
-                    if get_settings(&self.app_handle).lazy_stream_close {
-                        self.schedule_lazy_close();
-                    } else {
-                        self.stop_microphone_stream();
+                if owner.is_local() {
+                    if let Some(recorder) = self.recorder.lock().unwrap().as_ref() {
+                        let _ = recorder.stop();
                     }
+                    if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                        if get_settings(&self.app_handle).lazy_stream_close {
+                            self.schedule_lazy_close();
+                        } else {
+                            self.stop_microphone_stream();
+                        }
+                    }
+                } else {
+                    self.remote_capture.lock().unwrap().take();
                 }
+                *self.is_recording.lock().unwrap() = false;
             }
-            RecordingState::Stopping => {
+            RecordingState::Stopping { .. } => {
                 debug!("Cancellation requested while recording is stopping");
             }
-            RecordingState::Idle => {}
+            RecordingState::Idle => unreachable!("active owner was checked above"),
         }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_toolkit::vad::{VadFrame, VoiceActivityDetector};
+
+    struct SpeechVad;
+
+    impl VoiceActivityDetector for SpeechVad {
+        fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> anyhow::Result<VadFrame<'a>> {
+            Ok(VadFrame::Speech(frame))
+        }
+    }
+
+    #[test]
+    fn remote_pcm_uses_shared_vad_buffer_and_stream_callback_seam() {
+        let vad = VadConfig::new(Box::new(SpeechVad), 15, 55);
+        let streamed = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let streamed_for_callback = Arc::clone(&streamed);
+        let callback: AudioFrameCallback = Arc::new(move |frame| {
+            streamed_for_callback
+                .lock()
+                .unwrap()
+                .extend_from_slice(frame)
+        });
+        let mut capture = RemoteAudioCapture::with_callback(vad, VadPolicy::Streaming, callback);
+
+        let pcm = vec![16_384i16; 480];
+        capture.push_pcm_s16le(&pcm);
+        let accepted = capture.finish();
+        let streamed = streamed.lock().unwrap().clone();
+
+        assert_eq!(accepted.len(), 480);
+        assert_eq!(streamed, accepted);
+        assert!(accepted
+            .iter()
+            .all(|sample| (*sample - 0.5).abs() < f32::EPSILON));
     }
 }

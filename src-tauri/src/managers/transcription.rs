@@ -1976,6 +1976,22 @@ mod tests {
     }
 
     #[test]
+    fn stream_router_preserves_remote_frame_order_before_finalize() {
+        let router = StreamRouter::new();
+        let receiver = router.open();
+        router.feed(&[0.25, -0.5]);
+        let sender = router.take().expect("open stream sender");
+        let (reply_tx, _reply_rx) = mpsc::channel();
+        sender.send(StreamCmd::Finalize(reply_tx)).unwrap();
+
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            StreamCmd::Feed(frame) if frame == vec![0.25, -0.5]
+        ));
+        assert!(matches!(receiver.recv().unwrap(), StreamCmd::Finalize(_)));
+    }
+
+    #[test]
     fn normal_hosts_preserve_every_transcribe_accelerator_setting() {
         for setting in [
             TranscribeAcceleratorSetting::Auto,

@@ -609,6 +609,16 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 }
 
 #[cfg(target_os = "linux")]
+fn deliver_bound_herdr(
+    pane_id: &str,
+    text: &str,
+    auto_submit: bool,
+    mut deliver: impl FnMut(&str, &str, bool) -> Result<(), String>,
+) -> Result<(), String> {
+    deliver(pane_id, text, auto_submit)
+}
+
+#[cfg(target_os = "linux")]
 fn herdr_target(
     capture: Option<crate::target_binding::CaptureOutcome>,
     paste_method: PasteMethod,
@@ -623,6 +633,37 @@ fn herdr_target(
         None | Some(crate::target_binding::CaptureOutcome::Legacy) => Ok(None),
         Some(crate::target_binding::CaptureOutcome::Bound(pane_id)) => Ok(Some(pane_id)),
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn paste_remote_commit(
+    text: String,
+    herdr_identity: &crate::target_binding::HerdrSessionIdentity,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let settings = get_settings(&app_handle);
+    let paste_method = settings.paste_method;
+    let text = if settings.append_trailing_space {
+        format!("{} ", text)
+    } else {
+        text
+    };
+    let pane_id = crate::target_binding::deliver_remote(
+        herdr_identity,
+        &text,
+        should_send_auto_submit(settings.auto_submit, paste_method),
+        paste_method != PasteMethod::None,
+    )
+    .map_err(|error| format!("Failed remote Herdr commit delivery: {error}"))?;
+    info!("Remote commit selected Herdr pane {}", pane_id);
+
+    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+        app_handle
+            .clipboard()
+            .write_text(&text)
+            .map_err(|error| format!("Failed to copy to clipboard: {error}"))?;
+    }
+    Ok(())
 }
 
 pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> Result<(), String> {
@@ -655,15 +696,17 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
     {
         let capture = target_token.map(crate::target_binding::take_for_recording);
         if let Some(pane_id) = herdr_target(capture, paste_method)? {
-            crate::target_binding::deliver(&pane_id, &text)
-                .map_err(|e| format!("Failed to deliver to herdr pane {}: {}", pane_id, e))?;
+            deliver_bound_herdr(
+                &pane_id,
+                &text,
+                settings.auto_submit,
+                |pane_id, text, auto_submit| {
+                    crate::target_binding::deliver(pane_id, text, auto_submit).map_err(|error| {
+                        format!("Failed to deliver to herdr pane {pane_id}: {error}")
+                    })
+                },
+            )?;
             info!("Delivered transcription to herdr pane {}", pane_id);
-            if settings.auto_submit {
-                std::thread::sleep(Duration::from_millis(50));
-                crate::target_binding::send_enter(&pane_id).map_err(|e| {
-                    format!("Failed to send Enter to herdr pane {}: {}", pane_id, e)
-                })?;
-            }
             if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
                 let clipboard = app_handle.clipboard();
                 clipboard
@@ -757,7 +800,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn herdr_target_distinguishes_legacy_bound_and_failed_capture() {
+    fn local_herdr_target_is_capture_only_and_never_selects_remote_focus() {
         use crate::target_binding::CaptureOutcome;
 
         assert_eq!(
@@ -779,6 +822,70 @@ mod tests {
         )
         .unwrap_err();
         assert!(failure.contains("snapshot timed out"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_is_one_exact_pane_call_with_auto_submit_policy() {
+        use std::cell::RefCell;
+
+        let calls = RefCell::new(Vec::new());
+        deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            true,
+            |pane, text, auto_submit| {
+                calls
+                    .borrow_mut()
+                    .push((pane.to_string(), text.to_string(), auto_submit));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            calls.into_inner(),
+            [("wRemote:pBound".into(), "synthetic text".into(), true)]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_failure_has_no_second_call_or_fallback() {
+        let calls = std::cell::Cell::new(0);
+        let result = deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            true,
+            |_pane, _text, _auto_submit| {
+                calls.set(calls.get() + 1);
+                Err("synthetic delivery failure".to_string())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bound_delivery_without_auto_submit_keeps_text_unchanged() {
+        let observed = std::cell::RefCell::new(None);
+        deliver_bound_herdr(
+            "wRemote:pBound",
+            "synthetic text",
+            false,
+            |pane, text, auto_submit| {
+                observed
+                    .borrow_mut()
+                    .replace((pane.to_string(), text.to_string(), auto_submit));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            observed.into_inner(),
+            Some(("wRemote:pBound".into(), "synthetic text".into(), false))
+        );
     }
 
     #[cfg(target_os = "linux")]

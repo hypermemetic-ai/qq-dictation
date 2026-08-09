@@ -8,13 +8,16 @@ use specta::Type;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
 const TEXT_PAIR_LIMIT: usize = 1_000;
+const WAV_RESERVATION_ATTEMPTS: u64 = 64;
+static NEXT_WAV_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
 struct CleanupReport {
@@ -101,18 +104,204 @@ pub struct HistoryEntry {
     pub audio_available: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReservedFileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl ReservedFileIdentity {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = metadata;
+            Self {}
+        }
+    }
+
+    fn matches(self, metadata: &fs::Metadata) -> bool {
+        if !metadata.file_type().is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.device == metadata.dev() && self.inode == metadata.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    }
+}
+
 pub(crate) struct PendingAudioGuard<'a> {
     pending_audio_files: &'a Mutex<HashSet<OsString>>,
     file_name: OsString,
+    path: PathBuf,
+    identity: ReservedFileIdentity,
+    writer: Option<File>,
+    history_owned: bool,
+}
+
+impl PendingAudioGuard<'_> {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn take_writer(&mut self) -> Result<File> {
+        self.writer
+            .take()
+            .ok_or_else(|| anyhow!("reserved WAV writer was already taken"))
+    }
+
+    fn is_exact_reserved_file(&self) -> bool {
+        fs::symlink_metadata(&self.path).is_ok_and(|metadata| self.identity.matches(&metadata))
+    }
+
+    fn mark_history_owned(&mut self) {
+        self.history_owned = true;
+    }
 }
 
 impl Drop for PendingAudioGuard<'_> {
     fn drop(&mut self) {
+        // Close the exclusive writer before attempting teardown on platforms
+        // that do not permit unlinking an open file.
+        self.writer.take();
+        if !self.history_owned {
+            match fs::symlink_metadata(&self.path) {
+                Ok(metadata) if self.identity.matches(&metadata) => {
+                    match fs::remove_file(&self.path) {
+                        Ok(()) => {
+                            debug!("Deleted uncommitted WAV file: {}", self.path.display())
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => error!(
+                            "Failed to delete uncommitted WAV file {}: {}",
+                            self.path.display(),
+                            error
+                        ),
+                    }
+                }
+                Ok(_) => error!(
+                    "Refusing to delete replaced uncommitted WAV path {}",
+                    self.path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => error!(
+                    "Failed to inspect uncommitted WAV file {}: {}",
+                    self.path.display(),
+                    error
+                ),
+            }
+        }
         self.pending_audio_files
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&self.file_name);
     }
+}
+
+fn wav_candidate_name(timestamp_millis: i64, process_id: u32, nonce: u64) -> String {
+    format!("handy-{timestamp_millis}-{process_id}-{nonce:016x}.wav")
+}
+
+fn is_safe_wav_candidate(file_name: &str) -> bool {
+    let path = Path::new(file_name);
+    path.file_name() == Some(path.as_os_str())
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
+}
+
+fn reserve_pending_audio_from_candidates<'a>(
+    recordings_dir: &Path,
+    pending_audio_files: &'a Mutex<HashSet<OsString>>,
+    candidates: impl IntoIterator<Item = String>,
+) -> Result<PendingAudioGuard<'a>> {
+    // Cleanup takes this same mutex before scanning. Keep it held from before
+    // create_new through pending registration so the new inode is never
+    // observable as an unowned orphan.
+    let mut pending = pending_audio_files
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    for candidate in candidates {
+        if !is_safe_wav_candidate(&candidate) {
+            return Err(anyhow!("unsafe WAV reservation candidate"));
+        }
+        let file_name = OsString::from(candidate);
+        if pending.contains(&file_name) {
+            continue;
+        }
+        let path = recordings_dir.join(&file_name);
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+
+        let writer = match options.open(&path) {
+            Ok(writer) => writer,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(anyhow!(
+                    "Failed to reserve WAV file {}: {}",
+                    path.display(),
+                    error
+                ))
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(error) = writer.set_permissions(fs::Permissions::from_mode(0o600)) {
+                drop(writer);
+                let _ = fs::remove_file(&path);
+                return Err(anyhow!(
+                    "Failed to secure reserved WAV file {}: {}",
+                    path.display(),
+                    error
+                ));
+            }
+        }
+        let metadata = writer.metadata().map_err(|error| {
+            let _ = fs::remove_file(&path);
+            anyhow!(
+                "Failed to inspect reserved WAV file {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        let identity = ReservedFileIdentity::from_metadata(&metadata);
+        pending.insert(file_name.clone());
+        return Ok(PendingAudioGuard {
+            pending_audio_files,
+            file_name,
+            path,
+            identity,
+            writer: Some(writer),
+            history_owned: false,
+        });
+    }
+
+    Err(anyhow!(
+        "Could not reserve a unique WAV file after bounded attempts"
+    ))
 }
 
 pub struct HistoryManager {
@@ -302,16 +491,22 @@ impl HistoryManager {
         Ok(())
     }
 
-    pub(crate) fn protect_pending_audio_file(&self, file_name: &str) -> PendingAudioGuard<'_> {
-        let file_name = OsString::from(file_name);
-        self.pending_audio_files
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(file_name.clone());
-        PendingAudioGuard {
-            pending_audio_files: &self.pending_audio_files,
-            file_name,
-        }
+    pub(crate) fn reserve_pending_audio_file(&self) -> Result<PendingAudioGuard<'_>> {
+        let timestamp_millis = Utc::now().timestamp_millis();
+        let process_id = std::process::id();
+        let first_nonce = NEXT_WAV_NONCE.fetch_add(WAV_RESERVATION_ATTEMPTS, Ordering::Relaxed);
+        let candidates = (0..WAV_RESERVATION_ATTEMPTS).map(|offset| {
+            wav_candidate_name(
+                timestamp_millis,
+                process_id,
+                first_nonce.wrapping_add(offset),
+            )
+        });
+        reserve_pending_audio_from_candidates(
+            &self.recordings_dir,
+            &self.pending_audio_files,
+            candidates,
+        )
     }
 
     fn cleanup_orphaned_wav_files_with_conn(
@@ -461,13 +656,36 @@ impl HistoryManager {
         })
     }
 
-    pub fn recordings_dir(&self) -> &std::path::Path {
-        &self.recordings_dir
+    /// Atomically transfers a published WAV from the teardown guard to
+    /// history ownership as soon as its database row is inserted.
+    pub(crate) fn save_pending_entry(
+        &self,
+        pending: &mut PendingAudioGuard<'_>,
+        transcription_text: String,
+        post_process_requested: bool,
+        post_processed_text: Option<String>,
+        post_process_prompt: Option<String>,
+        post_process_model: Option<String>,
+    ) -> Result<HistoryEntry> {
+        let file_name = pending.file_name.to_string_lossy().into_owned();
+        if pending.path != self.recordings_dir.join(&file_name) || !pending.is_exact_reserved_file()
+        {
+            return Err(anyhow!(
+                "pending WAV does not belong to this history manager"
+            ));
+        }
+        self.save_entry_with_ownership(
+            file_name,
+            transcription_text,
+            post_process_requested,
+            post_processed_text,
+            post_process_prompt,
+            post_process_model,
+            || pending.mark_history_owned(),
+        )
     }
 
-    /// Save a new history entry to the database.
-    /// The WAV file should already have been written to the recordings directory.
-    pub fn save_entry(
+    fn save_entry_with_ownership(
         &self,
         file_name: String,
         transcription_text: String,
@@ -475,6 +693,7 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
         post_process_model: Option<String>,
+        history_owned: impl FnOnce(),
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -507,6 +726,10 @@ impl HistoryManager {
                 audio_available,
             ],
         )?;
+        // From this point the database owns the WAV. Mark the publication
+        // guard before policy cleanup so a later cleanup error cannot cause
+        // Drop to delete audio still recorded as available in history.
+        history_owned();
 
         let mut entry = HistoryEntry {
             id: conn.last_insert_rowid(),
@@ -1359,6 +1582,134 @@ mod tests {
         assert!(wav_directory.is_dir());
         #[cfg(unix)]
         assert!(wav_symlink.is_symlink());
+    }
+
+    #[test]
+    fn exclusive_audio_reservation_skips_owned_collision_without_mutation() {
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let pending_audio_files = Mutex::new(HashSet::new());
+        let owned_path = temp_dir.path().join("synthetic-owned.wav");
+        fs::write(&owned_path, b"history-owned audio").expect("write owned fixture");
+
+        let mut guard = reserve_pending_audio_from_candidates(
+            temp_dir.path(),
+            &pending_audio_files,
+            [
+                "synthetic-owned.wav".to_string(),
+                "synthetic-reserved.wav".to_string(),
+            ],
+        )
+        .expect("skip collision and reserve a new inode");
+        let reserved_path = guard.path().to_path_buf();
+        crate::audio_toolkit::write_wav_file(
+            guard.take_writer().expect("take exact reservation handle"),
+            &[0.0, 0.25, -0.25],
+        )
+        .expect("write only through exclusive reservation");
+
+        assert_eq!(fs::read(&owned_path).unwrap(), b"history-owned audio");
+        assert_eq!(guard.path(), temp_dir.path().join("synthetic-reserved.wav"));
+        assert_eq!(
+            crate::audio_toolkit::read_wav_samples(&reserved_path)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(pending_audio_files.lock().unwrap().len(), 1);
+        drop(guard);
+        assert_eq!(fs::read(&owned_path).unwrap(), b"history-owned audio");
+        assert!(!temp_dir.path().join("synthetic-reserved.wav").exists());
+        assert!(pending_audio_files.lock().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repeated_candidates_reserve_distinct_mode_safe_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let pending_audio_files = Mutex::new(HashSet::new());
+        let candidates = || {
+            [
+                wav_candidate_name(1_723_456_789_012, 42, 0),
+                wav_candidate_name(1_723_456_789_012, 42, 1),
+            ]
+        };
+        let first = reserve_pending_audio_from_candidates(
+            temp_dir.path(),
+            &pending_audio_files,
+            candidates(),
+        )
+        .expect("reserve first same-time request");
+        let second = reserve_pending_audio_from_candidates(
+            temp_dir.path(),
+            &pending_audio_files,
+            candidates(),
+        )
+        .expect("collision authority reserves second same-time request");
+
+        assert_ne!(first.path(), second.path());
+        for path in [first.path(), second.path()] {
+            let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "reserved WAV must be owner-only");
+        }
+    }
+
+    #[test]
+    fn uncommitted_reserved_audio_is_removed_immediately() {
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let pending_audio_files = Mutex::new(HashSet::new());
+        let guard = reserve_pending_audio_from_candidates(
+            temp_dir.path(),
+            &pending_audio_files,
+            ["synthetic-cancelled.wav".to_string()],
+        )
+        .expect("reserve cancelled request WAV");
+        let path = guard.path().to_path_buf();
+        drop(guard);
+
+        assert!(!path.exists());
+        assert!(pending_audio_files.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn inserted_history_owned_audio_survives_guard_drop() {
+        let conn = setup_conn();
+        let temp_dir = TempDir::new().expect("create recordings directory");
+        let pending_audio_files = Mutex::new(HashSet::new());
+        let mut guard = reserve_pending_audio_from_candidates(
+            temp_dir.path(),
+            &pending_audio_files,
+            ["synthetic-tracked.wav".to_string()],
+        )
+        .expect("reserve tracked request WAV");
+        let path = guard.path().to_path_buf();
+        let mut writer = guard.take_writer().expect("take exact reserved writer");
+        use std::io::Write;
+        writer.write_all(b"synthetic tracked audio").unwrap();
+        drop(writer);
+
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name, timestamp, saved, title, transcription_text,
+                post_processed_text, post_process_prompt, post_process_model,
+                post_process_requested, audio_available
+             ) VALUES ('synthetic-tracked.wav', 1, 0, 'Synthetic tracked',
+                       'raw', 'processed', 'prompt', 'provider/model', 1, 1)",
+            [],
+        )
+        .expect("insert history owner");
+        // This is the same immediate transfer invoked after production INSERT
+        // and before policy cleanup in save_entry_with_ownership.
+        guard.mark_history_owned();
+        drop(guard);
+
+        assert!(path.is_file());
+        assert!(pending_audio_files.lock().unwrap().is_empty());
+        let mut report = CleanupReport::default();
+        HistoryManager::cleanup_audio_by_count_with_conn(&conn, temp_dir.path(), 1, &mut report)
+            .expect("apply authoritative retention policy");
+        assert!(path.is_file());
     }
 
     #[test]

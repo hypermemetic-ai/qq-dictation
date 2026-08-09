@@ -22,7 +22,16 @@ use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::ffi::OsStr;
 #[cfg(target_os = "linux")]
-use std::path::{Path, PathBuf};
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+#[cfg(target_os = "linux")]
+use std::os::unix::net::UnixStream;
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +45,231 @@ use tauri::AppHandle;
 const HERDR_WINDOW_TITLE: &str = "herdr";
 #[cfg(target_os = "linux")]
 const LINUXBREW_HERDR: &str = "/home/linuxbrew/.linuxbrew/bin/herdr";
+
+/// Immutable identity of the configured/default live Herdr session. It does
+/// not contain workspace, tab, pane, focus, or layout state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HerdrSessionIdentity {
+    socket_path: PathBuf,
+    socket_device: u64,
+    socket_inode: u64,
+    socket_uid: u32,
+    peer_pid: u32,
+    peer_uid: u32,
+    peer_gid: u32,
+    peer_start_time: u64,
+    version: String,
+    protocol: u64,
+    session: Option<String>,
+}
+
+#[cfg(test)]
+pub(crate) fn synthetic_remote_session_identity(seed: u64) -> HerdrSessionIdentity {
+    HerdrSessionIdentity {
+        socket_path: PathBuf::from(format!("/synthetic/herdr-{seed}.sock")),
+        socket_device: 10,
+        socket_inode: seed,
+        socket_uid: 1_000,
+        peer_pid: 2_000 + seed as u32,
+        peer_uid: 1_000,
+        peer_gid: 1_000,
+        peer_start_time: 3_000 + seed,
+        version: "0.7.5".to_string(),
+        protocol: 17,
+        session: None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, serde::Deserialize)]
+struct HerdrServerStatus {
+    status: String,
+    running: bool,
+    version: String,
+    protocol: u64,
+    compatible: bool,
+    socket: String,
+    session: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct HerdrSocketObservation {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    uid: u32,
+    peer_pid: u32,
+    peer_uid: u32,
+    peer_gid: u32,
+    peer_start_time: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_herdr_server_status(json_bytes: &[u8]) -> Result<HerdrServerStatus, String> {
+    let status: HerdrServerStatus = serde_json::from_slice(json_bytes)
+        .map_err(|error| format!("Herdr server status was malformed: {error}"))?;
+    if status.status != "running" || !status.running || !status.compatible {
+        return Err("Herdr server status is not live and compatible".to_string());
+    }
+    if status.version.is_empty()
+        || status.version.len() > 64
+        || status.protocol == 0
+        || status.socket.is_empty()
+        || status.socket.len() > 4_096
+        || status
+            .session
+            .as_ref()
+            .is_some_and(|session| session.is_empty() || session.len() > 256)
+    {
+        return Err("Herdr server status contains an invalid identity field".to_string());
+    }
+    let socket_path = Path::new(&status.socket);
+    if !socket_path.is_absolute() {
+        return Err("Herdr server status socket path is not absolute".to_string());
+    }
+    Ok(status)
+}
+
+#[cfg(target_os = "linux")]
+fn require_owned_socket(metadata: &fs::Metadata, expected_uid: u32) -> Result<(), String> {
+    if !metadata.file_type().is_socket() {
+        return Err("Herdr server status path is not a Unix socket".to_string());
+    }
+    if metadata.uid() != expected_uid {
+        return Err("Herdr server socket is not owned by the current user".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn socket_peer_credentials(stream: &UnixStream) -> Result<(u32, u32, u32), String> {
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            std::ptr::addr_of_mut!(credentials).cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(format!(
+            "Could not verify Herdr server peer credentials: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let peer_pid = u32::try_from(credentials.pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| "Herdr server peer PID is invalid".to_string())?;
+    Ok((peer_pid, credentials.uid, credentials.gid))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_start_time(pid: u32) -> Result<u64, String> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))
+        .map_err(|error| format!("Could not verify Herdr server process identity: {error}"))?;
+    let command_end = stat
+        .rfind(')')
+        .ok_or_else(|| "Herdr server process status was malformed".to_string())?;
+    // Fields after the command name begin at field 3 (state); starttime is
+    // field 22, therefore index 19 in this suffix.
+    stat.get(command_end + 1..)
+        .and_then(|suffix| suffix.split_whitespace().nth(19))
+        .and_then(|start_time| start_time.parse::<u64>().ok())
+        .filter(|start_time| *start_time > 0)
+        .ok_or_else(|| "Herdr server process start identity was malformed".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_herdr_socket(path: &Path, expected_uid: u32) -> Result<HerdrSocketObservation, String> {
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| format!("Herdr server socket is unavailable: {error}"))?;
+    require_owned_socket(&before, expected_uid)?;
+
+    // Connect only to ask Linux for SO_PEERCRED. No Herdr protocol bytes are
+    // read or written on this identity-only connection.
+    let stream = UnixStream::connect(path)
+        .map_err(|error| format!("Herdr server socket is unavailable: {error}"))?;
+    let (peer_pid, peer_uid, peer_gid) = socket_peer_credentials(&stream)?;
+    if peer_uid != expected_uid {
+        return Err("Herdr server peer is not owned by the current user".to_string());
+    }
+    let peer_start_time = linux_process_start_time(peer_pid)?;
+
+    // A path replacement during observation must not synthesize an identity
+    // from one listener's peer and another listener's inode.
+    let after = fs::symlink_metadata(path)
+        .map_err(|error| format!("Herdr server socket disappeared: {error}"))?;
+    require_owned_socket(&after, expected_uid)?;
+    if before.dev() != after.dev() || before.ino() != after.ino() {
+        return Err("Herdr server socket changed during identity observation".to_string());
+    }
+
+    Ok(HerdrSocketObservation {
+        path: path.to_path_buf(),
+        device: after.dev(),
+        inode: after.ino(),
+        uid: after.uid(),
+        peer_pid,
+        peer_uid,
+        peer_gid,
+        peer_start_time,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn identity_from_status(
+    json_bytes: &[u8],
+    expected_uid: u32,
+) -> Result<HerdrSessionIdentity, String> {
+    let status = parse_herdr_server_status(json_bytes)?;
+    let socket = inspect_herdr_socket(Path::new(&status.socket), expected_uid)?;
+    Ok(HerdrSessionIdentity {
+        socket_path: socket.path,
+        socket_device: socket.device,
+        socket_inode: socket.inode,
+        socket_uid: socket.uid,
+        peer_pid: socket.peer_pid,
+        peer_uid: socket.peer_uid,
+        peer_gid: socket.peer_gid,
+        peer_start_time: socket.peer_start_time,
+        version: status.version,
+        protocol: status.protocol,
+        session: status.session,
+    })
+}
+
+/// Observe the exact configured/default live Herdr server without reading its
+/// focus or layout.
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_remote_session_identity() -> Result<HerdrSessionIdentity, String> {
+    let herdr = resolve_herdr()?;
+    let output = run_with_timeout(
+        &herdr,
+        &["status", "server", "--json"],
+        Duration::from_secs(2),
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "herdr status server failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    identity_from_status(&output.stdout, unsafe { libc::geteuid() })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn capture_remote_session_identity() -> Result<HerdrSessionIdentity, String> {
+    Err("Remote Herdr session identity is supported only on Linux".to_string())
+}
 
 /// The capture result that determines whether paste may use OS-level input.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,12 +326,11 @@ pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
     token
 }
 
-/// The token of the most recently started recording; read at `stop` time.
+/// The token of the most recently started local recording; read at local stop.
 pub fn latest_token() -> u64 {
     LATEST_TOKEN.load(Ordering::SeqCst)
 }
 
-#[cfg(target_os = "linux")]
 fn store_capture(token: u64, capture: CaptureOutcome) {
     // into_inner: a poisoned map must remain usable so paste can still see an
     // explicit outcome (or fail closed on timeout).
@@ -245,12 +478,165 @@ fn parse_focused_pane_id(json_bytes: &[u8]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Types `text` into the pane's PTY. Newlines are collapsed to spaces: a raw
-/// PTY write is not bracketed paste, so a literal newline would act as Enter
-/// and submit a half-delivered message.
 #[cfg(target_os = "linux")]
-pub fn deliver(pane_id: &str, text: &str) -> Result<(), String> {
-    let text = collapse_newlines(text);
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotEnvelope {
+    result: RemoteSnapshotResult,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotResult {
+    snapshot: RemoteSnapshot,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshot {
+    focused_pane_id: String,
+    panes: Vec<RemoteSnapshotPane>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct RemoteSnapshotPane {
+    pane_id: String,
+    focused: bool,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn validate_pane_id(pane_id: &str) -> bool {
+    if pane_id.is_empty() || pane_id.len() > 64 || !pane_id.is_ascii() {
+        return false;
+    }
+    let Some((workspace, pane)) = pane_id.split_once(':') else {
+        return false;
+    };
+    pane_id.matches(':').count() == 1
+        && workspace.strip_prefix('w').is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        && pane.strip_prefix('p').is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn parse_remote_delivery_pane(json_bytes: &[u8]) -> Result<String, String> {
+    let envelope: RemoteSnapshotEnvelope = serde_json::from_slice(json_bytes)
+        .map_err(|error| format!("Herdr session snapshot was malformed: {error}"))?;
+    let snapshot = envelope.result.snapshot;
+    if !validate_pane_id(&snapshot.focused_pane_id) {
+        return Err("Herdr session snapshot has an invalid focused pane id".to_string());
+    }
+
+    let mut identities = std::collections::HashSet::new();
+    let mut focused_panes = Vec::new();
+    for pane in snapshot.panes {
+        if !validate_pane_id(&pane.pane_id) || !identities.insert(pane.pane_id.clone()) {
+            return Err(
+                "Herdr session snapshot has an invalid or duplicate pane identity".to_string(),
+            );
+        }
+        if pane.focused {
+            focused_panes.push(pane.pane_id);
+        }
+    }
+    if focused_panes.len() != 1 || focused_panes[0] != snapshot.focused_pane_id {
+        return Err(
+            "Herdr session snapshot does not contain exactly its one live focused pane".to_string(),
+        );
+    }
+    Ok(snapshot.focused_pane_id)
+}
+
+/// Revalidate the start-owned session identity, then read remote delivery
+/// focus once, freeze that exact pane, and make one literal explicit send.
+/// This path is remote-only and never consults X11 or the local per-recording
+/// capture map. The irrevocable commit begins only after identity equality.
+#[cfg(target_os = "linux")]
+pub(crate) fn deliver_remote(
+    start_identity: &HerdrSessionIdentity,
+    text: &str,
+    auto_submit: bool,
+    delivery_enabled: bool,
+) -> Result<String, String> {
+    let herdr = resolve_herdr()?;
+    deliver_remote_with(
+        start_identity,
+        text,
+        auto_submit,
+        delivery_enabled,
+        capture_remote_session_identity,
+        || {
+            let output = run_with_timeout(&herdr, &["api", "snapshot"], Duration::from_secs(2))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "herdr api snapshot failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(output.stdout)
+        },
+        |pane_id, payload| {
+            let args = send_text_args(pane_id, payload);
+            let output = run_with_timeout(&herdr, &args, Duration::from_secs(2))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "herdr pane send-text failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(())
+        },
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn deliver_remote_with(
+    start_identity: &HerdrSessionIdentity,
+    text: &str,
+    auto_submit: bool,
+    delivery_enabled: bool,
+    observe_identity: impl FnOnce() -> Result<HerdrSessionIdentity, String>,
+    snapshot: impl FnOnce() -> Result<Vec<u8>, String>,
+    deliver: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> Result<String, String> {
+    let current_identity = observe_identity()?;
+    if &current_identity != start_identity {
+        return Err("Herdr server/session was replaced after remote start".to_string());
+    }
+
+    // Identity equality is the last rollback-safe fence. From this point a
+    // server replacement or response loss can make the one delivery attempt
+    // effect-uncertain, so the client must not retry it.
+    let snapshot = snapshot()?;
+    deliver_remote_snapshot(&snapshot, text, auto_submit, delivery_enabled, deliver)
+}
+
+#[cfg(target_os = "linux")]
+fn deliver_remote_snapshot(
+    snapshot: &[u8],
+    text: &str,
+    auto_submit: bool,
+    delivery_enabled: bool,
+    deliver: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> Result<String, String> {
+    let pane_id = parse_remote_delivery_pane(snapshot)?;
+    if delivery_enabled {
+        let payload = send_text_payload(text, auto_submit);
+        deliver(&pane_id, &payload)?;
+    }
+    Ok(pane_id)
+}
+
+/// Types `text` into the pane's PTY. Newlines are collapsed to spaces: a raw
+/// PTY write is not bracketed paste, so transcript newlines must not become
+/// implicit submits. When auto-submit is enabled, one trailing carriage return
+/// is included in this same literal Herdr send-text request.
+#[cfg(target_os = "linux")]
+pub fn deliver(pane_id: &str, text: &str, auto_submit: bool) -> Result<(), String> {
+    let text = send_text_payload(text, auto_submit);
     let herdr = resolve_herdr()?;
     let args = send_text_args(pane_id, &text);
     let output = run_with_timeout(&herdr, &args, Duration::from_secs(2))?;
@@ -270,24 +656,12 @@ fn send_text_args<'a>(pane_id: &'a str, text: &'a str) -> [&'a str; 4] {
     ["pane", "send-text", pane_id, text]
 }
 
-/// Sends Enter to the pane (auto-submit on the herdr path). Enter is the
-/// only submit key that makes sense for a terminal pane; the
-/// `auto_submit_key` setting's chorded variants target GUI apps.
-#[cfg(target_os = "linux")]
-pub fn send_enter(pane_id: &str) -> Result<(), String> {
-    let herdr = resolve_herdr()?;
-    let output = run_with_timeout(
-        &herdr,
-        &["pane", "send-keys", pane_id, "enter"],
-        Duration::from_secs(2),
-    )?;
-    if !output.status.success() {
-        return Err(format!(
-            "herdr pane send-keys failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+fn send_text_payload(text: &str, auto_submit: bool) -> String {
+    let mut payload = collapse_newlines(text);
+    if auto_submit {
+        payload.push('\r');
     }
-    Ok(())
+    payload
 }
 
 fn collapse_newlines(text: &str) -> String {
@@ -343,6 +717,85 @@ fn run_with_timeout(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    fn live_status_json(socket: &Path) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "status": "running",
+            "running": true,
+            "version": "0.7.5",
+            "protocol": 17,
+            "capabilities": {
+                "live_handoff": true,
+                "detached_server_daemon": true
+            },
+            "compatible": true,
+            "socket": socket,
+            "session": null,
+            "restart_needed": false
+        }))
+        .unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parses_installed_herdr_0_7_5_server_status_and_tolerates_unknown_fields() {
+        let fixture = br#"{"status":"running","running":true,"version":"0.7.5","protocol":17,"capabilities":{"live_handoff":true,"detached_server_daemon":true},"compatible":true,"socket":"/home/qqp/.config/herdr/herdr.sock","session":null,"restart_needed":false,"future_field":{"ignored":true}}"#;
+        let status = parse_herdr_server_status(fixture).expect("parse production 0.7.5 shape");
+        assert_eq!(status.status, "running");
+        assert_eq!(status.version, "0.7.5");
+        assert_eq!(status.protocol, 17);
+        assert_eq!(status.socket, "/home/qqp/.config/herdr/herdr.sock");
+        assert_eq!(status.session, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn malformed_unavailable_non_socket_and_wrong_owner_status_is_refused() {
+        for malformed in [
+            br#"[]"#.as_slice(),
+            br#"{"status":"running","running":"yes","version":"0.7.5","protocol":17,"compatible":true,"socket":"/tmp/herdr.sock","session":null}"#,
+            br#"{"status":"stopped","running":false,"version":"0.7.5","protocol":17,"compatible":true,"socket":"/tmp/herdr.sock","session":null}"#,
+            br#"{"status":"running","running":true,"version":"0.7.5","protocol":17,"compatible":false,"socket":"/tmp/herdr.sock","session":null}"#,
+            br#"{"status":"running","running":true,"version":"0.7.5","protocol":17,"compatible":true,"socket":42,"session":null}"#,
+        ] {
+            assert!(parse_herdr_server_status(malformed).is_err());
+        }
+
+        let temp_dir = tempfile::TempDir::new().expect("create socket fixtures");
+        let expected_uid = unsafe { libc::geteuid() };
+        let missing = temp_dir.path().join("missing.sock");
+        assert!(identity_from_status(&live_status_json(&missing), expected_uid).is_err());
+
+        let regular = temp_dir.path().join("regular.sock");
+        fs::write(&regular, b"not a socket").unwrap();
+        assert!(identity_from_status(&live_status_json(&regular), expected_uid).is_err());
+
+        let socket = temp_dir.path().join("owned.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(
+            identity_from_status(&live_status_json(&socket), expected_uid.wrapping_add(1)).is_err()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn production_socket_identity_includes_inode_peer_pid_and_start_time() {
+        let temp_dir = tempfile::TempDir::new().expect("create socket fixture");
+        let socket = temp_dir.path().join("server.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let expected_uid = unsafe { libc::geteuid() };
+
+        let identity =
+            identity_from_status(&live_status_json(&socket), expected_uid).expect("observe socket");
+
+        assert_eq!(identity.socket_path, socket);
+        assert!(identity.socket_inode > 0);
+        assert_eq!(identity.socket_uid, expected_uid);
+        assert_eq!(identity.peer_pid, std::process::id());
+        assert_eq!(identity.peer_uid, expected_uid);
+        assert!(identity.peer_start_time > 0);
+    }
+
     #[test]
     fn parses_focused_pane_from_snapshot() {
         let json = br#"{"id":"cli:api:snapshot","result":{"snapshot":{"focused_pane_id":"w4G:p2","panes":[]},"type":"api_snapshot"}}"#;
@@ -370,9 +823,241 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn send_text_args_do_not_inject_an_option_terminator() {
+    fn remote_pane_ids_are_strict_and_bounded() {
+        for valid in ["w2H:p13", "wM:pEC", "w1:p2"] {
+            assert!(validate_pane_id(valid), "expected valid pane id {valid}");
+        }
+        for invalid in [
+            "",
+            "w2H",
+            "w2H:p13:extra",
+            "focused_pane_id",
+            "w2H:p-13",
+            "../w2H:p13",
+            "w:p",
+        ] {
+            assert!(
+                !validate_pane_id(invalid),
+                "accepted malformed pane id {invalid}"
+            );
+        }
+        assert!(!validate_pane_id(&format!("w{}:p1", "a".repeat(64))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_snapshot_requires_one_valid_live_focused_pane() {
+        let valid = br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p14","focused":false}]}}}"#;
+        assert_eq!(parse_remote_delivery_pane(valid), Ok("w2H:p13".to_string()));
+
+        for invalid in [
+            br#"{"result":{"snapshot":{"panes":[]}}}"#.as_slice(),
+            br#"{"result":{"snapshot":{"focused_pane_id":"","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"bad","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":false}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p14","focused":true}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","panes":[{"pane_id":"w2H:p13","focused":true},{"pane_id":"w2H:p13","focused":true}]}}}"#,
+            br#"{"result":{"snapshot":{"focused_pane_id":"w2H:p13","focused_pane_id":"w2H:p14","panes":[]}}}"#,
+            b"not json",
+        ] {
+            assert!(parse_remote_delivery_pane(invalid).is_err());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn same_session_identity_allows_a_different_commit_time_focused_pane() {
+        let identity = synthetic_remote_session_identity(1);
+        let commit = br#"{"result":{"snapshot":{"focused_pane_id":"wB:p2","panes":[{"pane_id":"wA:p1","focused":false},{"pane_id":"wB:p2","focused":true}]}}}"#;
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        let selected = deliver_remote_with(
+            &identity,
+            "new focus wins",
+            true,
+            true,
+            || Ok(identity.clone()),
+            || Ok(commit.to_vec()),
+            |pane, payload| {
+                calls
+                    .borrow_mut()
+                    .push((pane.to_string(), payload.to_string()));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected, "wB:p2");
         assert_eq!(
-            send_text_args("wM:p8P", "-leading dash is valid text"),
+            calls.into_inner(),
+            [("wB:p2".to_string(), "new focus wins\r".to_string())]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replaced_session_identity_refuses_before_snapshot_or_send() {
+        let start = synthetic_remote_session_identity(1);
+        let mut replacements = Vec::new();
+        let mut changed = start.clone();
+        changed.socket_path = PathBuf::from("/synthetic/replaced.sock");
+        replacements.push(changed);
+        let mut changed = start.clone();
+        changed.socket_inode += 1;
+        replacements.push(changed);
+        let mut changed = start.clone();
+        changed.peer_pid += 1;
+        replacements.push(changed);
+        let mut changed = start.clone();
+        changed.peer_start_time += 1;
+        replacements.push(changed);
+
+        for replacement in replacements {
+            let snapshot_calls = std::cell::Cell::new(0);
+            let send_calls = std::cell::Cell::new(0);
+            let result = deliver_remote_with(
+                &start,
+                "must not deliver",
+                true,
+                true,
+                || Ok(replacement),
+                || {
+                    snapshot_calls.set(snapshot_calls.get() + 1);
+                    Ok(Vec::new())
+                },
+                |_pane, _payload| {
+                    send_calls.set(send_calls.get() + 1);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(snapshot_calls.get(), 0);
+            assert_eq!(send_calls.get(), 0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unavailable_or_malformed_commit_identity_refuses_before_snapshot_or_send() {
+        let start = synthetic_remote_session_identity(1);
+        for reason in [
+            "status unavailable",
+            "status malformed",
+            "not a socket",
+            "wrong owner",
+        ] {
+            let snapshot_calls = std::cell::Cell::new(0);
+            let send_calls = std::cell::Cell::new(0);
+            let result = deliver_remote_with(
+                &start,
+                "must not deliver",
+                true,
+                true,
+                || Err(reason.to_string()),
+                || {
+                    snapshot_calls.set(snapshot_calls.get() + 1);
+                    Ok(Vec::new())
+                },
+                |_pane, _payload| {
+                    send_calls.set(send_calls.get() + 1);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(snapshot_calls.get(), 0);
+            assert_eq!(send_calls.get(), 0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unchanged_laptop_ghostty_does_not_authorize_replaced_workstation_session() {
+        // Laptop window identity is intentionally absent from this workstation
+        // fence: even if the laptop check says "unchanged", a changed server
+        // identity terminates before any focus snapshot or send.
+        let start = synthetic_remote_session_identity(1);
+        let replacement = synthetic_remote_session_identity(2);
+        let snapshot_called = std::cell::Cell::new(false);
+        let result = deliver_remote_with(
+            &start,
+            "old transcript",
+            true,
+            true,
+            || Ok(replacement),
+            || {
+                snapshot_called.set(true);
+                Ok(Vec::new())
+            },
+            |_pane, _payload| Ok(()),
+        );
+        assert!(result.is_err());
+        assert!(!snapshot_called.get());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn local_exact_capture_never_uses_remote_session_identity() {
+        let local_capture = CaptureOutcome::Bound("wLocal:pExact".to_string());
+        let remote_identity = synthetic_remote_session_identity(99);
+
+        assert_eq!(
+            local_capture,
+            CaptureOutcome::Bound("wLocal:pExact".to_string())
+        );
+        // The independently captured pane is complete local authority; no
+        // remote identity field participates in the result.
+        assert_eq!(remote_identity.socket_inode, 99);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_delivery_uses_only_commit_snapshot_pane_once() {
+        let start = br#"{"result":{"snapshot":{"focused_pane_id":"wA:p1","panes":[{"pane_id":"wA:p1","focused":true}]}}}"#;
+        let commit = br#"{"result":{"snapshot":{"focused_pane_id":"wB:p2","panes":[{"pane_id":"wA:p1","focused":false},{"pane_id":"wB:p2","focused":true}]}}}"#;
+        assert_eq!(parse_remote_delivery_pane(start).unwrap(), "wA:p1");
+
+        let calls = std::cell::RefCell::new(Vec::new());
+        let selected =
+            deliver_remote_snapshot(commit, "first\nsecond", true, true, |pane, payload| {
+                calls
+                    .borrow_mut()
+                    .push((pane.to_string(), payload.to_string()));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(selected, "wB:p2");
+        assert_eq!(
+            calls.into_inner(),
+            [("wB:p2".to_string(), "first second\r".to_string())]
+        );
+
+        let failures = std::cell::Cell::new(0);
+        assert!(
+            deliver_remote_snapshot(commit, "text", true, true, |_pane, _payload| {
+                failures.set(failures.get() + 1);
+                Err("pane closed".to_string())
+            })
+            .is_err()
+        );
+        assert_eq!(failures.get(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn send_text_argv_contains_exact_pane_text_and_optional_carriage_return() {
+        let auto_submit = send_text_payload("first\nsecond", true);
+        assert_eq!(auto_submit, "first second\r");
+        assert_eq!(
+            send_text_args("wM:p8P", &auto_submit),
+            ["pane", "send-text", "wM:p8P", "first second\r"]
+        );
+
+        let no_submit = send_text_payload("-leading dash is valid text", false);
+        assert_eq!(no_submit, "-leading dash is valid text");
+        assert_eq!(
+            send_text_args("wM:p8P", &no_submit),
             ["pane", "send-text", "wM:p8P", "-leading dash is valid text"]
         );
     }
