@@ -10,7 +10,12 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
   `8a362e9eba59d4057fda79b7f38f5b0d5cbabf65`. The repository has a read-only
   conceptual relationship with `https://github.com/cjpais/Handy.git` through
   the `upstream` remote. This exact post-v0.9.4 baseline was retained because
-  it includes recent Linux overlay, clipboard, and audio fixes.
+  it includes recent Linux overlay, clipboard, and audio fixes. Selective
+  intake means fetching `upstream`, inspecting changes after that baseline,
+  choosing only changes compatible with the current Linux and TASK-25
+  workstation/laptop boundary, applying them deliberately on a Task branch,
+  and rerunning this Repository's full checks; upstream is never merged
+  wholesale.
 - **Herdr target binding**: A per-recording association with the Herdr pane
   focused at recording start. Delivery uses Herdr's pane API rather than
   simulated keyboard focus, so later focus changes cannot redirect the text.
@@ -18,8 +23,10 @@ These terms extend the shared QQ vocabulary in `CONCEPTS.md`.
   recordings that genuinely start outside Herdr or when Herdr binding is
   explicitly disabled.
 - **Local package**: The AppDir, dictation-mode bridge, service, and settings
-  migration installed only for the current Linux user. Handy's ASR models and
-  history remain in their standard shared user-data locations.
+  policy installed only for the current Linux user. Handy's ASR models and
+  history remain in their standard shared user-data locations. The package has
+  no self-updater or release-artifact path; only the pinned contained build and
+  local install scripts update it.
 - **Dictation pair corpus**: The existing `transcription_history` table in
   `${XDG_DATA_HOME:-$HOME/.local/share}/com.pais.handy/history.db` is the sole
   source of truth for the latest 1,000 successful raw-to-second-pass text pairs;

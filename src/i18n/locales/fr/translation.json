@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Paramètres...",
-    "checkUpdates": "Rechercher des mises à jour...",
     "copyLastTranscript": "Copier la dernière transcription",
     "unloadModel": "Décharger le modèle",
     "model": "Modèle",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Échec de la sélection du modèle"
-    },
-    "permissions": {
-      "title": "Autorisations requises",
-      "description": "Handy a besoin de quelques autorisations pour fonctionner correctement.",
-      "microphone": {
-        "title": "Accès au microphone",
-        "description": "Nécessaire pour entendre votre voix pour la transcription."
-      },
-      "accessibility": {
-        "title": "Accès à l'accessibilité",
-        "description": "Nécessaire pour taper le texte transcrit dans vos applications."
-      },
-      "grant": "Accorder l'autorisation",
-      "granted": "Accordé",
-      "waiting": "En attente...",
-      "allGranted": "Tout est prêt !",
-      "errors": {
-        "checkFailed": "Échec de la vérification des autorisations. Veuillez réessayer.",
-        "requestFailed": "Échec de la demande d'autorisation. Veuillez réessayer."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Accélération Whisper",
-          "description": "Accélération matérielle pour les modèles Whisper. Auto utilise le GPU si disponible (Metal sur macOS, Vulkan sur Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "Accélération ONNX",
-          "description": "Accélération matérielle pour les modèles ONNX (Parakeet, Canary, Moonshine, etc.). DirectML sur Windows est expérimental. Les modèles peuvent échouer à transcrire."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Auto"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Envoi automatique",
-        "description": "Envoie automatiquement la combinaison de touches sélectionnée après l'insertion du texte. Cmd+Enter s'applique sur macOS, tandis que Windows/Linux utilisent Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Désactivé",
           "enter": "Entrée",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Fournisseur",
           "description": "Sélectionnez un fournisseur compatible OpenAI."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence n'est pas disponible sur cet appareil. Nécessite un Mac Apple Silicon exécutant macOS Tahoe (26.0) ou une version ultérieure avec Apple Intelligence activé dans les Préférences Système."
         },
         "baseUrl": {
           "title": "URL de base",
@@ -463,10 +438,6 @@
         "lineCount": "{{count}} lignes",
         "empty": "En attente de journaux… Les entrées apparaîtront ici au fur et à mesure que l'application les émet."
       },
-      "updateChecks": {
-        "label": "Vérifier les mises à jour",
-        "description": "Vérifier automatiquement les nouvelles versions de Handy"
-      },
       "soundTheme": {
         "label": "Thème sonore",
         "description": "Choisir un thème sonore pour les retours de début et de fin d'enregistrement"
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Microphone toujours actif",
         "description": "Garder le microphone actif pour une réponse plus rapide"
-      },
-      "clamshellMicrophone": {
-        "title": "Microphone en mode fermé",
-        "description": "Microphone à utiliser lorsque le couvercle du portable est fermé"
       },
       "postProcessingToggle": {
         "label": "Post-traitement",
@@ -531,13 +498,6 @@
       "recordingBuffer": {
         "title": "Tampon d'enregistrement supplémentaire",
         "description": "Temps supplémentaire (en millisecondes) pour continuer l'enregistrement après avoir relâché la touche, pour capturer l'audio restant. 0 = pas de tampon supplémentaire."
-      },
-      "whatsNewPreview": {
-        "title": "Aperçu des nouveautés",
-        "description": "Ouvrir la dernière note de version intégrée sans la marquer comme vue",
-        "button": "Aperçu",
-        "noNotes": "Aucune note de version intégrée trouvée",
-        "error": "Impossible d’afficher l’aperçu des notes de version"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "Code source",
-        "description": "Voir le code source et contribuer",
+        "description": "View the private qq-dictation source repository.",
         "button": "Voir sur GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Soutenir le développement",
-        "description": "Aidez-nous à continuer à construire Handy",
-        "button": "Faire un don"
       },
       "acknowledgments": {
         "title": "Remerciements",
@@ -567,25 +522,8 @@
           "description": "Inférence haute performance du modèle de reconnaissance vocale automatique Whisper d'OpenAI",
           "details": "Handy utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
         }
-      },
-      "whatsNewUpdates": {
-        "label": "Afficher les nouveautés",
-        "description": "Afficher les notes de version après les mises à jour de Handy"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "Recherche de mises à jour...",
-    "updateAvailableShort": "Mise à jour disponible",
-    "upToDate": "À jour",
-    "updateCheckingDisabled": "Vérification des mises à jour désactivée",
-    "downloading": "Téléchargement... {{progress}}%",
-    "installing": "Installation...",
-    "preparing": "Préparation...",
-    "checkForUpdates": "Rechercher des mises à jour",
-    "portableUpdateTitle": "Mise à jour manuelle requise",
-    "portableUpdateMessage": "Les installations portables ne peuvent pas être mises à jour automatiquement. Pour mettre à jour : téléchargez le dernier installateur NSIS depuis GitHub Releases, installez-le dans le même dossier, puis copiez votre dossier Data/ (paramètres, modèles, enregistrements) de l’ancienne version vers la nouvelle.",
-    "portableUpdateButton": "Ouvrir GitHub Releases"
   },
   "common": {
     "loading": "Chargement...",
@@ -596,17 +534,11 @@
     "clear": "Effacer",
     "noOptionsFound": "Aucune option trouvée"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
-    "openSettings": "Ouvrir les Préférences Système"
-  },
   "errors": {
     "loadDirectory": "Erreur lors du chargement du répertoire : {{error}}",
     "micPermissionDeniedTitle": "Accès au microphone refusé",
     "micPermissionDenied": {
       "generic": "L'accès au microphone a été refusé par le système d'exploitation. Veuillez accorder l'autorisation du microphone dans les paramètres système.",
-      "windows": "Activez l'accès au microphone dans Paramètres → Confidentialité et sécurité → Microphone (y compris l'accès des applications de bureau).",
-      "macos": "Accordez l'accès au microphone dans Réglages du système → Confidentialité et sécurité → Microphone.",
       "linux": "Accordez l'accès au microphone dans les paramètres de son ou de confidentialité de votre système."
     },
     "noInputDeviceTitle": "Aucun microphone trouvé",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "Transcription...",
     "processing": "Traitement..."
-  },
-  "whatsNew": {
-    "title": "Nouveautés de Handy v{{version}}"
   }
 }

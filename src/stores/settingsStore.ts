@@ -64,8 +64,7 @@ interface SettingsStore {
   setCustomSounds: (sounds: { start: boolean; stop: boolean }) => void;
 }
 
-// Note: Default settings are now fetched from Rust via commands.getDefaultSettings()
-// This ensures platform-specific defaults (like overlay_position, shortcuts, paste_method) work correctly
+// Default settings are fetched from Rust so the Linux runtime and frontend share one source.
 
 const DEFAULT_AUDIO_DEVICE: AudioDevice = {
   index: "default",
@@ -86,22 +85,12 @@ const settingUpdaters: {
   start_hidden: (value) => commands.changeStartHiddenSetting(value as boolean),
   autostart_enabled: (value) =>
     commands.changeAutostartSetting(value as boolean),
-  update_checks_enabled: (value) =>
-    commands.changeUpdateChecksSetting(value as boolean),
-  show_whats_new_on_update: (value) =>
-    commands.changeShowWhatsNewOnUpdateSetting(value as boolean),
-  whats_new_last_seen_version: (value) =>
-    commands.changeWhatsNewLastSeenVersionSetting(value as string),
   push_to_talk: (value) => commands.changePttSetting(value as boolean),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
       (value as string) === "Default" || value === null
         ? "default"
         : (value as string),
-    ),
-  clamshell_microphone: (value) =>
-    commands.setClamshellMicrophone(
-      (value as string) === "Default" ? "default" : (value as string),
     ),
   selected_output_device: (value) =>
     commands.setSelectedOutputDevice(
@@ -205,7 +194,6 @@ export const useSettingsStore = create<SettingsStore>()(
             ...settings,
             always_on_microphone: settings.always_on_microphone ?? false,
             selected_microphone: settings.selected_microphone ?? "Default",
-            clamshell_microphone: settings.clamshell_microphone ?? "Default",
             selected_output_device:
               settings.selected_output_device ?? "Default",
           };
@@ -589,8 +577,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
       // Note: Audio devices are NOT refreshed here. The frontend (App.tsx)
       // is responsible for calling refreshAudioDevices/refreshOutputDevices
-      // after onboarding completes. This avoids triggering permission dialogs
-      // on macOS before the user is ready.
+      // after model onboarding completes.
       await Promise.all([
         loadDefaultSettings(),
         refreshSettings(),

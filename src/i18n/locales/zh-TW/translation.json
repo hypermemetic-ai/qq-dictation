@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "設定...",
-    "checkUpdates": "檢查更新...",
     "copyLastTranscript": "複製最新轉錄",
     "unloadModel": "卸載模型",
     "model": "模型",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "需要權限",
-      "description": "Handy 需要一些權限才能正常運作",
-      "microphone": {
-        "title": "麥克風存取",
-        "description": "需要聽取您的語音進行轉錄"
-      },
-      "accessibility": {
-        "title": "輔助使用存取",
-        "description": "需要將轉錄文字輸入到您的應用程式中"
-      },
-      "grant": "授予權限",
-      "granted": "已授予",
-      "waiting": "等待中...",
-      "allGranted": "全部完成！",
-      "errors": {
-        "checkFailed": "檢查權限失敗，請重試",
-        "requestFailed": "請求權限失敗，請重試"
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Whisper 加速",
-          "description": "Whisper 模型的硬體加速。自動模式在可用時使用 GPU（macOS 上使用 Metal，Windows/Linux 上使用 Vulkan）。"
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX 加速",
-          "description": "ONNX 模型的硬體加速（Parakeet、Canary、Moonshine 等）。Windows 上的 DirectML 為實驗性功能。模型可能無法正常轉錄。"
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "自動"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "自動送出",
-        "description": "插入文字後自動發送指定的按鍵組合。macOS 為 Cmd+Enter，Windows/Linux 為 Super+Enter",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "關閉",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "供應商",
           "description": "選擇一個相容 OpenAI 的供應商"
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence 在此裝置上不可用。需要執行 macOS Tahoe（26.0）或更高版本的 Apple Silicon Mac，並在系統設定中啟用 Apple Intelligence"
         },
         "baseUrl": {
           "title": "基礎網址",
@@ -463,10 +438,6 @@
         "lineCount": "{{count}} 行",
         "empty": "正在等待日誌…… 應用程式產生日誌時會顯示於此。"
       },
-      "updateChecks": {
-        "label": "檢查更新",
-        "description": "自動檢查 Handy 的新版本"
-      },
       "soundTheme": {
         "label": "聲音主題",
         "description": "選擇錄製開始和停止回饋的聲音主題"
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "麥克風常開",
         "description": "保持麥克風啟用以獲得更快的回應"
-      },
-      "clamshellMicrophone": {
-        "title": "闔蓋麥克風",
-        "description": "筆記型電腦闔蓋時使用的麥克風"
       },
       "postProcessingToggle": {
         "label": "後處理",
@@ -531,13 +498,6 @@
       "recordingBuffer": {
         "title": "額外錄音緩衝",
         "description": "放開按鍵後繼續錄音的額外時間（毫秒），以捕捉尾音。0 = 無額外緩衝。"
-      },
-      "whatsNewPreview": {
-        "title": "預覽新功能",
-        "description": "開啟最新內建版本資訊，且不標記為已看過",
-        "button": "預覽",
-        "noNotes": "找不到內建版本資訊",
-        "error": "無法預覽版本資訊"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "原始碼",
-        "description": "檢視原始碼並參與貢獻",
+        "description": "View the private qq-dictation source repository.",
         "button": "在 GitHub 上檢視"
-      },
-      "supportDevelopment": {
-        "title": "支持開發",
-        "description": "幫助我們繼續開發 Handy",
-        "button": "捐贈"
       },
       "acknowledgments": {
         "title": "致謝",
@@ -567,25 +522,8 @@
           "description": "針對 OpenAI Whisper 自動語音識別模型的高效能推理引擎",
           "details": "Handy 使用 ggml 進行快速的本機語音轉文字處理。感謝 Georgi Gerganov 和貢獻者們的傑出工作"
         }
-      },
-      "whatsNewUpdates": {
-        "label": "顯示新功能",
-        "description": "Handy 更新後顯示版本資訊"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "檢查更新中...",
-    "updateAvailableShort": "有可用更新",
-    "upToDate": "已是最新版本",
-    "updateCheckingDisabled": "更新檢查已停用",
-    "downloading": "下載中... {{progress}}%",
-    "installing": "安裝中...",
-    "preparing": "準備中...",
-    "checkForUpdates": "檢查更新",
-    "portableUpdateTitle": "需要手動更新",
-    "portableUpdateMessage": "可攜式安裝無法自動更新。更新方法：從 GitHub Releases 下載最新的 NSIS 安裝程式，安裝到相同資料夾，然後將舊版本的 Data/ 資料夾（設定、模型、錄音）複製到新版本。",
-    "portableUpdateButton": "開啟 GitHub Releases"
   },
   "common": {
     "loading": "載入中...",
@@ -596,17 +534,11 @@
     "clear": "清除",
     "noOptionsFound": "未找到選項"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy 需要輔助使用權限才能輸入轉錄的文字",
-    "openSettings": "開啟系統設定"
-  },
   "errors": {
     "loadDirectory": "載入目錄時發生錯誤: {{error}}",
     "micPermissionDeniedTitle": "麥克風存取被拒絕",
     "micPermissionDenied": {
       "generic": "作業系統拒絕了麥克風存取。請在系統設定中授予麥克風權限。",
-      "windows": "在設定 → 隱私與安全性 → 麥克風（包括桌面應用程式存取）中啟用麥克風存取。",
-      "macos": "在系統設定 → 隱私與安全性 → 麥克風中授予麥克風存取權限。",
       "linux": "在系統的聲音或隱私設定中授予麥克風存取權限。"
     },
     "noInputDeviceTitle": "找不到麥克風",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "正在轉錄...",
     "processing": "處理中..."
-  },
-  "whatsNew": {
-    "title": "Handy v{{version}} 新功能"
   }
 }

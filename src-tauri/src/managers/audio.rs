@@ -7,7 +7,6 @@ use crate::audio_toolkit::{
     },
     AudioRecorder, SileroVad, VadPolicy,
 };
-use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
 use crate::operation::OperationOwner;
 use crate::settings::{get_settings, AppSettings};
@@ -23,128 +22,38 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const VAD_THRESHOLD: f32 = 0.3;
 
 fn set_mute(mute: bool) {
-    // Expected behavior:
-    // - Windows: works on most systems using standard audio drivers.
-    // - Linux: works on many systems (PipeWire, PulseAudio, ALSA),
-    //   but some distros may lack the tools used.
-    // - macOS: works on most standard setups via AppleScript.
-    // If unsupported, fails silently.
+    use std::process::Command;
 
-    #[cfg(target_os = "windows")]
+    let mute_value = if mute { "1" } else { "0" };
+    let amixer_state = if mute { "mute" } else { "unmute" };
+
+    if Command::new("wpctl")
+        .args(["set-mute", "@DEFAULT_AUDIO_SINK@", mute_value])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
     {
-        unsafe {
-            use windows::Win32::{
-                Media::Audio::{
-                    eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-                    MMDeviceEnumerator,
-                },
-                System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
-            };
-
-            macro_rules! unwrap_or_return {
-                ($expr:expr) => {
-                    match $expr {
-                        Ok(val) => val,
-                        Err(_) => return,
-                    }
-                };
-            }
-
-            // Initialize the COM library for this thread.
-            // If already initialized (e.g., by another library like Tauri), this does nothing.
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-
-            let all_devices: IMMDeviceEnumerator =
-                unwrap_or_return!(CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL));
-            let default_device =
-                unwrap_or_return!(all_devices.GetDefaultAudioEndpoint(eRender, eMultimedia));
-            let volume_interface = unwrap_or_return!(
-                default_device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
-            );
-
-            let _ = volume_interface.SetMute(mute, std::ptr::null());
-        }
+        return;
     }
-
-    #[cfg(target_os = "linux")]
+    if Command::new("pactl")
+        .args(["set-sink-mute", "@DEFAULT_SINK@", mute_value])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
     {
-        use std::process::Command;
-
-        let mute_val = if mute { "1" } else { "0" };
-        let amixer_state = if mute { "mute" } else { "unmute" };
-
-        // Try multiple backends to increase compatibility
-        // 1. PipeWire (wpctl)
-        if Command::new("wpctl")
-            .args(["set-mute", "@DEFAULT_AUDIO_SINK@", mute_val])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return;
-        }
-
-        // 2. PulseAudio (pactl)
-        if Command::new("pactl")
-            .args(["set-sink-mute", "@DEFAULT_SINK@", mute_val])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return;
-        }
-
-        // 3. ALSA (amixer)
-        let _ = Command::new("amixer")
-            .args(["set", "Master", amixer_state])
-            .output();
+        return;
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        let script = format!(
-            "set volume output muted {}",
-            if mute { "true" } else { "false" }
-        );
-        let _ = Command::new("osascript").args(["-e", &script]).output();
-    }
+    let _ = Command::new("amixer")
+        .args(["set", "Master", amixer_state])
+        .output();
 }
 
 /// Reads the current system output mute state, mirroring `set_mute`'s backends.
 ///
 /// Returns `Some(true)`/`Some(false)` when the state could be determined, or
-/// `None` when it couldn't (unsupported platform, missing CLI tools, or an
+/// `None` when it couldn't (unsupported audio stack, missing CLI tools, or an
 /// error). Callers treat `None` as "unknown" and fall back to unmuting on stop,
 /// so we never strand the user's audio muted.
-#[cfg(target_os = "windows")]
-fn get_mute() -> Option<bool> {
-    unsafe {
-        use windows::Win32::{
-            Media::Audio::{
-                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-                MMDeviceEnumerator,
-            },
-            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
-        };
-
-        // Matches set_mute: no-op if COM is already initialized on this thread.
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-
-        let all_devices: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let default_device = all_devices
-            .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let volume_interface = default_device
-            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
-            .ok()?;
-
-        Some(volume_interface.GetMute().ok()?.as_bool())
-    }
-}
-
-#[cfg(target_os = "linux")]
 fn get_mute() -> Option<bool> {
     use std::process::Command;
 
@@ -195,29 +104,6 @@ fn get_mute() -> Option<bool> {
         }
     }
 
-    None
-}
-
-#[cfg(target_os = "macos")]
-fn get_mute() -> Option<bool> {
-    use std::process::Command;
-
-    let out = Command::new("osascript")
-        .args(["-e", "output muted of (get volume settings)"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    match String::from_utf8_lossy(&out.stdout).trim() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-fn get_mute() -> Option<bool> {
     None
 }
 
@@ -398,8 +284,8 @@ pub struct AudioRecordingManager {
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
-    /// Resolution of a *named* microphone (selected or clamshell) to its cpal
-    /// device, cached so on-demand recording starts skip the full device
+    /// Resolution of a named microphone to its cpal device, cached so
+    /// on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
     /// change misses naturally; cleared when an open fails (device unplugged)
     /// so the retry re-enumerates. The system-default case is never cached —
@@ -447,22 +333,8 @@ impl AudioRecordingManager {
 
     /* ---------- helper methods --------------------------------------------- */
 
-    /// The microphone name the settings ask for, or `None` for the system
-    /// default. Only runs the clamshell probe (an `ioreg` subprocess, ~10-20ms)
-    /// when a clamshell microphone is actually configured.
+    /// The selected microphone name, or `None` for the system default.
     fn desired_device_name(&self, settings: &AppSettings) -> Option<String> {
-        if settings.clamshell_microphone.is_some() {
-            let clamshell_started = Instant::now();
-            let is_clamshell = clamshell::is_clamshell().unwrap_or(false);
-            debug!(
-                "device resolve: clamshell_check={:?} (clamshell={})",
-                clamshell_started.elapsed(),
-                is_clamshell
-            );
-            if is_clamshell {
-                return settings.clamshell_microphone.clone();
-            }
-        }
         settings.selected_microphone.clone()
     }
 
@@ -618,7 +490,7 @@ impl AudioRecordingManager {
             }
         }
 
-        // Get the selected device from settings, considering clamshell mode.
+        // Get the selected device from settings.
         // No pre-flight enumeration here: when nothing is configured the
         // recorder resolves the system default itself, and a machine with no
         // input devices at all fails inside open() with the same
@@ -659,7 +531,7 @@ impl AudioRecordingManager {
         // point cpal surfaces as "stream running." It does NOT guarantee the
         // host audio device is producing samples yet; the first input callback
         // fires asynchronously one buffer period later (hardware dependent,
-        // typically ~10–200ms on macOS, longer on Bluetooth/USB).
+        // typically ~10–200ms, longer on Bluetooth/USB).
         info!(
             "Microphone stream initialized in {:?}",
             start_time.elapsed()

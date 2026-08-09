@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Settings...",
-    "checkUpdates": "Check for Updates...",
     "copyLastTranscript": "Copy Last Transcript",
     "unloadModel": "Unload Model",
     "model": "Model",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "Permissions Required",
-      "description": "Handy needs a couple of permissions to work properly.",
-      "microphone": {
-        "title": "Microphone Access",
-        "description": "Required to hear your voice for transcription."
-      },
-      "accessibility": {
-        "title": "Accessibility Access",
-        "description": "Required to type transcribed text into your applications."
-      },
-      "grant": "Grant Permission",
-      "granted": "Granted",
-      "waiting": "Waiting...",
-      "allGranted": "All set!",
-      "errors": {
-        "checkFailed": "Failed to check permissions. Please try again.",
-        "requestFailed": "Failed to request permission. Please try again."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "transcribe.cpp Acceleration",
-          "description": "Hardware acceleration for transcribe.cpp (Whisper-family) models. Auto uses GPU if available (Metal on macOS, Vulkan on Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "ONNX Acceleration",
-          "description": "Hardware acceleration for ONNX models (Parakeet, Canary, Moonshine, etc.). DirectML on Windows is experimental. Models may fail to transcribe."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Auto"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Auto Submit",
-        "description": "Automatically send the selected key combination after text insertion. Cmd+Enter applies on macOS, while Windows/Linux use Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Off",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Provider",
           "description": "Select an OpenAI-compatible provider."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence is not available on this device. Requires an Apple Silicon Mac running macOS Tahoe (26.0) or later with Apple Intelligence enabled in System Settings."
         },
         "baseUrl": {
           "title": "Base URL",
@@ -463,17 +438,6 @@
         "lineCount": "{{count}} lines",
         "empty": "Waiting for logs… Entries appear here as the app emits them."
       },
-      "updateChecks": {
-        "label": "Check for Updates",
-        "description": "Automatically check for new versions of Handy"
-      },
-      "whatsNewPreview": {
-        "title": "Preview What's New",
-        "description": "Open the latest bundled release note without marking it as seen",
-        "button": "Preview",
-        "noNotes": "No bundled release notes found",
-        "error": "Failed to preview release notes"
-      },
       "soundTheme": {
         "label": "Sound Theme",
         "description": "Choose a sound theme for recording start and stop feedback"
@@ -500,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Always-On Microphone",
         "description": "Keep microphone active for faster response"
-      },
-      "clamshellMicrophone": {
-        "title": "Clamshell Microphone",
-        "description": "Microphone to use when laptop lid is closed"
       },
       "postProcessingToggle": {
         "label": "Post Processing",
@@ -546,23 +506,14 @@
         "title": "Version",
         "description": "Current version of Handy"
       },
-      "whatsNewUpdates": {
-        "label": "Show What's New",
-        "description": "Show release notes after Handy updates"
-      },
       "appDataDirectory": {
         "title": "App Data Directory",
         "description": "Location where Handy stores its data"
       },
       "sourceCode": {
         "title": "Source Code",
-        "description": "View source code and contribute",
+        "description": "View the private qq-dictation source repository.",
         "button": "View on GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Support Development",
-        "description": "Help us continue building Handy",
-        "button": "Donate"
       },
       "acknowledgments": {
         "title": "Acknowledgments",
@@ -574,22 +525,6 @@
       }
     }
   },
-  "footer": {
-    "checkingUpdates": "Checking for updates...",
-    "updateAvailableShort": "Update available",
-    "upToDate": "Up to date",
-    "updateCheckingDisabled": "Update Checking Disabled",
-    "downloading": "Downloading... {{progress}}%",
-    "installing": "Installing...",
-    "preparing": "Preparing...",
-    "checkForUpdates": "Check for updates",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
-  },
-  "whatsNew": {
-    "title": "New in Handy v{{version}}"
-  },
   "common": {
     "loading": "Loading...",
     "delete": "Delete",
@@ -599,17 +534,11 @@
     "clear": "Clear",
     "noOptionsFound": "No options found"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy needs accessibility permissions to type transcribed text.",
-    "openSettings": "Open System Settings"
-  },
   "errors": {
     "loadDirectory": "Error loading directory: {{error}}",
     "micPermissionDeniedTitle": "Microphone Access Denied",
     "micPermissionDenied": {
       "generic": "Microphone access was denied by the operating system. Please grant microphone permission in your system settings.",
-      "windows": "Enable microphone access in Settings → Privacy & security → Microphone (including desktop app access).",
-      "macos": "Grant microphone access in System Settings → Privacy & Security → Microphone.",
       "linux": "Grant microphone access in your system's sound or privacy settings."
     },
     "noInputDeviceTitle": "No Microphone Found",

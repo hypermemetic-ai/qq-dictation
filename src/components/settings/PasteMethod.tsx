@@ -4,7 +4,6 @@ import { Dropdown, type DropdownOption } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Input } from "../ui/Input";
 import { useSettings } from "../../hooks/useSettings";
-import { useOsType } from "../../hooks/useOsType";
 import type { PasteMethod } from "@/bindings";
 
 interface PasteMethodProps {
@@ -16,70 +15,39 @@ export const PasteMethodSetting: React.FC<PasteMethodProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
-    const osType = useOsType();
-
     const selectedMethod = (getSetting("paste_method") ||
       "ctrl_v") as PasteMethod;
 
-    const getPasteMethodOptions = (osType: string) => {
-      const mod = osType === "macos" ? "Cmd" : "Ctrl";
-
-      const options: DropdownOption[] = [
-        {
-          value: "ctrl_v",
-          label: t("settings.advanced.pasteMethod.options.clipboard", {
-            modifier: mod,
-          }),
-        },
-      ];
-
-      // Direct input is not offered on macOS, but keep an existing/manual
-      // selection visible so the UI accurately represents the saved setting.
-      if (osType !== "macos" || selectedMethod === "direct") {
-        options.push({
-          value: "direct",
-          label: t("settings.advanced.pasteMethod.options.direct"),
-          disabled: osType === "macos",
-        });
-      }
-
-      options.push({
+    const pasteMethodOptions: DropdownOption[] = [
+      {
+        value: "ctrl_v",
+        label: t("settings.advanced.pasteMethod.options.clipboard", {
+          modifier: "Ctrl",
+        }),
+      },
+      {
+        value: "direct",
+        label: t("settings.advanced.pasteMethod.options.direct"),
+      },
+      {
         value: "none",
         label: t("settings.advanced.pasteMethod.options.none"),
-      });
-
-      // Add Shift+Insert and Ctrl+Shift+V options for Windows and Linux only
-      if (osType === "windows" || osType === "linux") {
-        options.push(
-          {
-            value: "ctrl_shift_v",
-            label: t(
-              "settings.advanced.pasteMethod.options.clipboardCtrlShiftV",
-            ),
-          },
-          {
-            value: "shift_insert",
-            label: t(
-              "settings.advanced.pasteMethod.options.clipboardShiftInsert",
-            ),
-          },
-        );
-      }
-
-      // External script is only available on Linux
-      if (osType === "linux") {
-        options.push({
-          value: "external_script",
-          label: t("settings.advanced.pasteMethod.options.externalScript"),
-        });
-      }
-
-      return options;
-    };
+      },
+      {
+        value: "ctrl_shift_v",
+        label: t("settings.advanced.pasteMethod.options.clipboardCtrlShiftV"),
+      },
+      {
+        value: "shift_insert",
+        label: t("settings.advanced.pasteMethod.options.clipboardShiftInsert"),
+      },
+      {
+        value: "external_script",
+        label: t("settings.advanced.pasteMethod.options.externalScript"),
+      },
+    ];
 
     const externalScriptPath = getSetting("external_script_path") || "";
-
-    const pasteMethodOptions = getPasteMethodOptions(osType);
 
     return (
       <SettingContainer
@@ -102,8 +70,8 @@ export const PasteMethodSetting: React.FC<PasteMethodProps> = React.memo(
             <Input
               type="text"
               value={externalScriptPath}
-              onChange={(e) =>
-                updateSetting("external_script_path", e.target.value)
+              onChange={(event) =>
+                updateSetting("external_script_path", event.target.value)
               }
               placeholder={t(
                 "settings.advanced.pasteMethod.externalScriptPlaceholder",
