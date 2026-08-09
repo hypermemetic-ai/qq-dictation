@@ -25,7 +25,10 @@ ${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/
 `XDG_CACHE_HOME`, when non-empty, must be absolute. Otherwise `HOME` must be
 available and absolute so the script can use `$HOME/.cache`. Invalid or unknown
 input is refused before a cache is created or mounted; it is never rewritten to
-a fallback. The host root is mounted at `/qq-build-cache`, with `cargo`,
+a fallback. The canonical cache root must be a real directory; both inspection
+and building refuse a symbolic link at that exact path before reading its
+metadata, creating cache children, or invoking Docker. The host root is mounted
+at `/qq-build-cache`, with `cargo`,
 `target`, and `ort` beneath it. This mount stays outside the repository bind at
 `/work`: using a nested destination made Docker create an empty, root-owned
 checkout `.docker-cache` during container setup. No checkout may carry a

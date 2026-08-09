@@ -33,7 +33,10 @@ is the cache creator, and every checkout and linked worktree directly consumes
 `${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/`. A non-empty
 `XDG_CACHE_HOME`, or the `HOME` used for the default, must provide a safe
 absolute base; invalid or unknown input is refused before creation or mounting,
-not rewritten. The host's `cargo`, `target`, and `ort` directories appear in the
+not rewritten. The canonical cache root must be a real directory; both
+inspection and building refuse a symbolic link at that exact path before
+reading its metadata, creating cache children, or invoking Docker. The host's
+`cargo`, `target`, and `ort` directories appear in the
 container at `/qq-build-cache/...`, outside the repository bind at `/work`. A
 nested cache destination under `/work` made Docker create an empty, root-owned
 checkout `.docker-cache` during container setup, so the mount must remain

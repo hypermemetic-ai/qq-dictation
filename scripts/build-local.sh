@@ -19,6 +19,11 @@ if [[ "$cache_base" != /* || "$cache_base" == *$'\n'* || "$cache_base" == *$'\r'
 fi
 cache_dir="${cache_base}/qq-dictation/build"
 
+if [[ -L "$cache_dir" ]]; then
+    printf 'Refusing to build: canonical cache root must be a real directory; symbolic links are refused.\n' >&2
+    exit 1
+fi
+
 if ! git -C "$repository_root" diff --quiet \
     || ! git -C "$repository_root" diff --cached --quiet \
     || [[ -n "$(git -C "$repository_root" ls-files --others --exclude-standard)" ]]; then

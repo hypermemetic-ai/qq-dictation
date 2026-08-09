@@ -20,6 +20,11 @@ if [[ "$cache_base" != /* || "$cache_base" == *$'\n'* || "$cache_base" == *$'\r'
 fi
 cache_root="${cache_base}/qq-dictation/build"
 
+if [[ -L "$cache_root" ]]; then
+    printf 'Refusing to inspect: canonical cache root must be a real directory; symbolic links are refused.\n' >&2
+    exit 1
+fi
+
 printf 'canonical_root=%s\n' "$cache_root"
 printf 'creator=scripts/build-local.sh\n'
 
