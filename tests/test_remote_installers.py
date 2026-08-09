@@ -61,6 +61,8 @@ def fake_systemctl(
     log: Path,
     show_outputs: list[str],
     status_diagnostic: str = "synthetic service diagnostic",
+    failed_command: list[str] | None = None,
+    command_failure_diagnostic: str = "synthetic command failure",
 ) -> Path:
     counter = path.with_suffix(".show-count")
     return executable(
@@ -83,6 +85,9 @@ def fake_systemctl(
         if arguments[:1] == ["status"]:
             print({status_diagnostic!r}, file=sys.stderr)
             raise SystemExit(3)
+        if arguments == {failed_command!r}:
+            print({command_failure_diagnostic!r}, file=sys.stderr)
+            raise SystemExit(1)
         raise SystemExit(0)
         """,
     )
@@ -193,12 +198,14 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("ExecStart=/usr/bin/python3", service.read_text())
             first_commands = systemctl_log.read_text().splitlines()
             self.assertEqual(
-                first_commands[0:2],
+                first_commands[0:3],
                 [
                     "--user daemon-reload",
-                    "--user enable --now handy-remote-client.service",
+                    "--user enable handy-remote-client.service",
+                    "--user restart handy-remote-client.service",
                 ],
             )
+            self.assertNotIn("--now", " ".join(first_commands))
             self.assertEqual(
                 len(
                     [
@@ -237,12 +244,63 @@ class InstallerTests(unittest.TestCase):
                 4,
             )
             self.assertEqual(
-                all_commands[len(first_commands) : len(first_commands) + 2],
+                all_commands[len(first_commands) : len(first_commands) + 3],
                 [
                     "--user daemon-reload",
-                    "--user enable --now handy-remote-client.service",
+                    "--user enable handy-remote-client.service",
+                    "--user restart handy-remote-client.service",
                 ],
             )
+            self.assertNotIn("--now", " ".join(all_commands))
+
+    def test_laptop_installer_restart_failure_is_nonzero_with_exact_service_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            home = directory / "home"
+            home.mkdir()
+            systemctl_log = directory / "systemctl.log"
+            systemctl = fake_systemctl(
+                directory / "systemctl",
+                systemctl_log,
+                [HEALTHY_SERVICE_STATE],
+                status_diagnostic="exact restart service diagnostic",
+                failed_command=[
+                    "--user",
+                    "restart",
+                    "handy-remote-client.service",
+                ],
+                command_failure_diagnostic="synthetic restart command failure",
+            )
+
+            result = subprocess.run(
+                laptop_command(home, systemctl),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("Installed remote laptop client", result.stdout)
+            self.assertIn(
+                "--user restart handy-remote-client.service failed: "
+                "synthetic restart command failure",
+                result.stderr,
+            )
+            self.assertIn("exact restart service diagnostic", result.stderr)
+            commands = systemctl_log.read_text().splitlines()
+            self.assertEqual(
+                commands[:4],
+                [
+                    "--user daemon-reload",
+                    "--user enable handy-remote-client.service",
+                    "--user restart handy-remote-client.service",
+                    "status --user --no-pager --lines=20 handy-remote-client.service",
+                ],
+            )
+            self.assertFalse(
+                any(command.startswith("--user show ") for command in commands)
+            )
+            self.assertNotIn("--now", " ".join(commands))
 
     def test_existing_laptop_config_must_be_mode_0600_before_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:

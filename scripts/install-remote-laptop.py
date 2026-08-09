@@ -385,7 +385,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         run_systemctl_command(
             arguments.systemctl,
-            ["--user", "enable", "--now", SERVICE_NAME],
+            ["--user", "enable", SERVICE_NAME],
+        )
+        run_systemctl_command(
+            arguments.systemctl,
+            ["--user", "restart", SERVICE_NAME],
         )
         verify_service_health(arguments.systemctl)
         print(f"Installed remote laptop client and mode-off service at {client}")

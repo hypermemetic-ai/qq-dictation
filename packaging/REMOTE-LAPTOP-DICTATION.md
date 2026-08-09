@@ -39,9 +39,9 @@ Install with exact facts from that laptop:
   --ghostty-class EXACT_GHOSTTY_WM_CLASS
 ```
 
-The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. An existing config must be an operator-owned regular file with exact mode `0600`; differing or less-private configuration is refused before client/service replacement or systemd.
+The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, enables the exact `handy-remote-client.service`, and unconditionally restarts it in mode off. An existing config must be an operator-owned regular file with exact mode `0600`; differing or less-private configuration is refused before client/service replacement or systemd.
 
-Installation reports success only after the service is active and running with one positive, unchanged main PID and an unchanged restart count at both ends of a fixed observation interval longer than its one-second restart delay. This health gate runs on first install and every idempotent rerun. Startup failure, a conflicting X11 grab owner, a crash/restart, or malformed or uncertain systemd state makes installation fail nonzero and prints a bounded `handy-remote-client.service` status diagnostic instead of the success line.
+Only after that restart succeeds does installation check that the service is active and running with one positive, unchanged main PID and an unchanged restart count at both ends of a fixed observation interval longer than its one-second restart delay. This health gate runs on first install and every idempotent rerun, so it observes the newly installed client and its fresh grab attempt. Startup failure, a conflicting X11 grab owner, a crash/restart, or malformed or uncertain systemd state makes installation fail nonzero and prints a bounded `handy-remote-client.service` status diagnostic instead of the success line.
 
 The microphone command is a JSON argv array and defaults to:
 
