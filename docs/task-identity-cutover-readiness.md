@@ -56,9 +56,10 @@ byte-preserved.
 | `src/i18n/locales/en/translation.json:626` | ordinary product prose       | User-interface language description.                                |
 
 Present state: the public translation guide and its ordinary-prose occurrence
-have since been retired. The other three ordinary-prose lines remain
-byte-identical at their current line numbers, and three product documents now
-carry current references to the workstation/laptop boundary.
+have since been retired. The translated user-interface occurrence has also been
+retired. The two keyboard API documentation lines remain byte-identical at
+their current line numbers, and three product documents now carry current
+references to the workstation/laptop boundary.
 
 For the prepared result, the current authority and current reference categories
 above record every migrated line; the ordinary product prose and explicit
@@ -71,21 +72,25 @@ Each marker classifies one matching prepared-source line by path, line number,
 and SHA-256 of the line without its newline. The checker compares this exact set
 with committed, staged, and untracked candidate files, skips symlinks and binary
 files, and excludes the mounted `backlog` store. A new, altered, missing, or
-stale occurrence fails the check.
+stale occurrence fails the check. The current tree has exactly 15 matching lines
+in six files: ten explicit historical-evidence lines, three current-reference
+lines, and two ordinary-product-prose lines.
 
 <!-- identity-readiness: {"category":"explicit historical evidence","digest":"afb8fcde6474ae343c6528b248f23feabb5e2264e296e357b3575b290f65420e","line":27,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"705b433befb328facb6c406803f69056349fc6d18bb363f9c38c0e6b30dfd3be","line":45,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"0f72729eb72737819c95b8b5e264d851f2ae241878707e08374a95cd2ab9c722","line":53,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"20f509b3659865ecb0cad025b138176295b151dc8127a901fce091a80b40620f","line":95,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"2a0b97538674e5b88de39390dfa5327f6cf59f2598ae9892233d5a293340bf61","line":101,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"e426bf4a2c7bff5524521ca29d20203fadfda7d72d6015afbfbff044c2fba7c0","line":105,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"explicit historical evidence","digest":"8f0f10501887e82599d678db9989ef79651a2bedac827249551e31d6a395cb28","line":123,"path":"BUILD-LESSONS.md"} -->
-<!-- identity-readiness: {"category":"current reference","digest":"19d1a5b1a716a966efbb756189c1fe9c9af5100f3266d004232f136f18f28be9","line":73,"path":"README.md"} -->
-<!-- identity-readiness: {"category":"current reference","digest":"817ff41ba9b7d90333ef63fe4e7f37493e92aa9d799835a29a39f238feac79f9","line":60,"path":"docs/local-distribution.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"3110d12beafb3bd1475cb367a13679d5cc6b081b890bddf053caa516741bfafe","line":41,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"67656f1d27a55aaff92c838ffcd35c435cf6025819c47eef6dbaa08aa7883b46","line":57,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"705b433befb328facb6c406803f69056349fc6d18bb363f9c38c0e6b30dfd3be","line":63,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"6d27374f28395c0b33ba5c7142d6057662f109b961b51befc72065299434e321","line":67,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"0f72729eb72737819c95b8b5e264d851f2ae241878707e08374a95cd2ab9c722","line":77,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"20f509b3659865ecb0cad025b138176295b151dc8127a901fce091a80b40620f","line":119,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"2a0b97538674e5b88de39390dfa5327f6cf59f2598ae9892233d5a293340bf61","line":125,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"e426bf4a2c7bff5524521ca29d20203fadfda7d72d6015afbfbff044c2fba7c0","line":129,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"explicit historical evidence","digest":"8f0f10501887e82599d678db9989ef79651a2bedac827249551e31d6a395cb28","line":147,"path":"BUILD-LESSONS.md"} -->
+<!-- identity-readiness: {"category":"current reference","digest":"19d1a5b1a716a966efbb756189c1fe9c9af5100f3266d004232f136f18f28be9","line":72,"path":"README.md"} -->
+<!-- identity-readiness: {"category":"current reference","digest":"817ff41ba9b7d90333ef63fe4e7f37493e92aa9d799835a29a39f238feac79f9","line":100,"path":"docs/local-distribution.md"} -->
 <!-- identity-readiness: {"category":"current reference","digest":"0026f042f4e12f2e54e1b770b0a76e4cd3ce018f37a443a83c1a51ff6f8dec23","line":15,"path":"docs/project-concepts.md"} -->
 <!-- identity-readiness: {"category":"ordinary product prose","digest":"41fa587afb4ab771a04333741a61783feb75a72dd1abb9482db1a23c11bf650f","line":247,"path":"src-tauri/src/shortcut/mod.rs"} -->
-<!-- identity-readiness: {"category":"ordinary product prose","digest":"8ee51b4a1c8c4297abade8189db8b548233d13afc70e1a3c98a87878b200804a","line":374,"path":"src/bindings.ts"} -->
-<!-- identity-readiness: {"category":"ordinary product prose","digest":"a8efc5ecab82d7affc5f5d7e545cd66e5a38dccb0206fe6ae0508498db01ba60","line":555,"path":"src/i18n/locales/en/translation.json"} -->
+<!-- identity-readiness: {"category":"ordinary product prose","digest":"8ee51b4a1c8c4297abade8189db8b548233d13afc70e1a3c98a87878b200804a","line":363,"path":"src/bindings.ts"} -->
 
 ## Preparation versus activation
 
