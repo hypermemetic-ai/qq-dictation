@@ -8,7 +8,9 @@ This guide covers how to set up the development environment and build Handy from
 > prior build failures, the safeguards they established, and the evidence needed
 > before calling a build or test gate successful. The current QQ workstation
 > build uses `QQ_BUILD_MEM=8g scripts/build-local.sh`; the older 5 GiB limit was
-> later OOM-killed by the rebuilt toolchain.
+> later OOM-killed by the rebuilt toolchain. Within that 8 GiB boundary, the
+> script caps Node's old-space heap at 4 GiB so frontend tooling cannot consume
+> the full build cgroup.
 
 ## QQ contained-build cache lifecycle
 
@@ -23,9 +25,12 @@ ${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/
 `XDG_CACHE_HOME`, when non-empty, must be absolute. Otherwise `HOME` must be
 available and absolute so the script can use `$HOME/.cache`. Invalid or unknown
 input is refused before a cache is created or mounted; it is never rewritten to
-a fallback. The host root is mounted at `/work/.docker-cache`, with `cargo`,
-`target`, and `ort` beneath it. No checkout may carry a `.docker-cache` symlink,
-mirror, or compatibility directory. Only `.local-build/` remains checkout-local.
+a fallback. The host root is mounted at `/qq-build-cache`, with `cargo`,
+`target`, and `ort` beneath it. This mount stays outside the repository bind at
+`/work`: using a nested destination made Docker create an empty, root-owned
+checkout `.docker-cache` during container setup. No checkout may carry a
+`.docker-cache` symlink, mirror, or compatibility directory. Only
+`.local-build/` remains checkout-local.
 
 Inspect the root without authorizing a mutation:
 
@@ -36,7 +41,7 @@ scripts/build-cache.sh inspect
 The command reports stable `key=value` evidence for the canonical root, creator,
 filesystem owner and mode, bytes, entry counts, last write, and rebuild cost. It
 always reports `quiescence=not_proven` and `prune_authorized=false`. Immediately
-before this lifecycle change, the active cache held 21,004,594,058 bytes, 95,713
+before this lifecycle change, the active cache held 21,122,310,277 bytes, 95,713
 regular files, 16,182 directories, and 38 symlinks. Recreating its Cargo,
 release-target, native C++/Vulkan, and ONNX Runtime state is a high-cost build,
 so it is retained for reuse. Size alone never authorizes deletion.

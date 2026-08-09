@@ -45,12 +45,13 @@ docker run --rm \
     --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
-    --volume "${cache_dir}:/work/.docker-cache" \
+    --volume "${cache_dir}:/qq-build-cache" \
     --workdir /work \
     --env HOME=/tmp/qq-builder \
-    --env CARGO_HOME=/work/.docker-cache/cargo \
-    --env CARGO_TARGET_DIR=/work/.docker-cache/target \
-    --env ORT_CACHE_DIR=/work/.docker-cache/ort \
+    --env NODE_OPTIONS=--max-old-space-size=4096 \
+    --env CARGO_HOME=/qq-build-cache/cargo \
+    --env CARGO_TARGET_DIR=/qq-build-cache/target \
+    --env ORT_CACHE_DIR=/qq-build-cache/ort \
     --env CARGO_BUILD_JOBS=1 \
     --env CMAKE_BUILD_PARALLEL_LEVEL=1 \
     "$builder_image" \

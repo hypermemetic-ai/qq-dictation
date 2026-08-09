@@ -26,6 +26,20 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Sources:** completed TASK-3 records the July containment and successful older-image 5 GiB build; kernel journal entries on August 2 record the three later 5 GiB cgroup kills; PR #13 (`d439b74`) records the newer-GCC diagnosis and 8 GiB override; PR #15 (`4ac0015`) verifies forwarding `--memory 8g --memory-swap 8g`; the installed AppDir built later that day records merged commit `4c9fb207`.
 
+## 2026-08-09 — Frontend Node needed an internal heap limit
+
+**Stage:** Tauri's frontend `beforeBuildCommand`, `bun run build` (`tsc && vite build`), before Cargo/Rust compilation.
+
+**Observed failure:** A contained release run kept the proven 8 GiB memory and memory-swap limits, two CPUs, and serialized Cargo/CMake jobs. Vite reached module transformation, then Bun reported that the build script was killed with `SIGKILL` and Tauri exited 137. Cargo/Rust compilation did not start in that run.
+
+**Cause:** The kernel identified the container's Node process as the memory-cgroup OOM victim at the exact 8 GiB limit, with about 8.3 GiB anonymous RSS. The frontend process had consumed the build cgroup rather than leaving memory for later stages.
+
+**Safeguard:** `scripts/build-local.sh` sets `NODE_OPTIONS=--max-old-space-size=4096` inside the container while preserving the 8 GiB operator-invoked container limit, equal memory-swap limit, two CPUs, and one Cargo/CMake job. Do not increase the container allowance to compensate for an unconstrained frontend heap.
+
+**Green evidence:** A focused one-variable rerun used the same image, 8 GiB cgroup, two CPUs, source, dependencies, and frontend command, adding only the 4 GiB Node old-space cap. Vite transformed 2,201 modules and completed in 3.73 seconds with no new kernel OOM record. That verifies the frontend safeguard; a complete release still requires the separately reported Rust, packaging, AppDir, and no-new-OOM evidence.
+
+**Sources:** TASK-27's 2026-08-09 contained-build output, kernel cgroup OOM record, and focused frontend memory diagnosis.
+
 ## 2026-07-24 — A full-suite failure exposed a false catalog claim
 
 **Stage:** full Rust test suite and final CI.
@@ -52,13 +66,13 @@ Task notes retain ticket-specific evidence. This file carries only lessons that 
 
 **Historical safeguard:** Before TASK-27, worktrees had to inventory every symlink with `find <worktree> -xdev -type l`, resolve complete chains, and prove that `.docker-cache/{cargo,target,ort}` alone reached writable primary-checkout cache directories. `node_modules` still had to be a real, user-owned, writable worktree directory rather than a link to the primary checkout. That per-worktree cache-link procedure is retained here as history, not current guidance.
 
-**Current safeguard:** `scripts/build-local.sh` now creates and directly mounts `${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/` for every checkout and worktree, exposing its `cargo`, `target`, and `ort` subdirectories only as `/work/.docker-cache/...` in the container. A non-empty `XDG_CACHE_HOME`, or the `HOME` used for the default, must provide a safe absolute base; malformed or unknown input is refused rather than rewritten. No checkout-root `.docker-cache` symlink, mirror, or compatibility directory is supported. `.local-build/` remains checkout-local, and `node_modules` remains a real checkout-local dependency directory.
+**Current safeguard:** `scripts/build-local.sh` now creates and directly mounts `${XDG_CACHE_HOME:-$HOME/.cache}/qq-dictation/build/` for every checkout and worktree, exposing its `cargo`, `target`, and `ort` subdirectories only as `/qq-build-cache/...` in the container. The cache mount stays outside the repository bind at `/work`; a real run with a nested mount destination made Docker create an empty, root-owned checkout `.docker-cache` during container setup. A non-empty `XDG_CACHE_HOME`, or the `HOME` used for the default, must provide a safe absolute base; malformed or unknown input is refused rather than rewritten. No checkout-root `.docker-cache` symlink, mirror, or compatibility directory is supported. `.local-build/` remains checkout-local, and `node_modules` remains a real checkout-local dependency directory.
 
-Run `scripts/build-cache.sh inspect` for read-only `key=value` owner, mode, size, entry-count, last-write, and rebuild-cost evidence. The pre-migration active cache measured 21,004,594,058 bytes, with 95,713 regular files, 16,182 directories, and 38 symlinks. Its Cargo, release-target, native C++/Vulkan, and ONNX Runtime state is expensive to recreate, so retain it; size alone is never deletion authority, and inspection always leaves quiescence unproven and pruning unauthorized.
+Run `scripts/build-cache.sh inspect` for read-only `key=value` owner, mode, size, entry-count, last-write, and rebuild-cost evidence. The pre-migration active cache measured 21,122,310,277 bytes, with 95,713 regular files, 16,182 directories, and 38 symlinks. Its Cargo, release-target, native C++/Vulkan, and ONNX Runtime state is expensive to recreate, so retain it; size alone is never deletion authority, and inspection always leaves quiescence unproven and pruning unauthorized.
 
 Migration or a future prune requires fresh checks for build-related processes, Docker bind mounts, and open files below the candidate; unavailable or ambiguous evidence fails closed. On this host, stage migration by an atomic same-filesystem rename beside the canonical root, verify owner/mode, bytes, counts, and hash samples, then atomically rename staging to `build`. An interruption before staging leaves the old root active; an interruption after staging permits only verified resume or rename rollback while the old path is absent. A future explicitly authorized prune first renames `build` to a timestamped sibling quarantine. Retain it for rollback; restore it only if no new canonical root exists, and delete only that quarantine after the agreed window, renewed quiescence, and acceptance. Never touch unrelated XDG cache content.
 
-**Green evidence:** The host-side mount is exactly the canonical external root; no checkout `.docker-cache` exists or is a symlink; the container reaches Bun, Rust, and packaging in sequence through `/work/.docker-cache/{cargo,target,ort}`; and the checkout-local AppDir carries the built commit. Starting Docker, building the toolchain image, failing at cache creation, or failing at dependency-directory access is not a Rust/application build result.
+**Green evidence:** The host-side mount is exactly the canonical external root; no checkout `.docker-cache` exists or is a symlink; the container reaches Bun, Rust, and packaging in sequence through `/qq-build-cache/{cargo,target,ort}`; and the checkout-local AppDir carries the built commit. Starting Docker, building the toolchain image, failing at cache creation, or failing at dependency-directory access is not a Rust/application build result.
 
 **Sources:** completed TASK-6 implementation notes and commit `76fe322`; TASK-14 release output showing cache-directory permission errors before Bun/Cargo; the next TASK-14 release output showing cache preflight pass followed by `bun install ... ENOENT: could not open the "node_modules" directory` before Tauri/Cargo.
 

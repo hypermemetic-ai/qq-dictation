@@ -24,7 +24,8 @@ Read [`../BUILD-LESSONS.md`](../BUILD-LESSONS.md) before building. The 8 GiB
 allowance is the current proven value for this machine's rebuilt toolchain
 image; the older 5 GiB default was later OOM-killed by ggml-vulkan compilation.
 It remains contained with no additional container swap, two CPUs, and one
-Cargo/CMake job.
+Cargo/CMake job. The script also caps Node's old-space heap at 4 GiB within the
+8 GiB cgroup so frontend tooling cannot consume the full container allowance.
 
 The build runs in a pinned Docker environment because the host intentionally
 does not carry the full GTK/WebKit development stack. `scripts/build-local.sh`
@@ -33,13 +34,16 @@ is the cache creator, and every checkout and linked worktree directly consumes
 `XDG_CACHE_HOME`, or the `HOME` used for the default, must provide a safe
 absolute base; invalid or unknown input is refused before creation or mounting,
 not rewritten. The host's `cargo`, `target`, and `ort` directories appear in the
-container at `/work/.docker-cache/...`. There is no checkout-root cache symlink,
-mirror, or compatibility path. Only `.local-build/` remains checkout-local.
+container at `/qq-build-cache/...`, outside the repository bind at `/work`. A
+nested cache destination under `/work` made Docker create an empty, root-owned
+checkout `.docker-cache` during container setup, so the mount must remain
+outside it. There is no checkout-root cache symlink, mirror, or compatibility
+path. Only `.local-build/` remains checkout-local.
 
 Use `scripts/build-cache.sh inspect` for read-only, stable `key=value` evidence
 about the canonical root, creator, owner, mode, bytes, entry counts, last write,
 and rebuild cost. Inspection always reports quiescence unproven and pruning
-unauthorized. The active pre-migration cache measured 21,004,594,058 bytes,
+unauthorized. The active pre-migration cache measured 21,122,310,277 bytes,
 95,713 regular files, 16,182 directories, and 38 symlinks. It retains expensive
 Cargo, release-target, native C++/Vulkan, and ONNX Runtime state so fresh
 containers can relink the application and its tests. Size alone never
