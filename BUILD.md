@@ -74,7 +74,6 @@ Use the lock-selected Bun version:
 
 ```bash
 bun install --frozen-lockfile
-bun run check:translations
 bun run lint
 bun run build
 ```

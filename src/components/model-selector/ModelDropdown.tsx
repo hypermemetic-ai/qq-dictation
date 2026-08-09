@@ -1,10 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import type { ModelInfo } from "@/bindings";
-import {
-  getTranslatedModelName,
-  getTranslatedModelDescription,
-} from "../../lib/utils/modelTranslation";
 
 interface ModelDropdownProps {
   models: ModelInfo[];
@@ -49,7 +45,7 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm text-text/80">
-                    {getTranslatedModelName(model, t)}
+                    {model.name}
                     {model.is_custom && (
                       <span className="ms-1.5 text-[10px] font-medium text-text/40 uppercase">
                         {t("modelSelector.custom")}
@@ -62,7 +58,7 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
                     )}
                   </div>
                   <div className="text-xs text-text/40 italic pe-4">
-                    {getTranslatedModelDescription(model, t)}
+                    {model.description}
                   </div>
                 </div>
                 {currentModelId === model.id && (

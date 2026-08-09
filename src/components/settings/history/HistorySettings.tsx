@@ -304,7 +304,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   deleteAudio,
   retryTranscription,
 }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
@@ -346,7 +346,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     }
   };
 
-  const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
+  const formattedDate = formatDateTime(String(entry.timestamp));
 
   return (
     <div className="px-4 py-2 pb-5 flex flex-col gap-3">

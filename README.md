@@ -50,7 +50,6 @@ Install the lock-selected frontend dependencies, then run the ordinary checks:
 
 ```bash
 bun install --frozen-lockfile
-bun run check:translations
 bun run lint
 bun run build
 ```

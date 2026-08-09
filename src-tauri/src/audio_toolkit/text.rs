@@ -344,13 +344,13 @@ fn collapse_stutters(text: &str) -> String {
 /// Filters transcription output by removing filler words and stutter artifacts.
 ///
 /// This function cleans up raw transcription text by:
-/// 1. Removing filler words based on the app language (or custom list)
+/// 1. Removing filler words based on the selected speech language (or custom list)
 /// 2. Collapsing repeated word stutters (e.g., "wh wh wh" -> "wh")
 /// 3. Cleaning up excess whitespace
 ///
 /// # Arguments
 /// * `text` - The raw transcription text to filter
-/// * `lang` - The app language code (e.g., "en", "pt-BR") used to select filler words
+/// * `lang` - The selected speech language code (e.g., "en", "pt-BR") used to select filler words
 /// * `custom_filler_words` - Optional user-provided filler word list. `Some(vec)` overrides
 ///   language defaults; `Some(empty vec)` disables filtering; `None` uses language defaults.
 ///

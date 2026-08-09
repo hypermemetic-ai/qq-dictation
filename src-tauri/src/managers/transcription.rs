@@ -1623,7 +1623,7 @@ fn post_process_transcription_text(
 
         filter_transcription_output(
             &corrected,
-            &settings.app_language,
+            &settings.selected_language,
             &settings.custom_filler_words,
         )
     })
@@ -1925,6 +1925,27 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn post_processing_uses_selected_speech_language_for_filler_filtering() {
+        let mut settings = AppSettings::default();
+        settings.selected_language = "pt".to_string();
+
+        assert_eq!(
+            post_process_transcription_text("um gato bonito".to_string(), &settings, false),
+            "um gato bonito"
+        );
+    }
+
+    #[test]
+    fn post_processing_auto_language_uses_conservative_filler_fallback() {
+        let settings = AppSettings::default();
+
+        assert_eq!(
+            post_process_transcription_text("um gato bonito".to_string(), &settings, false),
+            "um gato bonito"
+        );
     }
 
     #[test]

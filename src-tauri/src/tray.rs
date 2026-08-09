@@ -2,7 +2,6 @@ use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings;
-use crate::tray_i18n::get_tray_translations;
 use log::{debug, error, info, warn};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -18,6 +17,25 @@ pub enum TrayIconState {
     Recording,
     Transcribing,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TrayStrings {
+    settings: &'static str,
+    copy_last_transcript: &'static str,
+    unload_model: &'static str,
+    model: &'static str,
+    quit: &'static str,
+    cancel: &'static str,
+}
+
+const ENGLISH_TRAY_STRINGS: TrayStrings = TrayStrings {
+    settings: "Settings...",
+    copy_last_transcript: "Copy Last Transcript",
+    unload_model: "Unload Model",
+    model: "Model",
+    quit: "Quit",
+    cancel: "Cancel",
+};
 
 /// Tauri managed state holding the last icon state set via `change_tray_icon`.
 pub struct CurrentTrayIconState(pub Mutex<TrayIconState>);
@@ -76,7 +94,7 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
 
     // Update menu based on state
     let menu_started = std::time::Instant::now();
-    update_tray_menu(app, None);
+    update_tray_menu(app);
     debug!(
         "tray icon change ({:?}): icon={} set_icon={:?} menu={:?}",
         icon,
@@ -110,12 +128,10 @@ fn version_label() -> String {
     }
 }
 
-pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
+pub fn update_tray_menu(app: &AppHandle) {
     let state = app.state::<CurrentTrayIconState>().get();
     let settings = settings::get_settings(app);
-
-    let locale = locale.unwrap_or(&settings.app_language);
-    let strings = get_tray_translations(Some(locale.to_string()));
+    let strings = ENGLISH_TRAY_STRINGS;
 
     let (settings_accelerator, quit_accelerator) = (Some("Ctrl+,"), Some("Ctrl+Q"));
 
@@ -126,7 +142,7 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
     let settings_i = MenuItem::with_id(
         app,
         "settings",
-        &strings.settings,
+        strings.settings,
         true,
         settings_accelerator,
     )
@@ -134,13 +150,13 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
     let copy_last_transcript_i = MenuItem::with_id(
         app,
         "copy_last_transcript",
-        &strings.copy_last_transcript,
+        strings.copy_last_transcript,
         true,
         None::<&str>,
     )
     .expect("failed to create copy last transcript item");
     let model_loaded = app.state::<Arc<TranscriptionManager>>().is_model_loaded();
-    let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)
+    let quit_i = MenuItem::with_id(app, "quit", strings.quit, true, quit_accelerator)
         .expect("failed to create quit item");
     let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
 
@@ -156,7 +172,7 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
         .iter()
         .find(|m| m.id == *current_model_id)
         .map(|m| m.name.clone())
-        .unwrap_or_else(|| strings.model.clone());
+        .unwrap_or_else(|| strings.model.to_string());
 
     let model_submenu = {
         let submenu = Submenu::with_id(app, "model_submenu", &submenu_label, true)
@@ -177,7 +193,7 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
     let unload_model_i = MenuItem::with_id(
         app,
         "unload_model",
-        &strings.unload_model,
+        strings.unload_model,
         model_loaded,
         None::<&str>,
     )
@@ -185,7 +201,7 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
 
     let menu = match state {
         TrayIconState::Recording | TrayIconState::Transcribing => {
-            let cancel_i = MenuItem::with_id(app, "cancel", &strings.cancel, true, None::<&str>)
+            let cancel_i = MenuItem::with_id(app, "cancel", strings.cancel, true, None::<&str>)
                 .expect("failed to create cancel item");
             Menu::with_items(
                 app,
@@ -276,7 +292,7 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_transcript_text, load_tray_icon};
+    use super::{last_transcript_text, load_tray_icon, ENGLISH_TRAY_STRINGS};
     use crate::managers::history::HistoryEntry;
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
@@ -293,6 +309,19 @@ mod tests {
             post_process_requested: false,
             audio_available: true,
         }
+    }
+
+    #[test]
+    fn english_tray_labels_are_stable() {
+        assert_eq!(ENGLISH_TRAY_STRINGS.settings, "Settings...");
+        assert_eq!(
+            ENGLISH_TRAY_STRINGS.copy_last_transcript,
+            "Copy Last Transcript"
+        );
+        assert_eq!(ENGLISH_TRAY_STRINGS.unload_model, "Unload Model");
+        assert_eq!(ENGLISH_TRAY_STRINGS.model, "Model");
+        assert_eq!(ENGLISH_TRAY_STRINGS.quit, "Quit");
+        assert_eq!(ENGLISH_TRAY_STRINGS.cancel, "Cancel");
     }
 
     #[test]
