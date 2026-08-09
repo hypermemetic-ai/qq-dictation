@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,14 @@ DEFAULT_CAPTURE_ARGV = [
     "s16",
     "-",
 ]
+
+SERVICE_NAME = "handy-remote-client.service"
+SERVICE_HEALTH_PROPERTIES = ("ActiveState", "SubState", "MainPID", "NRestarts")
+# This must remain longer than packaging/handy-remote-client.service's RestartSec=1.
+SERVICE_HEALTH_OBSERVATION_SECONDS = 1.1
+SERVICE_STATUS_LINES = 20
+SERVICE_HEALTH_OUTPUT_LIMIT = 1_024
+SERVICE_DIAGNOSTIC_LIMIT = 8_192
 
 
 class InstallError(RuntimeError):
@@ -125,6 +134,187 @@ def validate_laptop_runtime(config: Path) -> None:
             raise InstallError(f"required laptop executable is unavailable: {path}")
 
 
+def bounded_diagnostic(value: str) -> str:
+    value = value.strip()
+    marker = "\n[service diagnostic truncated]"
+    if len(value) <= SERVICE_DIAGNOSTIC_LIMIT:
+        return value
+    return value[: SERVICE_DIAGNOSTIC_LIMIT - len(marker)] + marker
+
+
+def service_failure(systemctl: Path, reason: str, runner=subprocess.run) -> InstallError:
+    command = [
+        str(systemctl),
+        "status",
+        "--user",
+        "--no-pager",
+        f"--lines={SERVICE_STATUS_LINES}",
+        SERVICE_NAME,
+    ]
+    try:
+        result = runner(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+        )
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        if output:
+            diagnostic = bounded_diagnostic(output)
+        else:
+            diagnostic = (
+                f"systemctl status exited with {result.returncode} without a diagnostic"
+            )
+    except (OSError, subprocess.SubprocessError) as error:
+        diagnostic = bounded_diagnostic(f"systemctl status could not run: {error}")
+    return InstallError(f"{reason}\n{SERVICE_NAME} diagnostic:\n{diagnostic}")
+
+
+def parse_service_state(output: str) -> tuple[str, str, int, int]:
+    if len(output) > SERVICE_HEALTH_OUTPUT_LIMIT:
+        raise InstallError("systemctl show output exceeded the service health bound")
+    lines = output.splitlines()
+    if len(lines) != len(SERVICE_HEALTH_PROPERTIES):
+        raise InstallError(
+            "systemctl show returned a missing, duplicate, or extra service property"
+        )
+    properties: dict[str, str] = {}
+    for line in lines:
+        if line.count("=") != 1:
+            raise InstallError("systemctl show returned a malformed service property")
+        name, value = line.split("=", 1)
+        if name not in SERVICE_HEALTH_PROPERTIES:
+            raise InstallError(f"systemctl show returned unexpected property {name!r}")
+        if name in properties:
+            raise InstallError(f"systemctl show returned duplicate property {name}")
+        if not value:
+            raise InstallError(f"systemctl show returned an empty {name}")
+        properties[name] = value
+    if set(properties) != set(SERVICE_HEALTH_PROPERTIES):
+        raise InstallError("systemctl show omitted a required service property")
+
+    for name in ("MainPID", "NRestarts"):
+        value = properties[name]
+        if not value.isascii() or not value.isdigit():
+            raise InstallError(f"systemctl show returned a malformed {name}")
+    return (
+        properties["ActiveState"],
+        properties["SubState"],
+        int(properties["MainPID"]),
+        int(properties["NRestarts"]),
+    )
+
+
+def observe_service_health(
+    systemctl: Path, observation: str, runner=subprocess.run
+) -> tuple[str, str, int, int]:
+    command = [
+        str(systemctl),
+        "--user",
+        "show",
+        SERVICE_NAME,
+        *(f"--property={name}" for name in SERVICE_HEALTH_PROPERTIES),
+        "--no-pager",
+    ]
+    try:
+        result = runner(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise service_failure(
+            systemctl, f"{observation} service health query could not run: {error}", runner
+        ) from error
+    if result.returncode != 0:
+        detail = bounded_diagnostic(result.stderr or result.stdout)
+        if not detail:
+            detail = f"exit status {result.returncode} without a diagnostic"
+        raise service_failure(
+            systemctl, f"{observation} service health query failed: {detail}", runner
+        )
+    if result.stderr:
+        raise service_failure(
+            systemctl,
+            (
+                f"{observation} service health query returned an unexpected diagnostic: "
+                f"{bounded_diagnostic(result.stderr)}"
+            ),
+            runner,
+        )
+    try:
+        state = parse_service_state(result.stdout)
+    except InstallError as error:
+        raise service_failure(systemctl, f"{observation}: {error}", runner) from error
+    active, substate, main_pid, _restarts = state
+    if active != "active" or substate != "running" or main_pid <= 0:
+        raise service_failure(
+            systemctl,
+            (
+                f"{observation} service state is not healthy: "
+                f"ActiveState={active}, SubState={substate}, MainPID={main_pid}"
+            ),
+            runner,
+        )
+    return state
+
+
+def verify_service_health(
+    systemctl: Path, runner=subprocess.run, sleeper=time.sleep
+) -> None:
+    initial = observe_service_health(systemctl, "initial", runner)
+    sleeper(SERVICE_HEALTH_OBSERVATION_SECONDS)
+    final = observe_service_health(systemctl, "final", runner)
+    if final[2] != initial[2]:
+        raise service_failure(
+            systemctl,
+            f"service MainPID changed during health observation: {initial[2]} -> {final[2]}",
+            runner,
+        )
+    if final[3] != initial[3]:
+        raise service_failure(
+            systemctl,
+            (
+                "service restart count changed during health observation: "
+                f"{initial[3]} -> {final[3]}"
+            ),
+            runner,
+        )
+
+
+def run_systemctl_command(
+    systemctl: Path, arguments: list[str], runner=subprocess.run
+) -> None:
+    command = [str(systemctl), *arguments]
+    try:
+        result = runner(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise service_failure(
+            systemctl, f"{' '.join(command)} could not run: {error}", runner
+        ) from error
+    if result.returncode != 0:
+        detail = bounded_diagnostic(result.stderr or result.stdout)
+        if not detail:
+            detail = f"exit status {result.returncode} without a diagnostic"
+        raise service_failure(
+            systemctl, f"{' '.join(command)} failed: {detail}", runner
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -190,28 +380,14 @@ def main(argv: list[str] | None = None) -> int:
         install_file(root / "packaging" / "handy-remote-client.service", service, 0o644)
         validate_config(client, config)
 
-        for command in (
-            [str(arguments.systemctl), "--user", "daemon-reload"],
-            [
-                str(arguments.systemctl),
-                "--user",
-                "enable",
-                "--now",
-                "handy-remote-client.service",
-            ],
-        ):
-            result = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=False,
-                shell=False,
-            )
-            if result.returncode != 0:
-                raise InstallError(
-                    result.stderr.strip() or f"{' '.join(command)} failed without a diagnostic"
-                )
+        run_systemctl_command(
+            arguments.systemctl, ["--user", "daemon-reload"]
+        )
+        run_systemctl_command(
+            arguments.systemctl,
+            ["--user", "enable", "--now", SERVICE_NAME],
+        )
+        verify_service_health(arguments.systemctl)
         print(f"Installed remote laptop client and mode-off service at {client}")
         return 0
     except (InstallError, OSError, json.JSONDecodeError, subprocess.SubprocessError) as error:

@@ -28,6 +28,8 @@ Do not run installers until the reviewed Change reaches its approved live-instal
 
 Scope is one Linux/X11 laptop running Ghostty, ordinary SSH, and workstation Herdr. Required tools are `/usr/bin/python3` with `python-xlib`, `ssh`, `notify-send`, and PipeWire's `pw-record`. The configured SSH alias uses the operator's existing authentication; no password, key, token, or secret command is stored by qq-dictation.
 
+The remote client is the X11 session's sole Right-Control owner from service start, including while remote mode is off. Any other application that owns the Right-Control grab must already be disabled before installation or service start. The installer and client do not discover, stop, disable, remember, restore, or coexist with a previous owner. There is no alternate remote mode key and no managed local/remote handoff or rollback.
+
 Install with exact facts from that laptop:
 
 ```bash
@@ -38,6 +40,8 @@ Install with exact facts from that laptop:
 ```
 
 The placeholders are not source defaults. The installer writes mode `0600` `~/.config/qq-dictation/remote-laptop.json`, installs `~/.local/bin/handy-remote-client.py` and its user service, and starts the service in mode off. An existing config must be an operator-owned regular file with exact mode `0600`; differing or less-private configuration is refused before client/service replacement or systemd.
+
+Installation reports success only after the service is active and running with one positive, unchanged main PID and an unchanged restart count at both ends of a fixed observation interval longer than its one-second restart delay. This health gate runs on first install and every idempotent rerun. Startup failure, a conflicting X11 grab owner, a crash/restart, or malformed or uncertain systemd state makes installation fail nonzero and prints a bounded `handy-remote-client.service` status diagnostic instead of the success line.
 
 The microphone command is a JSON argv array and defaults to:
 
