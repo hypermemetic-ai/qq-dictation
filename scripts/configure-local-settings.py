@@ -16,7 +16,6 @@ def main() -> int:
         data = json.loads(path.read_text(encoding="utf-8"))
         settings = data.setdefault("settings", {})
         settings["overlay_style"] = "minimal"
-        settings["update_checks_enabled"] = False
         settings.setdefault("post_process_enabled", False)
         settings["herdr_binding_enabled"] = True
         settings["push_to_talk"] = True

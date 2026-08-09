@@ -12,7 +12,7 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 const TEXT_PAIR_LIMIT: usize = 1_000;
@@ -106,26 +106,16 @@ pub struct HistoryEntry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReservedFileIdentity {
-    #[cfg(unix)]
     device: u64,
-    #[cfg(unix)]
     inode: u64,
 }
 
 impl ReservedFileIdentity {
     fn from_metadata(metadata: &fs::Metadata) -> Self {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            Self {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = metadata;
-            Self {}
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
         }
     }
 
@@ -133,15 +123,8 @@ impl ReservedFileIdentity {
         if !metadata.file_type().is_file() {
             return false;
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            self.device == metadata.dev() && self.inode == metadata.ino()
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
+        use std::os::unix::fs::MetadataExt;
+        self.device == metadata.dev() && self.inode == metadata.ino()
     }
 }
 
@@ -247,13 +230,9 @@ fn reserve_pending_audio_from_candidates<'a>(
             continue;
         }
         let path = recordings_dir.join(&file_name);
+        use std::os::unix::fs::OpenOptionsExt;
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        options.read(true).write(true).create_new(true).mode(0o600);
 
         let writer = match options.open(&path) {
             Ok(writer) => writer,
@@ -266,18 +245,15 @@ fn reserve_pending_audio_from_candidates<'a>(
                 ))
             }
         };
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Err(error) = writer.set_permissions(fs::Permissions::from_mode(0o600)) {
-                drop(writer);
-                let _ = fs::remove_file(&path);
-                return Err(anyhow!(
-                    "Failed to secure reserved WAV file {}: {}",
-                    path.display(),
-                    error
-                ));
-            }
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = writer.set_permissions(fs::Permissions::from_mode(0o600)) {
+            drop(writer);
+            let _ = fs::remove_file(&path);
+            return Err(anyhow!(
+                "Failed to secure reserved WAV file {}: {}",
+                path.display(),
+                error
+            ));
         }
         let metadata = writer.metadata().map_err(|error| {
             let _ = fs::remove_file(&path);
@@ -314,7 +290,7 @@ pub struct HistoryManager {
 impl HistoryManager {
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         // Create recordings directory in app data dir
-        let app_data_dir = crate::portable::app_data_dir(app_handle)?;
+        let app_data_dir = app_handle.path().app_data_dir()?;
         let recordings_dir = app_data_dir.join("recordings");
         let db_path = app_data_dir.join("history.db");
 
@@ -1561,7 +1537,6 @@ mod tests {
         fs::write(&non_wav, b"synthetic note").expect("write non-WAV file");
         fs::create_dir(&wav_directory).expect("create WAV-named directory");
 
-        #[cfg(unix)]
         let wav_symlink = {
             let wav_symlink = recordings_dir.join("synthetic-symlink.wav");
             std::os::unix::fs::symlink(&orphan, &wav_symlink).expect("create WAV symlink");
@@ -1580,7 +1555,6 @@ mod tests {
         assert!(!orphan.exists());
         assert!(non_wav.is_file());
         assert!(wav_directory.is_dir());
-        #[cfg(unix)]
         assert!(wav_symlink.is_symlink());
     }
 
@@ -1622,7 +1596,6 @@ mod tests {
         assert!(pending_audio_files.lock().unwrap().is_empty());
     }
 
-    #[cfg(unix)]
     #[test]
     fn repeated_candidates_reserve_distinct_mode_safe_files() {
         use std::os::unix::fs::PermissionsExt;
@@ -1755,7 +1728,6 @@ mod tests {
         assert!(pending_file.is_file());
     }
 
-    #[cfg(unix)]
     #[test]
     fn orphan_cleanup_reports_removal_failure_and_retries() {
         use std::os::unix::fs::PermissionsExt;

@@ -13,7 +13,6 @@ const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
   auto: "Auto",
   cpu: "CPU",
   cuda: "CUDA",
-  directml: "DirectML",
   rocm: "ROCm",
 };
 

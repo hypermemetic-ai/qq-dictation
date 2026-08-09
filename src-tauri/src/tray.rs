@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
-use tauri::{AppHandle, Manager, Theme};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -38,73 +38,16 @@ impl CurrentTrayIconState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppTheme {
-    Dark,
-    Light,
-    Colored, // Pink/colored theme for Linux
+    Colored,
 }
 
-/// Gets the current app theme, with Linux defaulting to Colored theme
-pub fn get_current_theme(app: &AppHandle) -> AppTheme {
-    if cfg!(target_os = "linux") {
-        // On Linux, always use the colored theme
-        AppTheme::Colored
-    } else {
-        // On Windows the tray icon sits on the taskbar, which follows the
-        // *system* theme (SystemUsesLightTheme), not the app theme. With the
-        // "Custom" personalization mode the two can differ (e.g. dark taskbar
-        // + light apps), and the window theme would pick an icon that is
-        // invisible against the taskbar.
-        #[cfg(target_os = "windows")]
-        if let Some(theme) = windows_taskbar_theme() {
-            return theme;
-        }
-
-        // On other platforms, map system theme to our app theme
-        if let Some(main_window) = app.get_webview_window("main") {
-            match main_window.theme().unwrap_or(Theme::Dark) {
-                Theme::Light => AppTheme::Light,
-                Theme::Dark => AppTheme::Dark,
-                _ => AppTheme::Dark, // Default fallback
-            }
-        } else {
-            AppTheme::Dark
-        }
-    }
-}
-
-/// Reads the Windows taskbar theme from the registry.
-///
-/// Returns None if the value is missing (older Windows 10 builds default to a
-/// dark taskbar there, but falling back to the window theme is safer than
-/// guessing).
-#[cfg(target_os = "windows")]
-fn windows_taskbar_theme() -> Option<AppTheme> {
-    use winreg::enums::HKEY_CURRENT_USER;
-    use winreg::RegKey;
-
-    let personalize = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
-        .ok()?;
-    let system_uses_light: u32 = personalize.get_value("SystemUsesLightTheme").ok()?;
-    Some(if system_uses_light == 1 {
-        AppTheme::Light
-    } else {
-        AppTheme::Dark
-    })
+pub fn get_current_theme(_app: &AppHandle) -> AppTheme {
+    AppTheme::Colored
 }
 
 /// Gets the appropriate icon path for the given theme and state
 pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
     match (theme, state) {
-        // Dark theme uses light icons
-        (AppTheme::Dark, TrayIconState::Idle) => "resources/tray_idle.png",
-        (AppTheme::Dark, TrayIconState::Recording) => "resources/tray_recording.png",
-        (AppTheme::Dark, TrayIconState::Transcribing) => "resources/tray_transcribing.png",
-        // Light theme uses dark icons
-        (AppTheme::Light, TrayIconState::Idle) => "resources/tray_idle_dark.png",
-        (AppTheme::Light, TrayIconState::Recording) => "resources/tray_recording_dark.png",
-        (AppTheme::Light, TrayIconState::Transcribing) => "resources/tray_transcribing_dark.png",
-        // Colored theme uses pink icons (for Linux)
         (AppTheme::Colored, TrayIconState::Idle) => "resources/handy.png",
         (AppTheme::Colored, TrayIconState::Recording) => "resources/recording.png",
         (AppTheme::Colored, TrayIconState::Transcribing) => "resources/transcribing.png",
@@ -174,10 +117,6 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
     let locale = locale.unwrap_or(&settings.app_language);
     let strings = get_tray_translations(Some(locale.to_string()));
 
-    // Platform-specific accelerators
-    #[cfg(target_os = "macos")]
-    let (settings_accelerator, quit_accelerator) = (Some("Cmd+,"), Some("Cmd+Q"));
-    #[cfg(not(target_os = "macos"))]
     let (settings_accelerator, quit_accelerator) = (Some("Ctrl+,"), Some("Ctrl+Q"));
 
     // Create common menu items
@@ -192,14 +131,6 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
         settings_accelerator,
     )
     .expect("failed to create settings item");
-    let check_updates_i = MenuItem::with_id(
-        app,
-        "check_updates",
-        &strings.check_updates,
-        settings.update_checks_enabled,
-        None::<&str>,
-    )
-    .expect("failed to create check updates item");
     let copy_last_transcript_i = MenuItem::with_id(
         app,
         "copy_last_transcript",
@@ -266,7 +197,6 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
                     &copy_last_transcript_i,
                     &separator(),
                     &settings_i,
-                    &check_updates_i,
                     &separator(),
                     &quit_i,
                 ],
@@ -284,7 +214,6 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
                 &unload_model_i,
                 &separator(),
                 &settings_i,
-                &check_updates_i,
                 &separator(),
                 &quit_i,
             ],

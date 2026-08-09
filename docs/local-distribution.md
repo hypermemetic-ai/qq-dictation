@@ -1,7 +1,7 @@
 # Local distribution
 
 `qq-dictation` is a private, per-user Handy distribution for QQ's Linux
-workstation. It preserves Handy's local speech recognition while adding
+workstation and laptop product. It preserves Handy's local speech recognition while adding
 Herdr-pane target binding, a Right-Control armed dictation-mode bridge, and a
 reproducible user-local installation.
 
@@ -85,11 +85,21 @@ Existing Handy app data—settings, ASR models, history, and logs—is not repla
 The installer backs up any launcher, bridge, service, settings file, or prior
 qq-dictation AppDir that it supersedes. On a fresh profile it creates the minimal
 settings store before applying the same policy. It enables Herdr target binding
-and push-to-talk, preserves an existing API post-processing choice, enables the
-native minimal overlay, and disables upstream update checks so a stock release
-cannot replace the tracked local build. When the post-processing setting is
-absent, including on a fresh profile, the installer defaults it off. Updates to
-qq-dictation are built and installed explicitly from Git.
+and push-to-talk, preserves an existing API post-processing choice, and enables
+the native minimal overlay. The product contains no updater, release endpoint,
+or release public key, so it cannot replace itself with a Handy release. When
+the post-processing setting is absent, including on a fresh profile, the
+installer defaults it off. Updates to qq-dictation are built and installed
+explicitly from Git.
+
+## Selective upstream intake
+
+The retained Handy baseline is
+`8a362e9eba59d4057fda79b7f38f5b0d5cbabf65`. To consider later Handy work,
+fetch the `upstream` remote, inspect changes after that baseline, choose only
+changes compatible with the current Linux and TASK-25 workstation/laptop
+boundary, apply those changes deliberately on a Task branch, and rerun this
+Repository's full checks. Never merge upstream wholesale.
 
 ## Runtime policy
 

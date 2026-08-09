@@ -64,8 +64,7 @@ docker run --rm \
         set -euo pipefail
         mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$ORT_CACHE_DIR"
         bun install --frozen-lockfile
-        bun run tauri build --bundles deb \
-            --config "{\"bundle\":{\"createUpdaterArtifacts\":false}}"
+        bun run tauri build --bundles deb
     '
 
 deb_path="$(find "${cache_dir}/target/release/bundle/deb" -maxdepth 1 \

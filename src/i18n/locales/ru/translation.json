@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "Настройки...",
-    "checkUpdates": "Проверить обновления...",
     "copyLastTranscript": "Скопировать последнюю транскрипцию",
     "unloadModel": "Выгрузить модель",
     "model": "Модель",
@@ -97,26 +96,6 @@
     },
     "errors": {
       "selectModel": "Failed to select model"
-    },
-    "permissions": {
-      "title": "Требуются разрешения",
-      "description": "Handy требуются некоторые разрешения для корректной работы.",
-      "microphone": {
-        "title": "Доступ к микрофону",
-        "description": "Необходим для прослушивания вашего голоса для транскрипции."
-      },
-      "accessibility": {
-        "title": "Доступ к универсальному доступу",
-        "description": "Необходим для ввода расшифрованного текста в ваши приложения."
-      },
-      "grant": "Предоставить разрешение",
-      "granted": "Предоставлено",
-      "waiting": "Ожидание...",
-      "allGranted": "Всё готово!",
-      "errors": {
-        "checkFailed": "Не удалось проверить разрешения. Пожалуйста, попробуйте снова.",
-        "requestFailed": "Не удалось запросить разрешение. Пожалуйста, попробуйте снова."
-      }
     }
   },
   "modelSelector": {
@@ -258,11 +237,11 @@
       "acceleration": {
         "transcribe": {
           "title": "Ускорение Whisper",
-          "description": "Аппаратное ускорение для моделей Whisper. Автоматический режим использует GPU при наличии (Metal на macOS, Vulkan на Windows/Linux)."
+          "description": "Hardware acceleration for transcribe.cpp speech models. Auto uses a Linux GPU backend when available."
         },
         "ort": {
           "title": "Ускорение ONNX",
-          "description": "Аппаратное ускорение для моделей ONNX (Parakeet, Canary, Moonshine и др.). DirectML на Windows является экспериментальным. Модели могут не выполнять транскрипцию."
+          "description": "Hardware acceleration for ONNX speech models using the available Linux execution providers."
         },
         "gpuDevice": {
           "auto": "Авто"
@@ -329,11 +308,10 @@
       },
       "autoSubmit": {
         "title": "Автоматическая отправка",
-        "description": "Автоматически отправляет выбранную комбинацию клавиш после вставки текста. Cmd+Enter применяется на macOS, а Windows/Linux используют Super+Enter.",
+        "description": "Automatically send the selected Linux key combination after text insertion.",
         "options": {
           "off": "Выкл.",
           "enter": "Enter",
-          "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
           "ctrlEnter": "Ctrl+Enter"
         }
@@ -382,9 +360,6 @@
         "provider": {
           "title": "Поставщик",
           "description": "Выберите поставщика, совместимого с OpenAI."
-        },
-        "appleIntelligence": {
-          "unavailable": "Apple Intelligence недоступен на этом устройстве. Требуется Apple Silicon Mac под управлением macOS Tahoe (26.0) или более поздней версии с включенным Apple Intelligence в настройках системы."
         },
         "baseUrl": {
           "title": "Базовый URL",
@@ -463,10 +438,6 @@
         "lineCount": "Строк: {{count}}",
         "empty": "Ожидание журналов… Записи появятся здесь, как только приложение их создаст."
       },
-      "updateChecks": {
-        "label": "Проверять наличие обновлений",
-        "description": "Автоматически проверять наличие новых версий Handy"
-      },
       "soundTheme": {
         "label": "Звуковая тема",
         "description": "Выберите звуковую тему для начала и остановки записи обратной связи."
@@ -493,10 +464,6 @@
       "alwaysOnMicrophone": {
         "label": "Всегда включенный микрофон",
         "description": "Держите микрофон активным для более быстрого ответа"
-      },
-      "clamshellMicrophone": {
-        "title": "Раскладной микрофон",
-        "description": "Микрофон для использования при закрытой крышке ноутбука"
       },
       "postProcessingToggle": {
         "label": "Постобработка",
@@ -531,13 +498,6 @@
       "recordingBuffer": {
         "title": "Дополнительный буфер записи",
         "description": "Дополнительное время (в миллисекундах) для продолжения записи после отпускания клавиши, чтобы захватить завершающий звук. 0 = без дополнительного буфера."
-      },
-      "whatsNewPreview": {
-        "title": "Предпросмотр новинок",
-        "description": "Открыть последние встроенные примечания к выпуску, не отмечая их как просмотренные",
-        "button": "Предпросмотр",
-        "noNotes": "Встроенные примечания к выпуску не найдены",
-        "error": "Не удалось показать предварительный просмотр примечаний к выпуску"
       }
     },
     "about": {
@@ -552,13 +512,8 @@
       },
       "sourceCode": {
         "title": "Исходный код",
-        "description": "Просмотреть исходный код и внести свой вклад",
+        "description": "View the private qq-dictation source repository.",
         "button": "Посмотреть на GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Поддержка развития",
-        "description": "Помогите нам продолжать развитие Handy",
-        "button": "Поддержать"
       },
       "acknowledgments": {
         "title": "Благодарности",
@@ -567,25 +522,8 @@
           "description": "Высокопроизводительная модель автоматического распознавания речи OpenAI Whisper",
           "details": "Handy использует ggml для быстрого локального преобразования речи в текст. Спасибо великолепной работе Георгия Герганова и участников."
         }
-      },
-      "whatsNewUpdates": {
-        "label": "Показывать новинки",
-        "description": "Показывать примечания к выпуску после обновлений Handy"
       }
     }
-  },
-  "footer": {
-    "checkingUpdates": "Проверяем наличие обновлений...",
-    "updateAvailableShort": "Доступно обновление",
-    "upToDate": "Не требует обновлений",
-    "updateCheckingDisabled": "Проверка обновлений отключена",
-    "downloading": "Загрузка... {{progress}} %",
-    "installing": "Установка...",
-    "preparing": "Подготовка...",
-    "checkForUpdates": "Проверить наличие обновлений",
-    "portableUpdateTitle": "Требуется ручное обновление",
-    "portableUpdateMessage": "Портативные установки нельзя обновить автоматически. Чтобы обновить: скачайте последний установщик NSIS со страницы GitHub Releases, установите его в ту же папку, затем скопируйте папку Data/ (настройки, модели, записи) из старой версии в новую.",
-    "portableUpdateButton": "Открыть GitHub Releases"
   },
   "common": {
     "loading": "Загрузка...",
@@ -596,17 +534,11 @@
     "clear": "Очистить",
     "noOptionsFound": "Вариантов не найдено"
   },
-  "accessibility": {
-    "permissionsDescription": "Handy необходимы разрешения на доступ для ввода расшифрованного текста.",
-    "openSettings": "Открыть настройки системы"
-  },
   "errors": {
     "loadDirectory": "Ошибка загрузки каталога: {{error}}.",
     "micPermissionDeniedTitle": "Доступ к микрофону запрещён",
     "micPermissionDenied": {
       "generic": "Доступ к микрофону был запрещён операционной системой. Предоставьте разрешение на использование микрофона в настройках системы.",
-      "windows": "Включите доступ к микрофону в Параметры → Конфиденциальность и безопасность → Микрофон (включая доступ классических приложений).",
-      "macos": "Предоставьте доступ к микрофону в Системные настройки → Конфиденциальность и безопасность → Микрофон.",
       "linux": "Предоставьте доступ к микрофону в настройках звука или конфиденциальности вашей системы."
     },
     "noInputDeviceTitle": "Микрофон не найден",
@@ -634,8 +566,5 @@
   "overlay": {
     "transcribing": "Расшифровка...",
     "processing": "Обработка..."
-  },
-  "whatsNew": {
-    "title": "Новое в Handy v{{version}}"
   }
 }

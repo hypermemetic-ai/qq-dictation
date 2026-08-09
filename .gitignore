@@ -30,21 +30,8 @@ dist-ssr
 
 /target/
 recording_*
-.crush/
-
-# Playwright
-playwright-report/
-test-results/
-blob-report/
-
-.direnv
-.envrc
-
 # qq-dictation checkout-local build output
 .local-build/
-
-# Nix build output
-result
 
 # Local subagent run artifacts
 .pi-subagents/

@@ -1,6 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { platform } from "@tauri-apps/plugin-os";
 import App from "./App";
 import {
   applyTheme,
@@ -8,8 +7,7 @@ import {
   syncThemeFromSettings,
 } from "./lib/utils/theme";
 
-// Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
-document.documentElement.dataset.platform = platform();
+document.documentElement.dataset.platform = "linux";
 
 // Apply the last-known theme synchronously before render to avoid a flash of
 // the wrong palette, then reconcile with the persisted setting once it loads.
