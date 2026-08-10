@@ -167,23 +167,25 @@ printf 'qq-check: cache=%s\n' "$cache_root" >>"$log_path"
 printf 'qq-check: builder=%s\n' "$builder_id" >>"$log_path"
 
 run_fresh_clone_backend() {
-  git clone --no-checkout --no-hardlinks -- "$root" "$clone_dir"
-  git -C "$clone_dir" remote set-url origin "$origin_url"
-  git -c advice.detachedHead=false -C "$clone_dir" checkout --detach "$commit"
+  local clone_status
+
+  git clone --no-checkout --no-hardlinks -- "$root" "$clone_dir" || return 75
+  git -C "$clone_dir" remote set-url origin "$origin_url" || return 76
+  git -c advice.detachedHead=false -C "$clone_dir" checkout --detach "$commit" || return 77
   [ "$(git -C "$clone_dir" rev-parse HEAD)" = "$commit" ] || return 70
   [ "$(git -C "$clone_dir" rev-parse 'HEAD^{tree}')" = "$tree" ] || return 71
-  mkdir -p -- "$check_home"
-  chmod 0700 -- "$check_home"
+  mkdir -p -- "$check_home" || return 78
+  chmod 0700 -- "$check_home" || return 79
 
   (
-    cd -- "$clone_dir"
+    cd -- "$clone_dir" || exit 80
     env -i \
       HOME="$check_home" \
       PATH=/usr/bin:/bin \
       LANG=C.UTF-8 \
       PYTHONDONTWRITEBYTECODE=1 \
       /usr/bin/python3 -W error -m unittest discover -s tests -p 'test_*.py'
-  )
+  ) || return 80
 
   "$docker_bin" run --rm \
     --memory 8g \
@@ -211,12 +213,13 @@ run_fresh_clone_backend() {
       bun run format:check
       bun run build
       cargo test --manifest-path src-tauri/Cargo.toml
-    "
+    " || return 81
 
   [ "$(git -C "$clone_dir" rev-parse HEAD)" = "$commit" ] || return 72
   [ "$(git -C "$clone_dir" rev-parse 'HEAD^{tree}')" = "$tree" ] || return 73
-  git -C "$clone_dir" diff --check
-  [ -z "$(git -C "$clone_dir" status --porcelain)" ] || return 74
+  git -C "$clone_dir" diff --check || return 82
+  clone_status="$(git -C "$clone_dir" status --porcelain)" || return 83
+  [ -z "$clone_status" ] || return 74
 }
 
 printf 'qq-check: backend=fresh-clone-contained-env\n' >>"$log_path"
