@@ -385,6 +385,21 @@ fn focused_herdr_pane() -> CaptureOutcome {
     }
 }
 
+/// Resolve the currently focused remote pane for the finish-time privacy
+/// decision. Unlike local recording capture, this deliberately has no active
+/// window gate: remote ingress is already bound to Herdr delivery semantics.
+pub(crate) fn resolve_remote_focused_pane() -> Result<String, String> {
+    let herdr = resolve_herdr()?;
+    let output = run_with_timeout(&herdr, &["api", "snapshot"], Duration::from_secs(2))?;
+    if !output.status.success() {
+        return Err(format!(
+            "herdr api snapshot failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_remote_delivery_pane(&output.stdout)
+}
+
 fn active_window_title() -> Result<String, String> {
     let output = run_with_timeout(
         "xdotool",

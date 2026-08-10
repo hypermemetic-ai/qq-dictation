@@ -10,6 +10,7 @@ mod llm_client;
 mod managers;
 mod operation;
 mod overlay;
+mod privacy_marks;
 mod remote;
 mod settings;
 mod shortcut;
