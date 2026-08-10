@@ -28,7 +28,7 @@ DEFAULT_XDOTOOL_PATH = "/usr/bin/xdotool"
 
 SERVICE_NAME = "handy-remote-client.service"
 SERVICE_HEALTH_PROPERTIES = ("ActiveState", "SubState", "MainPID", "NRestarts")
-# This must remain longer than packaging/handy-remote-client.service's RestartSec=1.
+# This must remain longer than ops/install/handy-remote-client.service's RestartSec=1.
 SERVICE_HEALTH_OBSERVATION_SECONDS = 1.1
 SERVICE_STATUS_LINES = 20
 SERVICE_HEALTH_OUTPUT_LIMIT = 1_024
@@ -350,7 +350,7 @@ def run_systemctl_command(
 
 
 def main(argv: list[str] | None = None) -> int:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--ssh-host")
@@ -403,17 +403,17 @@ def main(argv: list[str] | None = None) -> int:
                     stream.flush()
                     os.fsync(stream.fileno())
                     os.fchmod(stream.fileno(), 0o600)
-                validate_config(root / "packaging" / "handy-remote-client.py", candidate)
+                validate_config(root / "ops" / "install" / "handy-remote-client.py", candidate)
                 validate_laptop_runtime(candidate)
                 os.replace(candidate, config)
             finally:
                 candidate.unlink(missing_ok=True)
 
         # Validate before replacing an existing installed client.
-        validate_config(root / "packaging" / "handy-remote-client.py", config)
+        validate_config(root / "ops" / "install" / "handy-remote-client.py", config)
         validate_laptop_runtime(config)
-        install_file(root / "packaging" / "handy-remote-client.py", client, 0o755)
-        install_file(root / "packaging" / "handy-remote-client.service", service, 0o644)
+        install_file(root / "ops" / "install" / "handy-remote-client.py", client, 0o755)
+        install_file(root / "ops" / "install" / "handy-remote-client.service", service, 0o644)
         validate_config(client, config)
 
         run_systemctl_command(

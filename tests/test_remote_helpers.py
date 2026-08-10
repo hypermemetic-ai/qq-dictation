@@ -24,7 +24,7 @@ def load_script(name: str, relative: str):
 
 
 stream_helper = load_script(
-    "handy_remote_stream", "packaging/handy-remote-stream.py"
+    "handy_remote_stream", "ops/install/handy-remote-stream.py"
 )
 
 

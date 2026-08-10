@@ -34,7 +34,7 @@ The normal local installer installs only:
 The standalone hermetic surface is:
 
 ```bash
-/usr/bin/python3 scripts/install-remote-workstation.py
+/usr/bin/python3 ops/install/install-remote-workstation.py
 ```
 
 There is no Herdr binder, reserved chord, config edit/reload, custom command, direct terminal attach, popup, proxy, or fork. The workstation installer does not inspect or modify Herdr config or a config symlink/target. Do not run installers until the reviewed Task reaches its approved live-install step.
@@ -54,7 +54,7 @@ Legacy configuration without `delivery_mode` remains valid and means `herdr`.
 Install legacy-compatible Herdr delivery with exact facts from that laptop:
 
 ```bash
-/usr/bin/python3 scripts/install-remote-laptop.py \
+/usr/bin/python3 ops/install/install-remote-laptop.py \
   --ssh-host WORKSTATION_SSH_ALIAS \
   --ghostty-title EXACT_ACTIVE_GHOSTTY_TITLE \
   --ghostty-class EXACT_GHOSTTY_WM_CLASS
@@ -63,7 +63,7 @@ Install legacy-compatible Herdr delivery with exact facts from that laptop:
 An explicit equivalent is:
 
 ```bash
-/usr/bin/python3 scripts/install-remote-laptop.py \
+/usr/bin/python3 ops/install/install-remote-laptop.py \
   --ssh-host WORKSTATION_SSH_ALIAS \
   --delivery-mode herdr \
   --ghostty-title EXACT_ACTIVE_GHOSTTY_TITLE \
@@ -73,7 +73,7 @@ An explicit equivalent is:
 Install laptop-local focused-window delivery with:
 
 ```bash
-/usr/bin/python3 scripts/install-remote-laptop.py \
+/usr/bin/python3 ops/install/install-remote-laptop.py \
   --ssh-host WORKSTATION_SSH_ALIAS \
   --delivery-mode local \
   --xdotool-path /usr/bin/xdotool

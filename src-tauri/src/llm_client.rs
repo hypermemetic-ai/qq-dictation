@@ -4,8 +4,8 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFER
 use serde::{Deserialize, Serialize};
 
 /// Total request timeout for a post-processing call. 3s is ~6x the measured
-/// p95 of the trial provider (Cerebras gpt-oss-120b: 466ms on the Stage 0
-/// corpus) while still bounding delivery delay when a provider stalls.
+/// p95 of the adopted cleanup evaluation (Cerebras gpt-oss-120b: 466ms)
+/// while still bounding delivery delay when a provider stalls.
 const POST_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 use serde_json::Value;
 
