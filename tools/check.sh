@@ -125,7 +125,15 @@ pi_package_version="$(PATH="$current_path" node -e \
 [ "$pi_package_version" = "$expected_pi" ] \
   || fail "Pi package version mismatch: expected $expected_pi, observed $pi_package_version"
 
-if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+# Delegated Checks isolate generic XDG cache writes under their private run.
+# That harness-only override is not the product's A-27 build-cache migration,
+# so consume the already-established HOME cache without creating a second root.
+if [[ "${QQ_DISPATCH_RUN_DIR:-}" = /* \
+    && "${XDG_CACHE_HOME:-}" = "${QQ_DISPATCH_RUN_DIR}/cache" ]]; then
+  [[ "${HOME:-}" = /* ]] \
+    || fail 'an absolute HOME is required with the delegated XDG cache override'
+  cache_base="$HOME/.cache"
+elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then
   cache_base="$XDG_CACHE_HOME"
 elif [[ -n "${HOME:-}" ]]; then
   cache_base="$HOME/.cache"
