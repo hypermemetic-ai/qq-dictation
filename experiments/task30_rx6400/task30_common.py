@@ -89,7 +89,10 @@ def parse_sample_id(value: Any, label: str = "sample id") -> str:
     if isinstance(value, int):
         number = value
     elif isinstance(value, str) and value.isascii() and value.isdigit():
-        number = int(value)
+        try:
+            number = int(value)
+        except ValueError as error:
+            raise Task30Error(f"{label} must be a positive history id") from error
     else:
         raise Task30Error(f"{label} must be a positive history id")
     if number <= 0 or str(number) != str(value):
@@ -107,7 +110,7 @@ def load_seed_ids(corpus: Path, *, required: bool = False) -> set[str]:
     require_plain_file(manifest, "seed-existing.json")
     try:
         value = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, ValueError) as error:
         raise Task30Error(f"cannot parse seed-existing.json: {error}") from error
 
     entries: Any

@@ -55,7 +55,7 @@ def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     require_plain_file(path, label)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, ValueError) as error:
         raise SummaryError(f"cannot parse {label}: {error}") from error
     if not isinstance(value, dict):
         raise SummaryError(f"{label} must contain a JSON object")
@@ -75,6 +75,9 @@ def _load_json_lines(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
             value = json.loads(line)
         except json.JSONDecodeError as error:
             errors.append(f"observation line {line_number} is invalid JSON: {error.msg}")
+            continue
+        except ValueError:
+            errors.append(f"observation line {line_number} contains an invalid JSON number")
             continue
         if not isinstance(value, dict):
             errors.append(f"observation line {line_number} is not an object")
@@ -119,10 +122,18 @@ def _canonical_samples(manifest: dict[str, Any], errors: list[str]) -> list[str]
         return []
     samples: list[str] = []
     for index, sample in enumerate(value, 1):
-        if not isinstance(sample, str) or not sample.isascii() or not sample.isdigit() or int(sample) <= 0:
+        if not isinstance(sample, str) or not sample.isascii() or not sample.isdigit():
             errors.append(f"run manifest sample {index} is invalid")
             continue
-        if str(int(sample)) != sample or sample in samples:
+        try:
+            sample_number = int(sample)
+        except ValueError:
+            errors.append(f"run manifest sample {index} is invalid")
+            continue
+        if sample_number <= 0:
+            errors.append(f"run manifest sample {index} is invalid")
+            continue
+        if str(sample_number) != sample or sample in samples:
             errors.append(f"run manifest sample {index} is duplicate or non-canonical")
             continue
         samples.append(sample)
@@ -152,7 +163,10 @@ def _expected_schedule(
 def _number(value: Any, *, positive: bool = False) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, ValueError):
+        return None
     if not math.isfinite(result) or (result <= 0 if positive else result < 0):
         return None
     return result

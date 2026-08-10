@@ -10,11 +10,13 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from typing import BinaryIO
 from unittest import mock
 
 import collect_corpus
 import run_benchmark
 import summarize_results
+import task30_common
 
 
 SYNTHETIC_COMMIT = "a" * 40
@@ -249,7 +251,7 @@ class CollectorTests(unittest.TestCase):
 
             original_stream_copy = collect_corpus._stream_copy
 
-            def mutate_after_copy(source_file: object, destination_file: object) -> None:
+            def mutate_after_copy(source_file: BinaryIO, destination_file: BinaryIO) -> None:
                 original_stream_copy(source_file, destination_file)
                 with source.open("ab") as changed:
                     changed.write(b"invented-change")
@@ -288,6 +290,90 @@ class CollectorTests(unittest.TestCase):
                 collect_corpus.collect_once(database, recordings, corpus)
             self.assertEqual((sample / "audio.wav").read_bytes(), conflicting_audio)
             self.assertEqual({path.name for path in sample.iterdir()}, {"audio.wav", "metadata.json"})
+
+
+class MalformedInputTests(unittest.TestCase):
+    def test_benchmark_numbers_refuse_nonfinite_overflow_and_digit_limit_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base_config: dict[str, object] = {
+                "installed_appdir": str(root / "installed" / "Handy.AppDir"),
+                "executable": str(root / "installed" / "Handy.AppDir" / "AppRun"),
+                "corpus": str(root / "corpus"),
+                "output_dir": str(root / "output"),
+                "cohort": "existing-saved",
+                "warmup_rounds": 1,
+                "timed_rounds": 5,
+                "arms": [
+                    {"name": "synthetic", "model": SYNTHETIC_MODEL, "device_index": 0}
+                ],
+            }
+            for label, timeout in (("nonfinite", float("inf")), ("overflow", 10**400)):
+                with self.subTest(label=label):
+                    config = root / f"{label}.json"
+                    config.write_text(
+                        json.dumps({**base_config, "timeout_seconds": timeout}),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        run_benchmark.BenchmarkError, "positive finite number"
+                    ):
+                        run_benchmark.load_config(config)
+
+            digit_limit_config = root / "digit-limit.json"
+            digit_limit_config.write_text(
+                '{"timeout_seconds":' + "9" * 5000 + "}", encoding="utf-8"
+            )
+            with self.assertRaises(run_benchmark.BenchmarkError) as raised:
+                run_benchmark.load_config(digit_limit_config)
+            self.assertIsInstance(raised.exception.__cause__, ValueError)
+
+        arm = run_benchmark.Arm("synthetic", SYNTHETIC_MODEL, 0)
+        output: dict[str, object] = {
+            "model": SYNTHETIC_MODEL,
+            "requested_device": "index 0",
+            "bound_backend": None,
+            "audio_secs": 10**400,
+            "load_ms": 1,
+            "transcribe_ms": [1],
+            "best_ms": 1,
+            "rtf": 1,
+            "text": "invented output",
+        }
+        self.assertEqual(run_benchmark.validate_stdout_json(output, arm), "invalid_audio_secs")
+
+    def test_summary_numbers_become_validation_errors(self) -> None:
+        errors: list[str] = []
+        self.assertEqual(
+            summarize_results._canonical_samples({"samples": ["9" * 5000]}, errors), []
+        )
+        self.assertEqual(errors, ["run manifest sample 1 is invalid"])
+        self.assertIsNone(summarize_results._number(10**400))
+        self.assertIsNone(summarize_results._number(float("inf")))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            observations = Path(temporary) / "observations.jsonl"
+            observations.write_text('{"sequence":' + "9" * 5000 + "}\n", encoding="utf-8")
+            records, line_errors = summarize_results._load_json_lines(observations)
+            self.assertEqual(records, [])
+            self.assertEqual(
+                line_errors, ["observation line 1 contains an invalid JSON number"]
+            )
+
+    def test_common_sample_ids_refuse_digit_limit_inputs(self) -> None:
+        pathological_id = "9" * 5000
+        with self.assertRaises(task30_common.Task30Error) as raised:
+            task30_common.parse_sample_id(pathological_id)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            corpus = Path(temporary)
+            (corpus / "seed-existing.json").write_text(
+                '{"history_ids":[' + pathological_id + "]}", encoding="utf-8"
+            )
+            with self.assertRaises(task30_common.Task30Error) as seed_raised:
+                task30_common.load_seed_ids(corpus, required=True)
+            self.assertIsInstance(seed_raised.exception.__cause__, ValueError)
 
 
 class RunnerAndSummaryTests(unittest.TestCase):

@@ -77,7 +77,7 @@ def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     require_plain_file(path, label)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, ValueError) as error:
         raise BenchmarkError(f"cannot parse {label}: {error}") from error
     if not isinstance(value, dict):
         raise BenchmarkError(f"{label} must contain a JSON object")
@@ -116,8 +116,14 @@ def load_config(config_path: Path) -> BenchmarkConfig:
     warmups = _positive_int(raw["warmup_rounds"], "warmup_rounds", 1)
     timed = _positive_int(raw["timed_rounds"], "timed_rounds", 5)
     timeout = raw.get("timeout_seconds", 600)
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise BenchmarkError("timeout_seconds must be a positive number")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise BenchmarkError("timeout_seconds must be a positive finite number")
+    try:
+        timeout_seconds = float(timeout)
+    except (OverflowError, ValueError) as error:
+        raise BenchmarkError("timeout_seconds must be a positive finite number") from error
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise BenchmarkError("timeout_seconds must be a positive finite number")
 
     arms_value = raw["arms"]
     if not isinstance(arms_value, list) or not arms_value:
@@ -149,7 +155,7 @@ def load_config(config_path: Path) -> BenchmarkConfig:
         cohort,
         warmups,
         timed,
-        float(timeout),
+        timeout_seconds,
         tuple(arms),
     )
 
@@ -212,9 +218,13 @@ def _process_evidence() -> dict[str, object]:
         except OSError:
             unreadable += 1
             continue
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
         scanned += 1
         haystack = f"{comm} {command}".lower()
-        evidence = {"pid": int(entry.name), "comm": comm, "command": command}
+        evidence = {"pid": pid, "comm": comm, "command": command}
         if any(marker in haystack for marker in _BUILD_MARKERS):
             build_matches.append(evidence)
         if any(marker in haystack for marker in _CONTAINER_MARKERS):
@@ -312,7 +322,11 @@ def collect_machine_state(config: BenchmarkConfig, installed_commit: str) -> dic
 def _valid_number(value: Any, *, positive: bool = False) -> bool:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    if not math.isfinite(float(value)):
+    try:
+        finite_value = float(value)
+    except (OverflowError, ValueError):
+        return False
+    if not math.isfinite(finite_value):
         return False
     return value > 0 if positive else value >= 0
 
@@ -457,6 +471,8 @@ def run_benchmark(config_path: Path) -> int:
         private_write_json(config.output_dir / "run.json", run_manifest)
 
         device_list = machine_state["device_list"]
+        if not isinstance(device_list, dict):
+            raise BenchmarkError("machine-state device-list result is invalid")
         if device_list["launch_failure"] is not None or device_list["exit_status"] != 0:
             private_write_json(
                 config.output_dir / "completion.json",
