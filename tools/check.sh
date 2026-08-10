@@ -154,12 +154,17 @@ docker_bin="$(PATH="$current_path" command -v docker 2>>"$log_path")" \
   || fail 'Docker executable resolution failed'
 [[ "$docker_bin" = /* && "$docker_bin" != *$'\n'* ]] \
   || fail 'Docker executable path is malformed'
+builder_id="$("$docker_bin" image inspect --format '{{.Id}}' "$builder_image" 2>>"$log_path")" \
+  || fail 'pinned contained builder image is unavailable; build it through ops/build/build-local.sh'
+[[ "$builder_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+  || fail 'contained builder image identity is malformed'
 
 printf 'qq-check: commit=%s\n' "$commit" >>"$log_path"
 printf 'qq-check: tree=%s\n' "$tree" >>"$log_path"
 printf 'qq-check: node=%s\n' "$node_version" >>"$log_path"
 printf 'qq-check: pi=%s\n' "$pi_version" >>"$log_path"
 printf 'qq-check: cache=%s\n' "$cache_root" >>"$log_path"
+printf 'qq-check: builder=%s\n' "$builder_id" >>"$log_path"
 
 run_fresh_clone_backend() {
   git clone --no-checkout --no-hardlinks -- "$root" "$clone_dir"
@@ -179,15 +184,6 @@ run_fresh_clone_backend() {
       PYTHONDONTWRITEBYTECODE=1 \
       /usr/bin/python3 -W error -m unittest discover -s tests -p 'test_*.py'
   )
-
-  "$docker_bin" build \
-    --memory 8g \
-    --memory-swap 8g \
-    --cpu-period 100000 \
-    --cpu-quota 200000 \
-    --file "$clone_dir/ops/build/Dockerfile" \
-    --tag "$builder_image" \
-    "$clone_dir/ops/build"
 
   "$docker_bin" run --rm \
     --memory 8g \

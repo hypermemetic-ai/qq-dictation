@@ -130,8 +130,8 @@ tools/check.sh "$(git rev-parse HEAD)"
 ```
 
 It clones the commit without hardlinks into private run state, verifies the
-commit and tree, builds/uses the pinned contained toolchain under the proven
-resource limits, runs ESLint, Repository-wide Prettier plus rustfmt check,
+commit and tree, uses the pinned contained toolchain under the proven resource
+limits, runs ESLint, Repository-wide Prettier plus rustfmt check,
 TypeScript and both Vite entry points, the Python suite with `python-xlib`, and
 all Cargo tests. It emits one `qq-check-receipt/v1` line; the private absolute
 log path in that receipt holds complete output. A receipt proves only that
