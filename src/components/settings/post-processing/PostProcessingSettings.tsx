@@ -281,7 +281,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
   );
 };
 
-export const PostProcessingSettingsPrompts = React.memo(
+const PostProcessingSettingsPrompts = React.memo(
   PostProcessingSettingsPromptsComponent,
 );
 PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
