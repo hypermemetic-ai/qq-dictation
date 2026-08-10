@@ -53,7 +53,7 @@ def install_file(source: Path, destination: Path, mode: int) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
     arguments = parser.parse_args(argv)
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         if not stat.S_ISDIR(home_metadata.st_mode) or home_metadata.st_uid != os.geteuid():
             raise InstallError("installation home must be an operator-owned directory")
         destination = local_bin / "handy-remote-stream.py"
-        install_file(root / "packaging" / destination.name, destination, 0o755)
+        install_file(root / "ops" / "install" / destination.name, destination, 0o755)
         print(f"Installed remote workstation stream helper at {destination}")
         return 0
     except (InstallError, OSError) as error:

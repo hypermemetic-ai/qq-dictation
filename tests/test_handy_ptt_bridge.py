@@ -15,7 +15,7 @@ from unittest import mock
 from Xlib import X, XK
 
 
-SCRIPT = Path(__file__).parents[1] / "packaging" / "handy-ptt-bridge.py"
+SCRIPT = Path(__file__).parents[1] / "ops" / "install" / "handy-ptt-bridge.py"
 SPEC = importlib.util.spec_from_file_location("handy_ptt_bridge", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 bridge = importlib.util.module_from_spec(SPEC)

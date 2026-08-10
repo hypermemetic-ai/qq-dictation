@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 builder_image="qq-dictation-builder:ubuntu24.04"
 output_dir="${repository_root}/.local-build"
 
@@ -34,19 +34,22 @@ fi
 mkdir -p "$cache_dir"/{cargo,target,ort} "$output_dir"
 
 docker build \
-    --file "${repository_root}/packaging/Dockerfile" \
+    --memory "${QQ_BUILD_MEM:-8g}" \
+    --memory-swap "${QQ_BUILD_MEM:-8g}" \
+    --cpu-period 100000 \
+    --cpu-quota 200000 \
+    --file "${repository_root}/ops/build/Dockerfile" \
     --tag "$builder_image" \
-    "${repository_root}/packaging"
+    "${repository_root}/ops/build"
 
-# The 5g default protects the host desktop during builds, as established by
-# the July containment evidence. Newer toolchain images can need more for
-# ggml-vulkan's heaviest translation units; override with QQ_BUILD_MEM=8g
-# (applies to both memory and
-# memory-swap) without editing this script. NOTE: bash does not allow
-# comments inside a line-continued command — keep them above `docker run`.
+# The proven boundary is 8 GiB memory with no additional container swap,
+# two CPUs, one Cargo/CMake job, and a 4 GiB Node old-space cap. QQ_BUILD_MEM
+# may lower the memory and memory-swap limits for a deliberately lighter run;
+# do not raise them without new authorization and evidence. NOTE: bash does not
+# allow comments inside a line-continued command — keep them above `docker run`.
 docker run --rm \
-    --memory "${QQ_BUILD_MEM:-5g}" \
-    --memory-swap "${QQ_BUILD_MEM:-5g}" \
+    --memory "${QQ_BUILD_MEM:-8g}" \
+    --memory-swap "${QQ_BUILD_MEM:-8g}" \
     --cpus 2 \
     --user "$(id -u):$(id -g)" \
     --volume "${repository_root}:/work" \
@@ -81,7 +84,7 @@ cleanup() {
 trap cleanup EXIT
 
 dpkg-deb --extract "$deb_path" "$staging_dir"
-install -m 0755 "${repository_root}/packaging/AppRun" "${staging_dir}/AppRun"
+install -m 0755 "${repository_root}/ops/package/AppRun" "${staging_dir}/AppRun"
 git -C "$repository_root" rev-parse HEAD >"${staging_dir}/qq-dictation-commit"
 
 final_dir="${output_dir}/Handy.AppDir"

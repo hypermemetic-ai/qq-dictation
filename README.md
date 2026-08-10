@@ -1,98 +1,77 @@
 # qq-dictation
 
-`qq-dictation` is the private `qqp-dev/qq-dictation` Linux product for QQ
-workstations and laptops. It keeps Handy's local speech recognition and adds
-Herdr-pane target binding, the Right-Control dictation-mode bridge, and a pinned
-per-user build and installation path.
-
-There is no public support, discussion forum, or release channel for this
-product.
+`qq-dictation` is the private `qqp-dev/qq-dictation` Linux/X11 product for QQ
+workstations and laptops. It retains Handy's local speech recognition and adds
+Herdr-pane target binding, the Right-Control dictation-mode bridge, the adopted
+second-pass cleanup prompt, and a pinned per-user build and installation path.
+There is no public support, release, or self-update channel.
 
 ## Runtime behavior
 
-- Speech recognition, VAD, audio capture, model storage, and history remain local.
-- On X11, a recording started in Herdr is delivered to the pane that was
-  focused at recording start, even if focus changes before transcription
-  finishes.
-- Recordings started outside Herdr use focused Linux insertion.
-- Right-Control arms or exits dictation mode; while armed, Space starts or stops
-  recording and Delete cancels without leaving the mode.
-- The workstation path and remote laptop protocol share the same serialized
-  transcription pipeline.
-- Whisper-family and ONNX speech models are supported with the configured local
-  accelerator.
+- Speech recognition, VAD, audio capture, models, and history remain local.
+- A workstation recording started in Herdr is delivered to the pane focused at
+  recording start; recordings started elsewhere use focused X11 insertion.
+- Right-Control arms or exits dictation mode. While armed, Space starts or stops
+  recording and Delete cancels.
+- The A-25 remote Linux/X11 laptop path uses the workstation's serialized
+  transcription, selected model/language, second pass, history, and delivery
+  policy.
+- The installer refreshes the adopted cleanup prompt from product source while
+  preserving provider/model/API configuration, unrelated prompts, an explicit
+  different prompt selection, and the operator's post-processing enable choice.
 
-See [the local distribution guide](docs/local-distribution.md) for the pinned
-build/install contract and [the project concepts](docs/project-concepts.md) for
-QQ-specific vocabulary.
+See the [operations and build guide](docs/operations.md) for the complete build,
+cache, install, rollback, second-pass, and selective-upstream contracts. The
+focused [remote laptop guide](docs/remote-laptop-dictation.md) and
+[wire protocol](docs/remote-dictation-protocol.md) describe the A-25 path.
 
 ## Build and update
 
-The installed app is updated only by building and installing an exact clean
-Repository commit:
+Build and install only an exact clean Repository commit:
 
 ```bash
-QQ_BUILD_MEM=8g scripts/build-local.sh
-scripts/install-local.sh
+QQ_BUILD_MEM=8g ops/build/build-local.sh
+ops/install/install-local.sh
 ```
 
-The first command performs the pinned contained Linux build and creates the
-local AppDir. The second installs it under
-`~/.local/opt/qq-dictation/Handy.AppDir` for the current user. Read
-[`BUILD-LESSONS.md`](BUILD-LESSONS.md) before running the build.
+The build uses the pinned Ubuntu 24.04, Rust 1.96.0, and Bun 1.3.3 environment
+with the proven resource limits. Installation is per-user under
+`~/.local/opt/qq-dictation`; it preserves app data and backs up replaced local
+files. The local installer is operator-visible and is not part of source-only
+Checks.
 
-No self-updater or release-artifact path exists. Only the two commands above
-update the installed app.
+## Repository Check
 
-## Development checks
-
-Install the lock-selected frontend dependencies, then run the ordinary checks:
+After committing, prove the exact commit in a fresh clone:
 
 ```bash
-bun install --frozen-lockfile
-bun run lint
-bun run build
+tools/check.sh "$(git rev-parse HEAD)"
 ```
 
-Rust compilation, tests, and packaging run in the pinned contained environment;
-see [BUILD.md](BUILD.md).
+The runner performs the full frontend, formatting, Python, and Rust Checks and
+emits one receipt bound to the exact commit and tree. Its full log is private
+under the user's qq Check state directory.
 
-## Upstream provenance and selective intake
+## Upstream provenance
 
-This product derives from [Handy](https://github.com/cjpais/Handy), used under
-its MIT license. The unchanged terms are in [LICENSE](LICENSE). The exact Handy
-baseline is:
+This product derives from [Handy](https://github.com/cjpais/Handy) under the
+terms in [LICENSE](LICENSE). The retained upstream baseline is:
 
 ```text
 8a362e9eba59d4057fda79b7f38f5b0d5cbabf65
 ```
 
-To consider later Handy work, fetch the `upstream` remote, inspect changes after
-that baseline, choose only changes compatible with the current Linux and
-TASK-25 workstation/laptop boundary, apply those changes deliberately on a Task
-branch, and rerun this Repository's full checks. Never merge upstream wholesale.
+Later upstream work is fetched and inspected after that baseline, selected only
+when compatible with the private Linux/X11 and A-25 boundary, applied on a Task
+branch, and fully rechecked. Upstream is never merged wholesale.
 
-## App controls
+## App controls and host runtime
 
-A running instance accepts these local commands:
+A running instance accepts `handy --toggle-transcription`,
+`handy --toggle-post-process`, and `handy --cancel`. Startup supports
+`--start-hidden`, `--no-tray`, `--debug`, and `--help`.
 
-```bash
-handy --toggle-transcription
-handy --toggle-post-process
-handy --cancel
-```
-
-Startup flags include `--start-hidden`, `--no-tray`, `--debug`, and `--help`.
-The debug settings shortcut is Ctrl+Shift+D.
-
-## Linux runtime requirements
-
-The contained package includes the application and its private native runtime
-libraries. The host needs the GTK layer-shell runtime and `xdotool` for the
-approved X11 insertion path. If WebKit rendering is unstable, launch with
-`WEBKIT_DISABLE_DMABUF_RENDERER=1`; if layer-shell initialization is unsuitable
-for the current desktop, use `HANDY_NO_GTK_LAYER_SHELL=1`.
-
-Speech models remain under the ordinary per-user app-data path. Model download
-origins under `handy-computer` are runtime inputs retained from Handy, not a
-support or distribution channel for qq-dictation.
+The package includes its private native libraries. The Linux host needs the GTK
+layer-shell runtime and `xdotool`. For WebKit rendering trouble use
+`WEBKIT_DISABLE_DMABUF_RENDERER=1`; when layer-shell is unsuitable use
+`HANDY_NO_GTK_LAYER_SHELL=1`.

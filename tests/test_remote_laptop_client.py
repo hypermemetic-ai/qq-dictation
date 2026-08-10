@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "packaging" / "handy-remote-client.py"
+SCRIPT = ROOT / "ops" / "install" / "handy-remote-client.py"
 SPEC = importlib.util.spec_from_file_location("handy_remote_client", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 client = importlib.util.module_from_spec(SPEC)

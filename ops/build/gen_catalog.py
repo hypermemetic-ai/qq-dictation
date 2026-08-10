@@ -11,10 +11,11 @@ Merges three sources into one catalog.json:
   3. local CURATION (this file)       -> recommended set, editorial descriptions
 
 Emits catalog.json to be committed and `include_str!`'d into the Rust binary.
-Run:  HF_TOKEN=$(hf auth token) uv run gen_catalog.py [out_path]
+Run:  HF_TOKEN=$(hf auth token) uv run ops/build/gen_catalog.py [out_path]
 """
 import json, os, re, sys, math, struct, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from huggingface_hub import HfApi, HfFileSystem
 
 ORG = "handy-computer"
@@ -260,8 +261,13 @@ def main():
     text = re.sub(r'"languages": \[(.*?)\]',
                   lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
                   text, flags=re.S)
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "catalog.json")
-    open(out, "w").write(text)
+    repository_root = Path(__file__).resolve().parents[2]
+    out = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else repository_root / "src-tauri" / "src" / "catalog" / "catalog.json"
+    )
+    out.write_text(text, encoding="utf-8")
     print(f"wrote {out}: {len(models)} models, {os.path.getsize(out)/1024:.1f} KB", file=sys.stderr)
 
 if __name__ == "__main__":

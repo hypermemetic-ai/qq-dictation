@@ -5,24 +5,34 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "src-tauri/**"
+      - "ops/**"
+      - "tests/**"
+      - "docs/**"
+      - "tools/check.sh"
+      - "README.md"
       - "package.json"
       - "bun.lock"
-      - ".eslintrc*"
       - "eslint.config.*"
-      - ".prettierrc*"
-      - "tsconfig*"
-      - "tailwind.config.*"
+      - ".prettierignore"
+      - "tsconfig.json"
+      - "vite.config.ts"
       - ".github/workflows/**"
   pull_request:
     paths:
       - "src/**"
+      - "src-tauri/**"
+      - "ops/**"
+      - "tests/**"
+      - "docs/**"
+      - "tools/check.sh"
+      - "README.md"
       - "package.json"
       - "bun.lock"
-      - ".eslintrc*"
       - "eslint.config.*"
-      - ".prettierrc*"
-      - "tsconfig*"
-      - "tailwind.config.*"
+      - ".prettierignore"
+      - "tsconfig.json"
+      - "vite.config.ts"
       - ".github/workflows/**"
 
 concurrency:
@@ -37,7 +47,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -45,5 +55,5 @@ jobs:
       - name: Run ESLint
         run: bun run lint
 
-      - name: Run prettier
+      - name: Run prettier and rustfmt
         run: bun run format:check

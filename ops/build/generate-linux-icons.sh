@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tauri="${repository_root}/node_modules/.bin/tauri"
 source_icon="${repository_root}/src-tauri/icons/logo.png"
 icons_dir="${repository_root}/src-tauri/icons"

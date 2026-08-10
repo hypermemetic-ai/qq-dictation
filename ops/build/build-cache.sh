@@ -26,7 +26,7 @@ if [[ -L "$cache_root" ]]; then
 fi
 
 printf 'canonical_root=%s\n' "$cache_root"
-printf 'creator=scripts/build-local.sh\n'
+printf 'creator=ops/build/build-local.sh\n'
 
 if [[ ! -e "$cache_root" && ! -L "$cache_root" ]]; then
     printf 'owner=not_present\n'

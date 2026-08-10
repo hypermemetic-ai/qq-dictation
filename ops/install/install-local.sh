@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source_app_dir="${repository_root}/.local-build/Handy.AppDir"
 install_parent="${HOME}/.local/opt/qq-dictation"
 install_app_dir="${install_parent}/Handy.AppDir"
@@ -11,7 +11,7 @@ settings_path="${XDG_DATA_HOME:-${HOME}/.local/share}/com.pais.handy/settings_st
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 if [[ ! -x "${source_app_dir}/AppRun" ]]; then
-    printf 'Build artifact is missing; run scripts/build-local.sh first.\n' >&2
+    printf 'Build artifact is missing; run ops/build/build-local.sh first.\n' >&2
     exit 1
 fi
 
@@ -19,7 +19,7 @@ fi
 test -x /usr/bin/setsid
 
 mkdir -p "$install_parent" "$local_bin" "$user_units"
-/usr/bin/python3 "${repository_root}/scripts/install-remote-workstation.py" \
+/usr/bin/python3 "${repository_root}/ops/install/install-remote-workstation.py" \
     --home "$HOME"
 
 staging_dir="$(mktemp -d "${install_parent}/Handy.AppDir.staging.XXXXXX")"
@@ -47,12 +47,12 @@ for existing in "${local_bin}/handy" "${local_bin}/handy-ptt-bridge.py" \
     fi
 done
 
-install -m 0755 "${repository_root}/packaging/handy" "${local_bin}/handy"
+install -m 0755 "${repository_root}/ops/package/handy" "${local_bin}/handy"
 install -m 0755 \
-    "${repository_root}/packaging/handy-ptt-bridge.py" \
+    "${repository_root}/ops/install/handy-ptt-bridge.py" \
     "${local_bin}/handy-ptt-bridge.py"
 install -m 0644 \
-    "${repository_root}/packaging/handy-ptt.service" \
+    "${repository_root}/ops/install/handy-ptt.service" \
     "${user_units}/handy-ptt.service"
 
 mkdir -p "$(dirname "$settings_path")"
@@ -61,7 +61,7 @@ if [[ -f "$settings_path" ]]; then
 else
     (umask 077; printf '{"settings": {}}\n' >"$settings_path")
 fi
-/usr/bin/python3 "${repository_root}/scripts/configure-local-settings.py" \
+/usr/bin/python3 "${repository_root}/ops/install/configure-local-settings.py" \
     "$settings_path"
 
 systemctl --user daemon-reload

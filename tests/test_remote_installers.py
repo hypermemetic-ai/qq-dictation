@@ -16,8 +16,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).parents[1]
-WORKSTATION_INSTALLER = ROOT / "scripts" / "install-remote-workstation.py"
-LAPTOP_INSTALLER = ROOT / "scripts" / "install-remote-laptop.py"
+WORKSTATION_INSTALLER = ROOT / "ops" / "install" / "install-remote-workstation.py"
+LAPTOP_INSTALLER = ROOT / "ops" / "install" / "install-remote-laptop.py"
 
 INSTALLER_SPEC = importlib.util.spec_from_file_location(
     "qq_dictation_install_remote_laptop", LAPTOP_INSTALLER
@@ -163,7 +163,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 stream.read_bytes(),
-                (ROOT / "packaging" / "handy-remote-stream.py").read_bytes(),
+                (ROOT / "ops" / "install" / "handy-remote-stream.py").read_bytes(),
             )
             self.assertEqual(stat.S_IMODE(stream.stat().st_mode), 0o755)
             self.assertFalse((local_bin / "handy-remote-bind.py").exists())
