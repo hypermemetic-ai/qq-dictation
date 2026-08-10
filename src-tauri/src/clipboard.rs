@@ -718,10 +718,14 @@ pub(crate) fn paste_remote_commit(
     Ok(())
 }
 
-pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> Result<(), String> {
+pub fn paste(
+    text: String,
+    app_handle: AppHandle,
+    target_capture: Option<crate::target_binding::CaptureOutcome>,
+) -> Result<(), String> {
     // Used only by the Linux herdr binding path.
     #[cfg(not(target_os = "linux"))]
-    let _ = target_token;
+    let _ = target_capture;
 
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
@@ -746,8 +750,7 @@ pub fn paste(text: String, app_handle: AppHandle, target_token: Option<u64>) -> 
     // is allowed as a fallback.
     #[cfg(target_os = "linux")]
     {
-        let capture = target_token.map(crate::target_binding::take_for_recording);
-        if let Some(pane_id) = herdr_target(capture, paste_method)? {
+        if let Some(pane_id) = herdr_target(target_capture, paste_method)? {
             deliver_bound_herdr(
                 &pane_id,
                 &text,

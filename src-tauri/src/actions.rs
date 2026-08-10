@@ -14,7 +14,7 @@ use crate::utils::{
 };
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
@@ -440,6 +440,21 @@ pub(crate) struct ProcessedTranscription {
     pub post_process_model: Option<String>,
 }
 
+fn history_post_process_metadata(
+    processed: &ProcessedTranscription,
+    privacy_skipped: bool,
+) -> (Option<String>, Option<String>, Option<String>) {
+    if privacy_skipped {
+        (None, None, None)
+    } else {
+        (
+            processed.post_processed_text.clone(),
+            processed.post_process_prompt.clone(),
+            processed.post_process_model.clone(),
+        )
+    }
+}
+
 /// Resolve the persisted language *intent* into the language the currently-loaded
 /// model will actually use — the same capability-aware coercion the transcription
 /// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
@@ -766,7 +781,7 @@ pub(crate) fn finish_remote_operation(
 fn finish_operation(
     app: &AppHandle,
     owner: OperationOwner,
-    post_process: bool,
+    requested_post_process: bool,
     delivery: FinishDelivery,
 ) {
     let stop_time = Instant::now();
@@ -917,7 +932,33 @@ fn finish_operation(
                             transcription
                         );
 
-                        if post_process {
+                        // Consume local capture exactly once, then use this same
+                        // owned outcome for both privacy and eventual delivery.
+                        let local_capture = match delivery {
+                            FinishDelivery::Local { target_token } => {
+                                Some(crate::target_binding::take_for_recording(target_token))
+                            }
+                            FinishDelivery::Remote => None,
+                        };
+                        let post_process_decision = match local_capture.as_ref() {
+                            Some(capture) => crate::privacy_marks::local_post_process_decision(
+                                requested_post_process,
+                                capture,
+                            ),
+                            None => crate::privacy_marks::remote_post_process_decision(
+                                requested_post_process,
+                            ),
+                        };
+                        let effective_post_process = post_process_decision.effective_post_process;
+                        let privacy_skipped = post_process_decision.privacy_skip_pane.is_some();
+                        if let Some(pane_id) = post_process_decision.privacy_skip_pane.as_deref() {
+                            info!(
+                                "post-processing skipped: pane {} is privacy-marked",
+                                pane_id
+                            );
+                        }
+
+                        if effective_post_process {
                             if use_streaming_overlay {
                                 tm.emit_stream_working(StreamWorkKind::Polishing);
                             } else {
@@ -925,7 +966,11 @@ fn finish_operation(
                             }
                         }
                         let Some(processed) = complete_unless_cancelled(
-                            process_transcription_output(&ah, &transcription, post_process),
+                            process_transcription_output(
+                                &ah,
+                                &transcription,
+                                effective_post_process,
+                            ),
                             || rm.was_cancelled_since(cancel_generation),
                         )
                         .await
@@ -945,16 +990,21 @@ fn finish_operation(
                             return;
                         }
 
+                        // A privacy skip records no post-processing metadata,
+                        // even when local OpenCC conversion changed final_text.
+                        let (history_text, history_prompt, history_model) =
+                            history_post_process_metadata(&processed, privacy_skipped);
+
                         // Save to history if WAV was saved
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
                                 if let Err(err) = hm.save_pending_entry(
                                     pending_audio_guard,
                                     transcription,
-                                    post_process,
-                                    processed.post_processed_text.clone(),
-                                    processed.post_process_prompt.clone(),
-                                    processed.post_process_model.clone(),
+                                    effective_post_process,
+                                    history_text,
+                                    history_prompt,
+                                    history_model,
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -1004,7 +1054,10 @@ fn finish_operation(
                                         }
                                     }
                                 }
-                                FinishDelivery::Local { target_token } => {
+                                FinishDelivery::Local { .. } => {
+                                    let target_capture = local_capture.expect(
+                                        "local finish must own its one taken capture outcome",
+                                    );
                                     let ah_clone = ah.clone();
                                     let paste_time = Instant::now();
                                     let rm_for_paste = Arc::clone(&rm);
@@ -1026,7 +1079,7 @@ fn finish_operation(
                                         match utils::paste(
                                             final_text,
                                             ah_clone.clone(),
-                                            Some(target_token),
+                                            Some(target_capture),
                                         ) {
                                             Ok(()) => {
                                                 finish_guard.succeeded();
@@ -1071,7 +1124,7 @@ fn finish_operation(
                                 if let Err(save_err) = hm.save_pending_entry(
                                     pending_audio_guard,
                                     String::new(),
-                                    post_process,
+                                    requested_post_process,
                                     None,
                                     None,
                                     None,
@@ -1160,8 +1213,9 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_post_process_metadata, complete_unless_cancelled, is_blank_transcription,
-        nonblank_or_none, should_use_streaming_overlay, strip_invisible_chars,
+        bind_post_process_metadata, complete_unless_cancelled, history_post_process_metadata,
+        is_blank_transcription, nonblank_or_none, should_use_streaming_overlay,
+        strip_invisible_chars, ProcessedTranscription,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -1216,6 +1270,22 @@ mod tests {
         assert_eq!(result.text, "synthetic processed text");
         assert_eq!(result.prompt, "synthetic exact prompt ${output}");
         assert_eq!(result.model, "synthetic-provider/synthetic/model");
+    }
+
+    #[test]
+    fn privacy_skip_keeps_converted_final_text_but_nulls_history_post_process_fields() {
+        let processed = ProcessedTranscription {
+            final_text: "OpenCC converted text".to_string(),
+            post_processed_text: Some("OpenCC converted text".to_string()),
+            post_process_prompt: Some("must not persist".to_string()),
+            post_process_model: Some("must not persist".to_string()),
+        };
+
+        assert_eq!(
+            history_post_process_metadata(&processed, true),
+            (None, None, None)
+        );
+        assert_eq!(processed.final_text, "OpenCC converted text");
     }
 
     #[test]
