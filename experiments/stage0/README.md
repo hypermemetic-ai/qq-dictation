@@ -58,15 +58,15 @@ The request uses temperature 0, streaming, a strict JSON schema with one `transc
 
 `results.jsonl` has one row per item/model/arm call:
 
-| Column | Meaning |
-| --- | --- |
-| `id`, `category` | Corpus identity and error category. |
-| `model`, `prompt_arm` | Candidate and prompt used for the call. |
-| `ttft_ms` | Milliseconds to the first content chunk; null if none arrived. |
-| `total_ms` | Milliseconds through completion or failure. |
-| `input_tokens`, `output_tokens` | Provider-reported usage (mock mode emits deterministic estimates). |
-| `output_text` | Parsed `transcription`, with zero-width characters removed. |
-| `error` | Null on success; a safe error description on HTTP/stream/parse failure. |
+| Column                          | Meaning                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `id`, `category`                | Corpus identity and error category.                                     |
+| `model`, `prompt_arm`           | Candidate and prompt used for the call.                                 |
+| `ttft_ms`                       | Milliseconds to the first content chunk; null if none arrived.          |
+| `total_ms`                      | Milliseconds through completion or failure.                             |
+| `input_tokens`, `output_tokens` | Provider-reported usage (mock mode emits deterministic estimates).      |
+| `output_text`                   | Parsed `transcription`, with zero-width characters removed.             |
+| `error`                         | Null on success; a safe error description on HTTP/stream/parse failure. |
 
 ## Scoring outputs
 
