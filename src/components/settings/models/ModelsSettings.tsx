@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, Globe, RefreshCw, Search } from "lucide-react";
-import type { ModelCardStatus } from "@/components/onboarding";
-import { ModelCard } from "@/components/onboarding";
+import ModelCard, {
+  type ModelCardStatus,
+} from "@/components/onboarding/ModelCard";
 import { useModelStore } from "@/stores/modelStore";
 import {
   getLanguageLabel,

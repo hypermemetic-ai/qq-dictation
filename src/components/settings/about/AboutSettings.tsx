@@ -7,7 +7,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { Button } from "../../ui/Button";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { ThemeSelector } from "../ThemeSelector";
-import { LogDirectory } from "../debug";
+import { LogDirectory } from "../debug/LogDirectory";
 
 export const AboutSettings: React.FC = () => {
   const { t } = useTranslation();
