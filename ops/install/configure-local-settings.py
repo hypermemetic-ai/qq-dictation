@@ -10,7 +10,7 @@ from pathlib import Path
 
 PROMPT_ID = "qq_extended_cleanup"
 PROMPT_NAME = "Extended cleanup (Stage 0 winner)"
-PROMPT_SHA256 = "ce2006c55f88f2e63de35c578e5e42608ec4b1dc7f47f97b7a1f9e2fda44a054"
+PROMPT_SHA256 = "78f89dd12c9ba01954ea36236331c9c140f7cfe92801a2a0482a1f7b3cf215f8"
 PROMPT_PATH = (
     Path(__file__).resolve().parents[2]
     / "src-tauri"
@@ -28,7 +28,7 @@ def load_cleanup_prompt() -> dict[str, str]:
     text = prompt["prompt"]
     if not isinstance(text, str):
         raise ValueError("cleanup prompt text must be a string")
-    if len(text) != 4621 or hashlib.sha256(text.encode()).hexdigest() != PROMPT_SHA256:
+    if len(text) != 4995 or hashlib.sha256(text.encode()).hexdigest() != PROMPT_SHA256:
         raise ValueError("cleanup prompt text does not match the adopted prompt")
     if text.count("${output}") != 1:
         raise ValueError("cleanup prompt must contain exactly one ${output} placeholder")
