@@ -13,7 +13,7 @@ SCRIPT = ROOT / "ops" / "install" / "configure-local-settings.py"
 PROMPT_PATH = ROOT / "src-tauri" / "resources" / "qq_cleanup_prompt.json"
 PROMPT_ID = "qq_extended_cleanup"
 PROMPT_NAME = "Extended cleanup (Stage 0 winner)"
-PROMPT_SHA256 = "ce2006c55f88f2e63de35c578e5e42608ec4b1dc7f47f97b7a1f9e2fda44a054"
+PROMPT_SHA256 = "78f89dd12c9ba01954ea36236331c9c140f7cfe92801a2a0482a1f7b3cf215f8"
 
 
 class LocalSettingsPolicyTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class LocalSettingsPolicyTests(unittest.TestCase):
         self.assertEqual(set(prompt), {"id", "name", "prompt"})
         self.assertEqual(prompt["id"], PROMPT_ID)
         self.assertEqual(prompt["name"], PROMPT_NAME)
-        self.assertEqual(len(prompt["prompt"]), 4621)
+        self.assertEqual(len(prompt["prompt"]), 4995)
         self.assertEqual(
             hashlib.sha256(prompt["prompt"].encode()).hexdigest(), PROMPT_SHA256
         )
