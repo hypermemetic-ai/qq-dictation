@@ -18,16 +18,15 @@ use tauri::WebviewWindowBuilder;
 // where the card sits — only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET do. Keep
 // these in sync with the CSS card geometry.
 //
-// Compact overlay (armed / recording / transcribing / processing): the 36h pill
-// animates width from 148 (--ov-rest-w) to 196 (--ov-work-w) and expands from
-// center, so the window must fit the widest state plus a little slack. Armed
-// shares this size so idle→recording never resizes the native window.
-const OVERLAY_WIDTH: f64 = 220.0;
-const OVERLAY_HEIGHT: f64 = 42.0;
+// Compact overlay (armed / recording / transcribing / processing): one 44h x
+// 178w pill (--ov-rest-w / --ov-base-h). Armed, recording, and working share
+// this size so submit never resizes the native window.
+const OVERLAY_WIDTH: f64 = 200.0;
+const OVERLAY_HEIGHT: f64 = 50.0;
 
-// Live panel max footprint (--ov-open-w 360 + slack).
-const OVERLAY_STREAM_WIDTH: f64 = 376.0;
-const OVERLAY_STREAM_HEIGHT: f64 = 116.0;
+// Live panel max footprint (--ov-open-w 432 + slack).
+const OVERLAY_STREAM_WIDTH: f64 = 448.0;
+const OVERLAY_STREAM_HEIGHT: f64 = 140.0;
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
@@ -38,6 +37,7 @@ fn overlay_dimensions(state: &str) -> (f64, f64) {
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
+static DICTATION_MODE_ARMED: AtomicBool = AtomicBool::new(false);
 const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
 
 const DICTATION_READY_FILE: &str = "qq-dictation-handy-ready";
@@ -81,11 +81,13 @@ pub fn mark_dictation_mode_prepared() -> Result<(), String> {
 }
 
 pub fn mark_dictation_mode_armed() -> Result<(), String> {
+    DICTATION_MODE_ARMED.store(true, Ordering::Relaxed);
     publish_dictation_state("armed")?;
     Ok(())
 }
 
 pub fn mark_dictation_mode_off() -> Result<(), String> {
+    DICTATION_MODE_ARMED.store(false, Ordering::Relaxed);
     publish_dictation_state("ready")?;
     Ok(())
 }
@@ -377,8 +379,15 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
     }
 }
 
-/// Hides the recording overlay window with fade-out animation
+/// Hides the recording overlay window with fade-out animation.
+/// While dictation mode is armed, snap back to the Ready pill instead of
+/// fading the working state out and then immediately showing Ready again.
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
+    if DICTATION_MODE_ARMED.load(Ordering::Relaxed) {
+        show_armed_overlay(app_handle);
+        return;
+    }
+
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
@@ -478,9 +487,9 @@ mod tests {
     }
 
     #[test]
-    fn compact_overlay_window_fits_the_working_pill() {
-        // Working pill (--ov-work-w 196) must fit inside the compact window.
-        assert!(OVERLAY_WIDTH >= 196.0);
-        assert!(OVERLAY_HEIGHT >= 36.0);
+    fn compact_overlay_window_fits_the_pill() {
+        // Compact pill (--ov-rest-w 178 / --ov-base-h 44) must fit inside the window.
+        assert!(OVERLAY_WIDTH >= 178.0);
+        assert!(OVERLAY_HEIGHT >= 44.0);
     }
 }

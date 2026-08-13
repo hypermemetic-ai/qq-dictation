@@ -178,7 +178,7 @@ const RecordingOverlay: React.FC = () => {
         <i
           key={i}
           style={{
-            height: `${Math.max(3, Math.min(16, 3 + Math.pow(v, 0.7) * 13))}px`,
+            height: `${Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15))}px`,
           }}
         />
       ))}
@@ -288,7 +288,7 @@ const RecordingOverlay: React.FC = () => {
   return (
     <div className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}>
       <div
-        className={`scard compact ${working && isVisible ? "cworking" : ""}`}
+        className="scard compact"
       >
         {working ? workingRow(workLabel, true) : listeningRow(false, true)}
       </div>

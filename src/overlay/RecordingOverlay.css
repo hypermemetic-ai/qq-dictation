@@ -22,15 +22,14 @@
 
   /* Card geometry — single source of truth for the visible overlay sizes. The
      native overlay window (overlay.rs) is sized from these: it must be at least
-     the card's max footprint (--ov-work-w for compact, --ov-open-w for Live),
+     the card's max footprint (--ov-rest-w for compact, --ov-open-w for Live),
      since the card is anchored flush to the screen edge in CSS. Keep overlay.rs
      in sync when these change. */
-  --ov-rest-w: 148px; /* compact pill (armed / recording) */
-  --ov-pill-w: 164px; /* Live pill before it opens or collapses */
-  --ov-work-w: 196px; /* working pill (transcribing / polishing) */
-  --ov-open-w: 360px; /* Live panel, expanded */
-  --ov-base-h: 36px; /* control-row height (.sbase) */
-  --ov-cap-max-h: 64px; /* max height of the scrolling live-text region */
+  --ov-rest-w: 178px; /* compact pill (armed / recording / working) */
+  --ov-pill-w: 196px; /* Live pill before it opens or collapses */
+  --ov-open-w: 432px; /* Live panel, expanded */
+  --ov-base-h: 44px; /* control-row height (.sbase) */
+  --ov-cap-max-h: 76px; /* max height of the scrolling live-text region */
   --ov-snap: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 @media (prefers-color-scheme: dark) {
@@ -153,19 +152,14 @@
   border-radius: 14px;
 }
 .scard.working {
-  width: var(--ov-work-w);
-  border-radius: 16px;
+  width: var(--ov-pill-w);
 }
 
-/* Compact form: two fixed widths so the recording→working change is an animatable
-   width transition. Armed and recording share --ov-rest-w so the native window
-   never resizes between idle and capture. */
+/* Compact form: one width for armed, recording, and working so submit never
+   leaves a leftover grown pill while Ready returns. */
 .scard.compact {
   animation: none;
   width: var(--ov-rest-w);
-}
-.scard.compact.cworking {
-  width: var(--ov-work-w);
 }
 
 /* Armed idle: same compact pill as recording, quieter. */
@@ -173,7 +167,7 @@
   width: var(--ov-rest-w);
 }
 .sready {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--s-muted);
@@ -207,7 +201,7 @@
   padding-bottom: 0px;
   padding-left: 14px;
   padding-right: 14px;
-  font-size: 14px;
+  font-size: 15px;
   font-style: normal;
   line-height: 1.4;
   letter-spacing: -0.01em;
@@ -270,8 +264,8 @@
   justify-self: end;
 }
 .sdot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--s-accent);
   flex: none;
@@ -290,7 +284,7 @@
   }
 }
 .stimer {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--s-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -307,20 +301,20 @@
   align-items: center;
   gap: 2px;
   padding-right: 6px;
-  height: 16px;
+  height: 18px;
   flex: none;
 }
 .swave i {
   width: 3px;
   min-height: 3px;
-  max-height: 16px;
+  max-height: 18px;
   border-radius: 1.5px;
   background: var(--s-accent);
   transition: height 50ms linear;
 }
 .sx {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   flex: none;
   padding: 0;
@@ -368,7 +362,7 @@
   }
 }
 .swork-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--s-muted);
   white-space: nowrap;
   padding: 0 8px; /* breathing room from the spinner / cancel when content-sized */
