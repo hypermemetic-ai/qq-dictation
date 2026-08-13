@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep Whisper on the 780M even if the session pins desktop Vulkan to the RX 6400.
+export MESA_VK_DEVICE_SELECT=1002:1900
+
 install_dir="${QQ_DICTATION_INSTALL_DIR:-${HOME}/.local/opt/qq-dictation/Handy.AppDir}"
 exec "$install_dir/AppRun" "$@"
