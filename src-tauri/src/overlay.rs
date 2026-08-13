@@ -18,28 +18,21 @@ use tauri::WebviewWindowBuilder;
 // where the card sits — only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET do. Keep
 // these in sync with the CSS card geometry.
 //
-// Compact overlay (Minimal / transcribing / processing): the 40h pill animates
-// width from 172 (--ov-rest-w) to 216 (--ov-work-w) and expands from center, so
-// the window must fit the widest state plus a little slack.
-const OVERLAY_WIDTH: f64 = 256.0;
-const OVERLAY_HEIGHT: f64 = 46.0;
+// Compact overlay (armed / recording / transcribing / processing): the 36h pill
+// animates width from 148 (--ov-rest-w) to 196 (--ov-work-w) and expands from
+// center, so the window must fit the widest state plus a little slack. Armed
+// shares this size so idle→recording never resizes the native window.
+const OVERLAY_WIDTH: f64 = 220.0;
+const OVERLAY_HEIGHT: f64 = 42.0;
 
-// Actual is 394x118, just a little extra
-const OVERLAY_STREAM_WIDTH: f64 = 400.0;
-const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
-
-// Armed dictation-mode legend (qq-dictation Space mode): wider than the compact
-// pill so the key map fits, and a little taller for the two-line legend. Keep in
-// sync with --ov-armed-w and the .scard.compact.armed geometry in
-// RecordingOverlay.css.
-const OVERLAY_ARMED_WIDTH: f64 = 360.0;
-const OVERLAY_ARMED_HEIGHT: f64 = 60.0;
+// Live panel max footprint (--ov-open-w 360 + slack).
+const OVERLAY_STREAM_WIDTH: f64 = 376.0;
+const OVERLAY_STREAM_HEIGHT: f64 = 116.0;
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
-        "armed" => (OVERLAY_ARMED_WIDTH, OVERLAY_ARMED_HEIGHT),
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
@@ -98,9 +91,9 @@ pub fn mark_dictation_mode_off() -> Result<(), String> {
 }
 
 // Monotonic epoch bumped every time an overlay state is shown. `hide_recording_overlay`
-// sleeps ~300ms (for the fade-out) before actually hiding the window; it captures the
+// sleeps ~140ms (for the fade-out) before actually hiding the window; it captures the
 // epoch at schedule time and only hides if the epoch is unchanged. Without this, a state
-// shown right after a hide was scheduled — most importantly the armed legend re-shown
+// shown right after a hide was scheduled — most importantly the armed pill re-shown
 // immediately after a cancellation — would be hidden by the stale delayed hide.
 static OVERLAY_SHOW_EPOCH: AtomicU64 = AtomicU64::new(0);
 
@@ -352,9 +345,8 @@ pub fn show_recording_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "recording");
 }
 
-/// Shows the armed dictation-mode indicator: a persistent legend stating that
-/// Space starts/stops, Delete cancels, and Right-Control exits. Shown while the
-/// mode is armed and no recording/working state is active.
+/// Shows the armed idle pill. Same compact window as recording so the native
+/// surface does not resize when Space starts capture.
 pub fn show_armed_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "armed");
 }
@@ -393,12 +385,12 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
         // Capture the show epoch so the delayed hide is skipped if a new overlay
-        // state (e.g. the armed legend) is shown before the fade-out completes.
+        // state (e.g. the armed pill) is shown before the fade-out completes.
         let epoch = OVERLAY_SHOW_EPOCH.load(Ordering::SeqCst);
         // Hide the window after a short delay to allow animation to complete
         let window_clone = overlay_window.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::thread::sleep(std::time::Duration::from_millis(140));
             if OVERLAY_SHOW_EPOCH.load(Ordering::SeqCst) == epoch {
                 let _ = window_clone.hide();
             }
@@ -479,21 +471,16 @@ mod tests {
             overlay_dimensions("streaming"),
             (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
         );
-        assert_eq!(
-            overlay_dimensions("armed"),
-            (OVERLAY_ARMED_WIDTH, OVERLAY_ARMED_HEIGHT)
-        );
-        // Compact states share one size.
-        for state in ["recording", "transcribing", "processing"] {
+        // Compact states, including armed idle, share one size.
+        for state in ["armed", "recording", "transcribing", "processing"] {
             assert_eq!(overlay_dimensions(state), (OVERLAY_WIDTH, OVERLAY_HEIGHT));
         }
     }
 
     #[test]
-    fn armed_overlay_window_is_wide_enough_for_the_legend() {
-        // The armed card (--ov-armed-w in RecordingOverlay.css) must fit inside
-        // the native window or the key-map legend gets clipped.
-        assert!(OVERLAY_ARMED_WIDTH >= 344.0);
-        assert!(OVERLAY_ARMED_HEIGHT >= 56.0);
+    fn compact_overlay_window_fits_the_working_pill() {
+        // Working pill (--ov-work-w 196) must fit inside the compact window.
+        assert!(OVERLAY_WIDTH >= 196.0);
+        assert!(OVERLAY_HEIGHT >= 36.0);
     }
 }

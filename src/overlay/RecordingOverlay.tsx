@@ -17,10 +17,9 @@ type OverlayState =
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
 const WAVE_BARS = 9;
 
-// Armed dictation-mode legend (qq-dictation local Space mode). These constants
-// are English-only like the rest of the application UI.
-const ARMED_TITLE = "DICTATION MODE";
-const ARMED_KEYS = "SPACE STARTS/STOPS · DELETE CANCELS · RIGHT CTRL EXITS";
+// Quiet ready label while dictation mode is armed and idle. English-only,
+// like the rest of the application UI.
+const ARMED_LABEL = "Ready";
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -153,19 +152,20 @@ const RecordingOverlay: React.FC = () => {
   const fmtTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  // ---- Armed dictation-mode legend (qq-dictation) ----
-  // Persistent indicator while the mode is armed and no work is active.
+  // ---- Armed idle pill — same compact card as recording, quieter mood ----
   if (state === "armed") {
     return (
       <div
         className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
       >
         <div className="scard compact armed">
-          <div className="sarmed-title">
-            <span className="sdot" />
-            {ARMED_TITLE}
+          <div className="sbase">
+            <div className="sbase-l">
+              <span className="sdot idle" />
+            </div>
+            <span className="sready">{ARMED_LABEL}</span>
+            <div className="sbase-r" />
           </div>
-          <div className="sarmed-keys">{ARMED_KEYS}</div>
         </div>
       </div>
     );
@@ -178,7 +178,7 @@ const RecordingOverlay: React.FC = () => {
         <i
           key={i}
           style={{
-            height: `${Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15))}px`,
+            height: `${Math.max(3, Math.min(16, 3 + Math.pow(v, 0.7) * 13))}px`,
           }}
         />
       ))}
