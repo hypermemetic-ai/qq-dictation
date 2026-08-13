@@ -6,11 +6,9 @@ pub mod cli;
 mod clipboard;
 mod commands;
 mod input;
-mod llm_client;
 mod managers;
 mod operation;
 mod overlay;
-mod privacy_marks;
 mod remote;
 mod settings;
 mod shortcut;
@@ -533,17 +531,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_clipboard_handling_setting,
             shortcut::change_auto_submit_setting,
             shortcut::change_auto_submit_key_setting,
-            shortcut::change_post_process_enabled_setting,
             shortcut::change_experimental_enabled_setting,
-            shortcut::change_post_process_base_url_setting,
-            shortcut::change_post_process_api_key_setting,
-            shortcut::change_post_process_model_setting,
-            shortcut::set_post_process_provider,
-            shortcut::fetch_post_process_models,
-            shortcut::add_post_process_prompt,
-            shortcut::update_post_process_prompt,
-            shortcut::delete_post_process_prompt,
-            shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             shortcut::suspend_binding,
             shortcut::resume_binding,
@@ -681,8 +669,6 @@ pub fn run(cli_args: CliArgs) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
-            } else if args.iter().any(|a| a == "--toggle-post-process") {
-                signal_handle::send_transcription_input(app, "transcribe_with_post_process", "CLI");
             } else if args.iter().any(|a| a == "--cancel") {
                 crate::utils::cancel_current_operation(app);
             } else {

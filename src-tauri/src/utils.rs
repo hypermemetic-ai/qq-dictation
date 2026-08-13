@@ -25,9 +25,9 @@ pub fn cancel_current_operation(app: &AppHandle) {
 }
 
 /// Execute cancellation after the coordinator has authenticated `owner`.
-/// `recording_stage` distinguishes live capture from processing, where the
-/// recorder has already returned to Idle but its cancellation generation still
-/// gates post-processing and delivery.
+/// `recording_stage` distinguishes live capture from later processing, where
+/// the recorder has already returned to Idle but its cancellation generation
+/// still gates output handling and delivery.
 pub(crate) fn cancel_owned_operation(
     app: &AppHandle,
     owner: &OperationOwner,

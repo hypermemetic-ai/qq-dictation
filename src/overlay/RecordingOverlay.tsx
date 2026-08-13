@@ -4,12 +4,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
 import { commands, events } from "@/bindings";
-import type {
-  StreamPhase,
-  StreamPhaseEvent,
-  StreamTextEvent,
-  StreamWorkKind,
-} from "@/bindings";
+import type { StreamPhase, StreamPhaseEvent, StreamTextEvent } from "@/bindings";
 
 type OverlayState =
   | "armed"
@@ -37,7 +32,6 @@ const RecordingOverlay: React.FC = () => {
     tentative: "",
   });
   const [phase, setPhase] = useState<StreamPhase>("listening");
-  const [workKind, setWorkKind] = useState<StreamWorkKind>("transcribing");
   const [elapsed, setElapsed] = useState(0);
   // Bumped on each new streaming session so the Live card remounts fresh (replays
   // the pop-in, and never animates in from the previous panel's open size).
@@ -78,7 +72,6 @@ const RecordingOverlay: React.FC = () => {
         }
         if (overlayState === "streaming") {
           setPhase("listening");
-          setWorkKind("transcribing");
           setElapsed(0);
           setSession((s) => s + 1); // remount the card fresh for this session
         }
@@ -108,7 +101,6 @@ const RecordingOverlay: React.FC = () => {
       const unlistenPhase = await events.streamPhaseEvent.listen((event) => {
         const payload: StreamPhaseEvent = event.payload;
         setPhase(payload.phase);
-        if (payload.kind) setWorkKind(payload.kind);
       });
 
       // The X11 bridge waits for this per-process marker before sending its
@@ -277,12 +269,7 @@ const RecordingOverlay: React.FC = () => {
             </div>
           </div>
           {working
-            ? workingRow(
-                workKind === "polishing"
-                  ? t("overlay.processing")
-                  : t("overlay.transcribing"),
-                true,
-              )
+            ? workingRow(t("overlay.transcribing"), true)
             : listeningRow(open, true)}
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 This supported path is one configured Linux/X11 laptop -> ordinary authenticated SSH -> the workstation qq-dictation application. The laptop captures 16 kHz mono signed 16-bit little-endian PCM, controls one request over one SSH helper connection while armed, and displays local state. It installs no ASR runtime or model.
 
-The workstation remains the sole authority for VAD, streaming, model/language/custom words, the configured second pass, output processing, trailing space, auto-submit key, history/WAV retention, and cancellation. A per-install `delivery_mode` selects where finished nonblank text goes:
+The workstation remains the sole authority for VAD, streaming, model/language/custom words, output processing, trailing space, auto-submit key, history/WAV retention, and cancellation. A per-install `delivery_mode` selects where finished nonblank text goes:
 
 - `herdr`: preserve the existing remote path and deliver to the workstation Herdr pane selected at commit.
 - `local`: return one bounded final injection plan to the laptop and type it into the window holding X11 focus at delivery.
@@ -139,8 +139,8 @@ After source review and all owner Checks, the accountable owner—not this sourc
 
 1. Confirm the one laptop's real SSH alias, X11 session, executable xdotool path, and PipeWire target/argv without recording secrets.
 2. Install the reviewed workstation and local-mode laptop per-user surfaces; verify one helper, mode `0600`, stable service health/grabs, no Herdr requirement for start, and no live settings change beyond the already approved configuration.
-3. Focus one ordinary non-Herdr laptop window and keep it focused through one normal remote dictation using the configured workstation second pass.
-4. Record PCM arriving before stop, stop-to-result timing, client/workstation logs, exact visible injected text and destination, trailing-space/submit behavior, and the resulting history/second-pass metadata.
+3. Focus one ordinary non-Herdr laptop window and keep it focused through one normal remote dictation.
+4. Record PCM arriving before stop, stop-to-result timing, client/workstation logs, exact visible injected text and destination, trailing-space/submit behavior, and the resulting history metadata.
 5. Exercise the approved hermetic failure cases separately; do not add paid requests merely to repeat focus-loss, adapter-failure, cancellation, or replay coverage.
 
 The proof establishes only this configured Linux/X11 laptop at the tested versions. It makes no Wayland, other-OS, multi-laptop, multi-user, arbitrary-application, Unicode/IME-wide, or future-version claim.

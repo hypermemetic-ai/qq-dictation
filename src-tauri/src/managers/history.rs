@@ -638,10 +638,6 @@ impl HistoryManager {
         &self,
         pending: &mut PendingAudioGuard<'_>,
         transcription_text: String,
-        post_process_requested: bool,
-        post_processed_text: Option<String>,
-        post_process_prompt: Option<String>,
-        post_process_model: Option<String>,
     ) -> Result<HistoryEntry> {
         let file_name = pending.file_name.to_string_lossy().into_owned();
         if pending.path != self.recordings_dir.join(&file_name) || !pending.is_exact_reserved_file()
@@ -653,10 +649,6 @@ impl HistoryManager {
         self.save_entry_with_ownership(
             file_name,
             transcription_text,
-            post_process_requested,
-            post_processed_text,
-            post_process_prompt,
-            post_process_model,
             || pending.mark_history_owned(),
         )
     }
@@ -665,10 +657,6 @@ impl HistoryManager {
         &self,
         file_name: String,
         transcription_text: String,
-        post_process_requested: bool,
-        post_processed_text: Option<String>,
-        post_process_prompt: Option<String>,
-        post_process_model: Option<String>,
         history_owned: impl FnOnce(),
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
@@ -695,10 +683,10 @@ impl HistoryManager {
                 false,
                 &title,
                 &transcription_text,
-                &post_processed_text,
-                &post_process_prompt,
-                &post_process_model,
-                post_process_requested,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                false,
                 audio_available,
             ],
         )?;
@@ -714,10 +702,10 @@ impl HistoryManager {
             saved: false,
             title,
             transcription_text,
-            post_processed_text,
-            post_process_prompt,
-            post_process_model,
-            post_process_requested,
+            post_processed_text: None,
+            post_process_prompt: None,
+            post_process_model: None,
+            post_process_requested: false,
             audio_available,
         };
 
@@ -746,25 +734,17 @@ impl HistoryManager {
         &self,
         id: i64,
         transcription_text: String,
-        post_processed_text: Option<String>,
-        post_process_prompt: Option<String>,
-        post_process_model: Option<String>,
     ) -> Result<HistoryEntry> {
         let conn = self.get_connection()?;
         let updated = conn.execute(
             "UPDATE transcription_history
              SET transcription_text = ?1,
-                 post_processed_text = ?2,
-                 post_process_prompt = ?3,
-                 post_process_model = ?4
-             WHERE id = ?5",
-            params![
-                transcription_text,
-                post_processed_text,
-                post_process_prompt,
-                post_process_model,
-                id
-            ],
+                 post_processed_text = NULL,
+                 post_process_prompt = NULL,
+                 post_process_model = NULL,
+                 post_process_requested = 0
+             WHERE id = ?2",
+            params![transcription_text, id],
         )?;
 
         if updated == 0 {

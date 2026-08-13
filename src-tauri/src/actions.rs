@@ -9,12 +9,10 @@ use crate::operation::{OperationOutcome, OperationOwner};
 use crate::settings::{get_settings, AppSettings, OverlayStyle};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
-use crate::utils::{
-    self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
-};
+use crate::utils::{self, show_recording_overlay, show_transcribing_overlay};
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use log::{debug, error, info, warn};
+use log::{debug, error};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
@@ -80,63 +78,9 @@ pub trait ShortcutAction: Send + Sync {
 }
 
 // Transcribe Action
-struct TranscribeAction {
-    post_process: bool,
-}
+struct TranscribeAction;
 
-/// Field name for structured output JSON schema
-const TRANSCRIPTION_FIELD: &str = "transcription";
-
-/// Strip invisible Unicode characters that some LLMs may insert
-fn strip_invisible_chars(s: &str) -> String {
-    s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
-}
-
-/// A blank cleanup result must never replace the raw transcription: the caller
-/// pastes and auto-submits whatever this returns, so blank output fails open
-/// to the raw text instead of erasing it. Call after strip_invisible_chars.
-fn nonblank_or_none(result: String, provider_id: &str) -> Option<String> {
-    if result.trim().is_empty() {
-        warn!(
-            "LLM post-processing for provider '{}' returned a blank result; using the raw transcription",
-            provider_id
-        );
-        None
-    } else {
-        Some(result)
-    }
-}
-
-struct PostProcessResult {
-    text: String,
-    prompt: String,
-    model: String,
-}
-
-fn bind_post_process_metadata(
-    text: Option<String>,
-    provider_id: &str,
-    model: &str,
-    prompt: &str,
-) -> Option<PostProcessResult> {
-    text.map(|text| PostProcessResult {
-        text,
-        prompt: prompt.to_string(),
-        model: format!("{provider_id}/{model}"),
-    })
-}
-
-/// Build a system prompt from the user's prompt template.
-/// Removes `${output}` placeholder since the transcription is sent as the user message.
-fn build_system_prompt(prompt_template: &str) -> String {
-    prompt_template.replace("${output}", "").trim().to_string()
-}
-
-/// Returns `true` when a transcription has no meaningful content to
-/// post-process (empty or whitespace-only). Used to skip the post-processing
-/// LLM call when nothing was actually transcribed, which would otherwise make
-/// the model reply with an error message such as "you need to provide the
-/// transcription".
+/// Returns `true` when a transcription has no meaningful content.
 fn is_blank_transcription(transcription: &str) -> bool {
     transcription.trim().is_empty()
 }
@@ -163,226 +107,6 @@ where
 
 fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool {
     style == OverlayStyle::Live && is_streaming
-}
-
-async fn post_process_transcription(
-    settings: &AppSettings,
-    transcription: &str,
-) -> Option<PostProcessResult> {
-    if is_blank_transcription(transcription) {
-        debug!("Post-processing skipped because the transcription is empty");
-        return None;
-    }
-
-    let provider = match settings.active_post_process_provider().cloned() {
-        Some(provider) => provider,
-        None => {
-            debug!("Post-processing enabled but no provider is selected");
-            return None;
-        }
-    };
-
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    if model.trim().is_empty() {
-        debug!(
-            "Post-processing skipped because provider '{}' has no model configured",
-            provider.id
-        );
-        return None;
-    }
-
-    let selected_prompt_id = match &settings.post_process_selected_prompt_id {
-        Some(id) => id.clone(),
-        None => {
-            debug!("Post-processing skipped because no prompt is selected");
-            return None;
-        }
-    };
-
-    let prompt = match settings
-        .post_process_prompts
-        .iter()
-        .find(|prompt| prompt.id == selected_prompt_id)
-    {
-        Some(prompt) => prompt.prompt.clone(),
-        None => {
-            debug!(
-                "Post-processing skipped because prompt '{}' was not found",
-                selected_prompt_id
-            );
-            return None;
-        }
-    };
-
-    if prompt.trim().is_empty() {
-        debug!("Post-processing skipped because the selected prompt is empty");
-        return None;
-    }
-
-    debug!(
-        "Starting LLM post-processing with provider '{}' (model: {})",
-        provider.id, model
-    );
-
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    // Disable reasoning for providers where post-processing rarely benefits from it.
-    // - custom: top-level reasoning_effort (works for local OpenAI-compat servers)
-    // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
-    //   out of the response so it can't pollute structured-output JSON parsing
-    // - cerebras: gpt-oss-120b defaults to medium reasoning; "low" matches the
-    //   adopted cleanup evaluation (p50 245ms) and keeps the 3s timeout safe
-    let (reasoning_effort, reasoning) = match provider.id.as_str() {
-        "cerebras" => (Some("low".to_string()), None),
-        "custom" => (Some("none".to_string()), None),
-        "openrouter" => (
-            None,
-            Some(crate::llm_client::ReasoningConfig {
-                effort: Some("none".to_string()),
-                exclude: Some(true),
-            }),
-        ),
-        _ => (None, None),
-    };
-
-    if provider.supports_structured_output {
-        debug!("Using structured outputs for provider '{}'", provider.id);
-
-        let system_prompt = build_system_prompt(&prompt);
-        let user_content = transcription.to_string();
-
-        // Define JSON schema for transcription output
-        let json_schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                (TRANSCRIPTION_FIELD): {
-                    "type": "string",
-                    "description": "The cleaned and processed transcription text"
-                }
-            },
-            "required": [TRANSCRIPTION_FIELD],
-            "additionalProperties": false
-        });
-
-        match crate::llm_client::send_chat_completion_with_schema(
-            &provider,
-            api_key.clone(),
-            &model,
-            user_content,
-            Some(system_prompt),
-            Some(json_schema),
-            reasoning_effort.clone(),
-            reasoning.clone(),
-        )
-        .await
-        {
-            Ok(Some(content)) => {
-                // Parse the JSON response to extract the transcription field
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(json) => {
-                        if let Some(transcription_value) =
-                            json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str())
-                        {
-                            let result = strip_invisible_chars(transcription_value);
-                            debug!(
-                                "Structured output post-processing succeeded for provider '{}'. Output length: {} chars",
-                                provider.id,
-                                result.len()
-                            );
-                            return bind_post_process_metadata(
-                                nonblank_or_none(result, &provider.id),
-                                &provider.id,
-                                &model,
-                                &prompt,
-                            );
-                        } else {
-                            error!("Structured output response missing 'transcription' field");
-                            return bind_post_process_metadata(
-                                nonblank_or_none(strip_invisible_chars(&content), &provider.id),
-                                &provider.id,
-                                &model,
-                                &prompt,
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to parse structured output JSON: {}. Returning raw content.",
-                            e
-                        );
-                        return bind_post_process_metadata(
-                            nonblank_or_none(strip_invisible_chars(&content), &provider.id),
-                            &provider.id,
-                            &model,
-                            &prompt,
-                        );
-                    }
-                }
-            }
-            Ok(None) => {
-                error!("LLM API response has no content");
-                return None;
-            }
-            Err(e) => {
-                warn!(
-                    "Structured output failed for provider '{}': {}. Falling back to legacy mode.",
-                    provider.id, e
-                );
-                // Fall through to legacy mode below
-            }
-        }
-    }
-
-    // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
-    debug!("Processed prompt length: {} chars", processed_prompt.len());
-
-    match crate::llm_client::send_chat_completion(
-        &provider,
-        api_key,
-        &model,
-        processed_prompt,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-    {
-        Ok(Some(content)) => {
-            let content = strip_invisible_chars(&content);
-            debug!(
-                "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
-                provider.id,
-                content.len()
-            );
-            bind_post_process_metadata(
-                nonblank_or_none(content, &provider.id),
-                &provider.id,
-                &model,
-                &prompt,
-            )
-        }
-        Ok(None) => {
-            error!("LLM API response has no content");
-            None
-        }
-        Err(e) => {
-            error!(
-                "LLM post-processing failed for provider '{}': {}. Falling back to original transcription.",
-                provider.id,
-                e
-            );
-            None
-        }
-    }
 }
 
 async fn maybe_convert_chinese_variant(
@@ -435,31 +159,13 @@ async fn maybe_convert_chinese_variant(
 
 pub(crate) struct ProcessedTranscription {
     pub final_text: String,
-    pub post_processed_text: Option<String>,
-    pub post_process_prompt: Option<String>,
-    pub post_process_model: Option<String>,
-}
-
-fn history_post_process_metadata(
-    processed: &ProcessedTranscription,
-    privacy_skipped: bool,
-) -> (Option<String>, Option<String>, Option<String>) {
-    if privacy_skipped {
-        (None, None, None)
-    } else {
-        (
-            processed.post_processed_text.clone(),
-            processed.post_process_prompt.clone(),
-            processed.post_process_model.clone(),
-        )
-    }
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
 /// model will actually use — the same capability-aware coercion the transcription
-/// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
-/// resolves it independently so it agrees with the language the transcription ran
-/// in, without threading a value through the pipeline.
+/// paths apply (see [`crate::managers::model::effective_language`]). Output
+/// processing resolves it independently so it agrees with the language the
+/// transcription ran in, without threading a value through the pipeline.
 fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
     let tm = app.state::<Arc<TranscriptionManager>>();
     let model_manager = app.state::<Arc<ModelManager>>();
@@ -479,13 +185,9 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
-    post_process: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
     let mut final_text = transcription.to_string();
-    let mut post_processed_text: Option<String> = None;
-    let mut post_process_prompt: Option<String> = None;
-    let mut post_process_model: Option<String> = None;
 
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
@@ -497,23 +199,7 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
-    if post_process {
-        if let Some(result) = post_process_transcription(&settings, &final_text).await {
-            post_processed_text = Some(result.text.clone());
-            final_text = result.text;
-            post_process_prompt = Some(result.prompt);
-            post_process_model = Some(result.model);
-        }
-    } else if final_text != transcription {
-        post_processed_text = Some(final_text.clone());
-    }
-
-    ProcessedTranscription {
-        final_text,
-        post_processed_text,
-        post_process_prompt,
-        post_process_model,
-    }
+    ProcessedTranscription { final_text }
 }
 
 impl ShortcutAction for TranscribeAction {
@@ -680,7 +366,6 @@ impl ShortcutAction for TranscribeAction {
         finish_operation(
             app,
             owner,
-            self.post_process,
             FinishDelivery::Local { target_token },
         );
     }
@@ -702,7 +387,6 @@ pub(crate) enum RemoteDeliveryPlan {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteOperationPlan {
-    pub(crate) post_process: bool,
     pub(crate) delivery: RemoteDeliveryPlan,
 }
 
@@ -759,21 +443,17 @@ pub(crate) fn start_remote_operation(
         OverlayStyle::None => {}
     }
 
-    Ok(RemoteOperationPlan {
-        post_process: settings.post_process_enabled,
-        delivery,
-    })
+    Ok(RemoteOperationPlan { delivery })
 }
 
 pub(crate) fn finish_remote_operation(
     app: &AppHandle,
     request_id: &str,
-    plan: RemoteOperationPlan,
+    _plan: RemoteOperationPlan,
 ) {
     finish_operation(
         app,
         OperationOwner::remote(request_id),
-        plan.post_process,
         FinishDelivery::Remote,
     );
 }
@@ -781,7 +461,6 @@ pub(crate) fn finish_remote_operation(
 fn finish_operation(
     app: &AppHandle,
     owner: OperationOwner,
-    requested_post_process: bool,
     delivery: FinishDelivery,
 ) {
     let stop_time = Instant::now();
@@ -933,44 +612,15 @@ fn finish_operation(
                         );
 
                         // Consume local capture exactly once, then use this same
-                        // owned outcome for both privacy and eventual delivery.
+                        // owned outcome for eventual delivery.
                         let local_capture = match delivery {
                             FinishDelivery::Local { target_token } => {
                                 Some(crate::target_binding::take_for_recording(target_token))
                             }
                             FinishDelivery::Remote => None,
                         };
-                        let post_process_decision = match local_capture.as_ref() {
-                            Some(capture) => crate::privacy_marks::local_post_process_decision(
-                                requested_post_process,
-                                capture,
-                            ),
-                            None => crate::privacy_marks::remote_post_process_decision(
-                                requested_post_process,
-                            ),
-                        };
-                        let effective_post_process = post_process_decision.effective_post_process;
-                        let privacy_skipped = post_process_decision.privacy_skip_pane.is_some();
-                        if let Some(pane_id) = post_process_decision.privacy_skip_pane.as_deref() {
-                            info!(
-                                "post-processing skipped: pane {} is privacy-marked",
-                                pane_id
-                            );
-                        }
-
-                        if effective_post_process {
-                            if use_streaming_overlay {
-                                tm.emit_stream_working(StreamWorkKind::Polishing);
-                            } else {
-                                show_processing_overlay(&ah);
-                            }
-                        }
                         let Some(processed) = complete_unless_cancelled(
-                            process_transcription_output(
-                                &ah,
-                                &transcription,
-                                effective_post_process,
-                            ),
+                            process_transcription_output(&ah, &transcription),
                             || rm.was_cancelled_since(cancel_generation),
                         )
                         .await
@@ -990,21 +640,13 @@ fn finish_operation(
                             return;
                         }
 
-                        // A privacy skip records no post-processing metadata,
-                        // even when local OpenCC conversion changed final_text.
-                        let (history_text, history_prompt, history_model) =
-                            history_post_process_metadata(&processed, privacy_skipped);
-
-                        // Save to history if WAV was saved
+                        // Save to history if WAV was saved. History columns for
+                        // old second-pass rows stay readable; new takes write none.
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
                                 if let Err(err) = hm.save_pending_entry(
                                     pending_audio_guard,
                                     transcription,
-                                    effective_post_process,
-                                    history_text,
-                                    history_prompt,
-                                    history_model,
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -1124,10 +766,6 @@ fn finish_operation(
                                 if let Err(save_err) = hm.save_pending_entry(
                                     pending_audio_guard,
                                     String::new(),
-                                    requested_post_process,
-                                    None,
-                                    None,
-                                    None,
                                 ) {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
@@ -1191,13 +829,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     let mut map = HashMap::new();
     map.insert(
         "transcribe".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: false,
-        }) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
@@ -1212,11 +844,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        bind_post_process_metadata, complete_unless_cancelled, history_post_process_metadata,
-        is_blank_transcription, nonblank_or_none, should_use_streaming_overlay,
-        strip_invisible_chars, ProcessedTranscription,
-    };
+    use super::{complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay};
     use crate::settings::OverlayStyle;
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1235,57 +863,6 @@ mod tests {
     fn non_blank_transcription_is_kept() {
         assert!(!is_blank_transcription("hello"));
         assert!(!is_blank_transcription("  hello  "));
-    }
-
-    #[test]
-    fn blank_cleanup_result_falls_back_to_raw() {
-        assert_eq!(nonblank_or_none(String::new(), "test"), None);
-        assert_eq!(nonblank_or_none("   \t\n".to_string(), "test"), None);
-        // Call sites strip zero-width characters before the guard, so a
-        // zero-width-only model response arrives as an empty string.
-        assert_eq!(
-            nonblank_or_none(strip_invisible_chars("\u{200b}\u{feff}"), "test"),
-            None
-        );
-    }
-
-    #[test]
-    fn nonblank_cleanup_result_is_used() {
-        assert_eq!(
-            nonblank_or_none("cleaned text".to_string(), "test"),
-            Some("cleaned text".to_string())
-        );
-    }
-
-    #[test]
-    fn successful_cleanup_binds_exact_request_metadata() {
-        let result = bind_post_process_metadata(
-            Some("synthetic processed text".to_string()),
-            "synthetic-provider",
-            "synthetic/model",
-            "synthetic exact prompt ${output}",
-        )
-        .expect("bind successful cleanup metadata");
-
-        assert_eq!(result.text, "synthetic processed text");
-        assert_eq!(result.prompt, "synthetic exact prompt ${output}");
-        assert_eq!(result.model, "synthetic-provider/synthetic/model");
-    }
-
-    #[test]
-    fn privacy_skip_keeps_converted_final_text_but_nulls_history_post_process_fields() {
-        let processed = ProcessedTranscription {
-            final_text: "OpenCC converted text".to_string(),
-            post_processed_text: Some("OpenCC converted text".to_string()),
-            post_process_prompt: Some("must not persist".to_string()),
-            post_process_model: Some("must not persist".to_string()),
-        };
-
-        assert_eq!(
-            history_post_process_metadata(&processed, true),
-            (None, None, None)
-        );
-        assert_eq!(processed.final_text, "OpenCC converted text");
     }
 
     #[test]

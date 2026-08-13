@@ -14,11 +14,11 @@ There is no public support, release, or self-update channel.
 - Right-Control arms or exits dictation mode. While armed, Space starts or stops
   recording and Delete cancels.
 - The A-25 remote Linux/X11 laptop path uses the workstation's serialized
-  transcription, selected model/language, second pass, history, and delivery
+  transcription, selected model/language, history, and delivery
   policy.
 - The installer refreshes the adopted cleanup prompt from product source while
   preserving provider/model/API configuration, unrelated prompts, an explicit
-  different prompt selection, and the operator's post-processing enable choice.
+  and the operator's overlay, Herdr, push-to-talk, and auto-submit choices.
 
 See the [operations and build guide](docs/operations.md) for the complete build,
 cache, install, rollback, second-pass, and selective-upstream contracts. The
@@ -67,8 +67,8 @@ branch, and fully rechecked. Upstream is never merged wholesale.
 
 ## App controls and host runtime
 
-A running instance accepts `handy --toggle-transcription`,
-`handy --toggle-post-process`, and `handy --cancel`. Startup supports
+A running instance accepts `handy --toggle-transcription` and
+`handy --cancel`. Startup supports
 `--start-hidden`, `--no-tray`, `--debug`, and `--help`.
 
 The package includes its private native libraries. The Linux host needs the GTK

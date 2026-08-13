@@ -56,7 +56,6 @@ export const AdvancedSettings: React.FC = () => {
 
       {experimentalEnabled && (
         <SettingsGroup title={t("settings.advanced.groups.experimental")}>
-          <PostProcessingToggle descriptionMode="tooltip" grouped={true} />
           <KeyboardImplementationSelector
             descriptionMode="tooltip"
             grouped={true}
@@ -309,32 +308,6 @@ const HerdrBinding: React.FC<HerdrBindingProps> = React.memo(
         isUpdating={isUpdating("herdr_binding_enabled")}
         label={t("settings.advanced.herdrBinding.label")}
         description={t("settings.advanced.herdrBinding.description")}
-        descriptionMode={descriptionMode}
-        grouped={grouped}
-      />
-    );
-  },
-);
-
-interface PostProcessingToggleProps {
-  descriptionMode?: "inline" | "tooltip";
-  grouped?: boolean;
-}
-
-const PostProcessingToggle: React.FC<PostProcessingToggleProps> = React.memo(
-  ({ descriptionMode = "tooltip", grouped = false }) => {
-    const { t } = useTranslation();
-    const { getSetting, updateSetting, isUpdating } = useSettings();
-
-    const enabled = getSetting("post_process_enabled") || false;
-
-    return (
-      <ToggleSwitch
-        checked={enabled}
-        onChange={(enabled) => updateSetting("post_process_enabled", enabled)}
-        isUpdating={isUpdating("post_process_enabled")}
-        label={t("settings.debug.postProcessingToggle.label")}
-        description={t("settings.debug.postProcessingToggle.description")}
         descriptionMode={descriptionMode}
         grouped={grouped}
       />

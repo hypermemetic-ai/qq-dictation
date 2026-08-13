@@ -10,7 +10,7 @@ used independently during A-25 laptop operations.
 ## Product and reproducible inputs
 
 The product preserves Handy's local ASR, selected model and dictated language,
-history and WAV retention, the configured second pass, Herdr delivery, the
+history and WAV retention, Herdr delivery, the
 Right-Control mode bridge, and the A-25 workstation/laptop path. It supports the
 private Linux/X11 workflow only; it has no public release, updater, alternate
 artifact download, other-platform, or translated-UI contract.
@@ -166,15 +166,8 @@ WAV policy, and logs. Replaced launchers, bridge, service, settings, and prior
 AppDir receive retained backups before replacement. There is no implicit
 update: every update is a clean contained build followed by this installer.
 
-`src-tauri/resources/qq_cleanup_prompt.json` is the one product source for the
-adopted prompt. The settings configurator validates its exact `id`, `name`,
-4,621-character text, SHA-256, and single `${output}` placeholder, then
-installs or updates that exact prompt entry. It preserves unrelated prompts,
-provider/model/API-key machine state, a different existing selected prompt, and
-an existing post-processing enabled/disabled choice. It keeps the adopted
-selection when already selected; when selection is absent it selects the
-adopted prompt while post-processing still defaults disabled. The installer
-also enables Herdr binding, push-to-talk, auto-submit, and the minimal overlay.
+The installer enables Herdr binding, push-to-talk, auto-submit, and the
+minimal overlay. It does not install a second-pass prompt or provider.
 No source-level Check reads live settings or credentials.
 
 Rollback stops at the affected boundary. A failed pre-install build changes no
@@ -189,15 +182,11 @@ unstable, launch with `WEBKIT_DISABLE_DMABUF_RENDERER=1`. If layer-shell is
 unsuitable, use `HANDY_NO_GTK_LAYER_SHELL=1` for the notification-window
 fallback.
 
-## Runtime and second-pass contracts
+## Runtime contracts
 
-The local ASR model produces the raw transcription. When post-processing is
-enabled, the selected prompt/provider/model performs the configured second
-pass; provider failure falls back to raw text. When disabled, the ASR result
-continues without an API pass. Deterministic custom-word and filler handling
-remain in the normal transcription path. Questions remain content rather than
-requests for the cleanup model to answer, and instructions inside a transcript
-remain content to edit.
+The local ASR model produces the raw transcription. There is no LLM second
+pass. Deterministic custom-word and filler handling remain in the normal
+transcription path.
 
 A workstation recording that begins in Herdr captures one pane at start and
 later delivers only to that pane; identified capture or delivery failures fail
@@ -209,8 +198,9 @@ legacy PTT pair remains `SIGRTMIN`/`+1`. App or bridge replacement returns to
 mode off and releases dynamic grabs.
 
 The `transcription_history` table remains the source for the latest 1,000
-successful raw/second-pass pairs, with exact prompt and provider-qualified model
-when recorded. WAV retention is independent and defaults to the latest five
+successful takes, including older second-pass pairs that still have prompt and
+provider-qualified model recorded. New takes write raw text only. WAV retention
+is independent and defaults to the latest five
 under PreserveLimit. `/dictation-review` takes no arguments, opens one
 short-lived read-only SQLite snapshot, reads no audio, writes no live state,
 and derives census/cohorts/samples from that fixed snapshot. It closely reviews
@@ -221,7 +211,7 @@ false positives. Sampling is not a confidentiality boundary; text cannot prove
 ASR fidelity; subjective writing quality remains cited agent/operator judgment.
 
 The remote laptop path is the A-25 Linux/X11 contract, not a second ASR system.
-The workstation retains VAD, model/language/custom words, second pass, output
+The workstation retains VAD, model/language/custom words, output
 processing, history/WAV retention, cancellation, and either Herdr or
 laptop-local delivery policy. Installation and one-laptop UAT remain reserved
 operator steps. See the focused guides linked at the top for exact focus,

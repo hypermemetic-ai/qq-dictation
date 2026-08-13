@@ -491,7 +491,7 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process"
+    id == "transcribe"
 }
 
 impl TranscriptionCoordinator {
@@ -1375,7 +1375,6 @@ mod tests {
             request_deadline: Instant::now() + REMOTE_REQUEST_LIFETIME,
             total_audio_samples: 0,
             plan: RemoteOperationPlan {
-                post_process: false,
                 delivery: RemoteDeliveryPlan::Herdr(
                     crate::target_binding::synthetic_remote_session_identity(1),
                 ),

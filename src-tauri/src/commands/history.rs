@@ -97,16 +97,9 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording contains no speech".to_string());
     }
 
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested).await;
+    let processed = process_transcription_output(&app, &transcription).await;
     history_manager
-        .update_transcription(
-            id,
-            transcription,
-            processed.post_processed_text,
-            processed.post_process_prompt,
-            processed.post_process_model,
-        )
+        .update_transcription(id, processed.final_text)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

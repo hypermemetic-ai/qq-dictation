@@ -62,29 +62,9 @@ pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str)
     }
 }
 
-fn ptt_binding_id(post_process_enabled: bool) -> &'static str {
-    if post_process_enabled {
-        "transcribe_with_post_process"
-    } else {
-        "transcribe"
-    }
-}
-
 fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
-        // PTT follows the post-processing setting: enabled routes hold-to-talk
-        // through the cleanup pass, disabled keeps raw transcription. Settings
-        // are read per press so the toggle takes effect immediately — it is
-        // the single switch for every dictation path (SIGUSR1/2 hardcode their
-        // actions; the keyboard bindings are user-configurable).
-        let post_process_enabled =
-            crate::settings::load_or_create_app_settings(app).post_process_enabled;
-        c.send_input(
-            ptt_binding_id(post_process_enabled),
-            source,
-            is_pressed,
-            true,
-        );
+        c.send_input("transcribe", source, is_pressed, true);
     } else {
         warn!("TranscriptionCoordinator not initialized");
     }
@@ -99,13 +79,7 @@ fn send_mode_input(app: &AppHandle, command: ModeCommand) {
             ModeCommand::Prepare => c.mode_prepare(),
             ModeCommand::On => c.mode_on(),
             ModeCommand::Off => c.mode_off(),
-            ModeCommand::Space => {
-                // Mode Space follows the same single post-processing switch as
-                // PTT, read per press.
-                let post_process_enabled =
-                    crate::settings::load_or_create_app_settings(app).post_process_enabled;
-                c.mode_space(ptt_binding_id(post_process_enabled));
-            }
+            ModeCommand::Space => c.mode_space("transcribe"),
             ModeCommand::Delete => c.mode_delete(),
         }
     } else {
@@ -137,12 +111,11 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
         for sig in signals.forever() {
             match sig {
                 SIGUSR1 => {
+                    // Keep catching leftover SIGUSR1 so an unidentified sender
+                    // cannot terminate Handy. It now starts the same raw path
+                    // as SIGUSR2; there is no second pass.
                     debug!("Received SIGUSR1");
-                    send_transcription_input(
-                        &app_handle,
-                        "transcribe_with_post_process",
-                        "SIGUSR1",
-                    );
+                    send_transcription_input(&app_handle, "transcribe", "SIGUSR1");
                 }
                 SIGUSR2 => {
                     debug!("Received SIGUSR2");
@@ -239,9 +212,4 @@ mod tests {
         assert_eq!(handled.len(), 9);
     }
 
-    #[test]
-    fn ptt_binding_follows_post_process_setting() {
-        assert_eq!(ptt_binding_id(true), "transcribe_with_post_process");
-        assert_eq!(ptt_binding_id(false), "transcribe");
-    }
 }
