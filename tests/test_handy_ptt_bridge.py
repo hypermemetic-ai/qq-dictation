@@ -1,4 +1,4 @@
-"""Focused unit tests for the visible dictation-mode X11 bridge."""
+"""Focused unit tests for the visible q mode X11 bridge."""
 
 from __future__ import annotations
 

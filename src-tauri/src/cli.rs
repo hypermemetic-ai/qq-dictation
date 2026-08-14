@@ -1,5 +1,13 @@
+use crate::operation::StartTarget;
 use clap::Parser;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RunningInstanceCommand {
+    StartOrStop { target: StartTarget },
+    Cancel,
+    Show,
+}
 
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "handy", about = "Handy - Speech to Text")]
@@ -12,12 +20,21 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_tray: bool,
 
-    /// Toggle transcription on/off (sent to running instance)
-    #[arg(long)]
+    /// Start or stop transcription in an already-running instance
+    #[arg(long, conflicts_with = "cancel")]
     pub toggle_transcription: bool,
 
-    /// Cancel the current operation (sent to running instance)
-    #[arg(long)]
+    /// Exact public Herdr pane id for a --toggle-transcription start
+    #[arg(
+        long,
+        value_name = "PANE_ID",
+        requires = "toggle_transcription",
+        conflicts_with = "cancel"
+    )]
+    pub herdr_pane: Option<String>,
+
+    /// Cancel workstation-local recording or processing in an already-running instance
+    #[arg(long, conflicts_with = "toggle_transcription")]
     pub cancel: bool,
 
     /// Enable debug mode with verbose logging
@@ -56,4 +73,114 @@ pub struct CliArgs {
     /// Emit --transcribe-file results as JSON.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Classify arguments forwarded by the single-instance plugin. Clap performs
+/// the public flag/value pairing checks before a secondary process can forward
+/// them; parsing again keeps this process boundary fail-closed as well.
+pub(crate) fn running_instance_command(args: &[String]) -> Result<RunningInstanceCommand, String> {
+    let parsed = CliArgs::try_parse_from(args).map_err(|error| error.to_string())?;
+    if parsed.toggle_transcription {
+        let target = parsed
+            .herdr_pane
+            .map(StartTarget::ExplicitPane)
+            .unwrap_or(StartTarget::Auto);
+        Ok(RunningInstanceCommand::StartOrStop { target })
+    } else if parsed.cancel {
+        Ok(RunningInstanceCommand::Cancel)
+    } else {
+        Ok(RunningInstanceCommand::Show)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(args: &[&str]) -> Result<RunningInstanceCommand, String> {
+        running_instance_command(
+            &args
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn classifies_legacy_and_explicit_start_or_stop_controls() {
+        assert_eq!(
+            command(&["handy", "--toggle-transcription"]),
+            Ok(RunningInstanceCommand::StartOrStop {
+                target: StartTarget::Auto,
+            })
+        );
+        assert_eq!(
+            command(&["handy", "--toggle-transcription", "--herdr-pane", "w2H:p13",]),
+            Ok(RunningInstanceCommand::StartOrStop {
+                target: StartTarget::ExplicitPane("w2H:p13".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn forwards_pane_text_for_lifecycle_aware_start_validation() {
+        assert_eq!(
+            command(&[
+                "handy",
+                "--toggle-transcription",
+                "--herdr-pane",
+                "malformed",
+            ]),
+            Ok(RunningInstanceCommand::StartOrStop {
+                target: StartTarget::ExplicitPane("malformed".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_missing_duplicate_or_orphaned_pane_arguments() {
+        for args in [
+            vec!["handy", "--herdr-pane", "w2H:p13"],
+            vec!["handy", "--toggle-transcription", "--herdr-pane"],
+            vec![
+                "handy",
+                "--toggle-transcription",
+                "--herdr-pane",
+                "w2H:p13",
+                "--herdr-pane",
+                "w2H:p14",
+            ],
+            vec!["handy", "--toggle-transcription", "w2H:p13"],
+        ] {
+            assert!(
+                command(&args).is_err(),
+                "accepted malformed pairing {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cancel_is_targetless_and_separate_from_start_or_stop() {
+        assert_eq!(
+            command(&["handy", "--cancel"]),
+            Ok(RunningInstanceCommand::Cancel)
+        );
+        for args in [
+            vec!["handy", "--cancel", "--toggle-transcription"],
+            vec!["handy", "--cancel", "--herdr-pane", "w2H:p13"],
+        ] {
+            assert!(
+                command(&args).is_err(),
+                "accepted conflicting control {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_control_invocation_shows_the_running_instance() {
+        assert_eq!(
+            command(&["handy", "--start-hidden"]),
+            Ok(RunningInstanceCommand::Show)
+        );
+    }
 }

@@ -11,7 +11,7 @@ used independently during A-25 laptop operations.
 
 The product preserves Handy's local ASR, selected model and dictated language,
 history and WAV retention, Herdr delivery, the
-Right-Control mode bridge, and the A-25 workstation/laptop path. It supports the
+Left-Control q mode bridge, and the A-25 workstation/laptop path. It supports the
 private Linux/X11 workflow only; it has no public release, updater, alternate
 artifact download, other-platform, or translated-UI contract.
 
@@ -188,14 +188,31 @@ The local ASR model produces the raw transcription. There is no LLM second
 pass. Deterministic custom-word and filler handling remain in the normal
 transcription path.
 
-A workstation recording that begins in Herdr captures one pane at start and
-later delivers only to that pane; identified capture or delivery failures fail
-closed rather than typing into current focus. Non-Herdr workstation recordings
-retain focused X11 insertion. Right-Control arms/exits mode, Space starts/stops,
-and Delete cancels while armed. The realtime signal contract remains prepare
-`SIGRTMIN+2`, mode-on `+3`, mode-off `+4`, Space `+5`, and Delete `+6`; the
-legacy PTT pair remains `SIGRTMIN`/`+1`. App or bridge replacement returns to
-mode off and releases dynamic grabs.
+A legacy workstation recording that begins in Herdr captures one pane at start
+and later delivers only to that pane; identified capture or delivery failures
+fail closed rather than typing into current focus. Non-Herdr legacy recordings
+retain focused X11 insertion.
+
+q mode invokes the already-running app with
+`handy --toggle-transcription --herdr-pane "$HERDR_PANE_ID"`. On an
+Idle→Recording transition the app strictly validates and stores that exact
+public pane id. The stop invocation ignores its then-current pane, retains the
+start target through processing, and attempts exactly one delivery to it.
+After accepting an explicit target, the app never recaptures focus and never
+falls back to OS input or another pane. `handy --cancel` is targetless,
+idempotent, and applies only to workstation-local recording or processing;
+laptop/remote ownership is isolated.
+
+Both semantic commands are fire-and-forget controls for an already-running
+instance only. They claim no cold start, readiness detection, or
+acknowledgement. Legacy Auto-targeted `handy --toggle-transcription`, global
+shortcut/PTT behavior, the installed Left-Control q mode bridge, and its
+realtime signal compatibility path remain supported; bridge retirement requires
+a separate coordinated cutover. Left-Control arms/exits q mode, Space
+starts/stops, and Delete cancels while armed. The realtime signal contract
+remains prepare `SIGRTMIN+2`, mode-on `+3`, mode-off `+4`, Space `+5`, and
+Delete `+6`; the legacy PTT pair remains `SIGRTMIN`/`+1`. App or bridge
+replacement returns q mode to off and releases dynamic grabs.
 
 The `transcription_history` table remains the source for the latest 1,000
 successful takes, including older second-pass pairs that still have prompt and

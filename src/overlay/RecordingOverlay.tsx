@@ -4,7 +4,11 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
 import { commands, events } from "@/bindings";
-import type { StreamPhase, StreamPhaseEvent, StreamTextEvent } from "@/bindings";
+import type {
+  StreamPhase,
+  StreamPhaseEvent,
+  StreamTextEvent,
+} from "@/bindings";
 
 type OverlayState =
   | "armed"
@@ -17,9 +21,9 @@ type OverlayState =
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
 const WAVE_BARS = 9;
 
-// Quiet ready label while dictation mode is armed and idle. English-only,
+// Quiet ready label while q mode is armed and idle. English-only,
 // like the rest of the application UI.
-const ARMED_LABEL = "Ready";
+const ARMED_LABEL = "q mode";
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -287,9 +291,7 @@ const RecordingOverlay: React.FC = () => {
 
   return (
     <div className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}>
-      <div
-        className="scard compact"
-      >
+      <div className="scard compact">
         {working ? workingRow(workLabel, true) : listeningRow(false, true)}
       </div>
     </div>
