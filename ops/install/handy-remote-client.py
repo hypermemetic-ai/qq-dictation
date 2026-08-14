@@ -36,7 +36,7 @@ PROTOCOL_TIMEOUT_SECONDS = 10.0
 PROCESS_STOP_SECONDS = 2.0
 POLL_SECONDS = 0.1
 
-MODE_KEY = "Control_R"
+MODE_KEY = "Control_L"
 START_STOP_KEY = "space"
 CANCEL_KEY = "Delete"
 GRAB_MODIFIERS = (0, X.LockMask, X.Mod2Mask, X.LockMask | X.Mod2Mask)
@@ -664,7 +664,7 @@ class X11Controller:
 
     def grab_mode_key(self) -> None:
         if not self._grab((self.mode_keycode,)):
-            raise ClientError("Right-Control is already grabbed by another application")
+            raise ClientError("Left-Control is already grabbed by another application")
 
     def grab_dynamic(self) -> None:
         if self.dynamic_grabbed:
@@ -779,7 +779,7 @@ class LaptopApplication:
         self.injection_attempted = False
         self._failure_lock = threading.Lock()
         self._async_failure: str | None = None
-        self._set_state(ClientState.OFF, "Right-Control arms remote dictation")
+        self._set_state(ClientState.OFF, "Left-Control arms remote dictation")
 
     def _set_state(self, state: ClientState, detail: str = "") -> None:
         self.state = state

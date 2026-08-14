@@ -681,7 +681,7 @@ NRestarts=1
                 systemctl_log,
                 [HEALTHY_SERVICE_STATE, failed_state],
                 status_diagnostic=(
-                    "handy-remote-client: Right-Control is already grabbed by another application"
+                    "handy-remote-client: Left-Control is already grabbed by another application"
                 ),
             )
             result = subprocess.run(
@@ -694,7 +694,7 @@ NRestarts=1
             self.assertNotIn("Installed remote laptop client", result.stdout)
             self.assertIn("final service state is not healthy", result.stderr)
             self.assertIn(
-                "handy-remote-client: Right-Control is already grabbed by another application",
+                "handy-remote-client: Left-Control is already grabbed by another application",
                 result.stderr,
             )
             commands = systemctl_log.read_text().splitlines()

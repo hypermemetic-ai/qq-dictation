@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Right-Control armed dictation-mode bridge for Handy on X11.
+"""Left-Control armed dictation-mode bridge for Handy on X11.
 
 The bridge replaces the old hold-to-talk workflow with an explicit
 system-wide mode:
 
-- Right-Control arms the mode (dynamically grabbing Space and Delete) or,
+- Left-Control arms the mode (dynamically grabbing Space and Delete) or,
   while armed, cancels any active operation and exits the mode.
 - While armed, each distinct physical Space press toggles recording
   (start/submit); releases and X11 auto-repeat pairs do nothing.
@@ -33,7 +33,7 @@ from Xlib.error import XError
 
 
 HANDY = str(Path.home() / ".local" / "bin" / "handy")
-MODE_KEY = "Control_R"
+MODE_KEY = "Control_L"
 START_STOP_KEY = "space"
 CANCEL_KEY = "Delete"
 
@@ -373,7 +373,7 @@ def main():
             committed = True
             log(
                 "dictation mode on — Space starts/stops, "
-                "Delete cancels, Right-Control exits"
+                "Delete cancels, Left-Control exits"
             )
         finally:
             if not committed:

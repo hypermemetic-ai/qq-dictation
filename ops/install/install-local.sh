@@ -90,4 +90,4 @@ fi
 
 printf 'Installed qq-dictation at %s\n' "$install_app_dir"
 printf '%s\n' \
-    'The dictation-mode bridge is active: Right-Control arms/exits; Space starts/stops; Delete cancels.'
+    'The dictation-mode bridge is active: Left-Control arms/exits; Space starts/stops; Delete cancels.'
