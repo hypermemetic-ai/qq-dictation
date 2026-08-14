@@ -367,11 +367,7 @@ impl ShortcutAction for TranscribeAction {
         shortcut::unregister_cancel_shortcut(app);
         let owner = OperationOwner::local(binding_id);
         let target_token = crate::target_binding::latest_token();
-        finish_operation(
-            app,
-            owner,
-            FinishDelivery::Local { target_token },
-        );
+        finish_operation(app, owner, FinishDelivery::Local { target_token });
     }
 }
 
@@ -462,11 +458,7 @@ pub(crate) fn finish_remote_operation(
     );
 }
 
-fn finish_operation(
-    app: &AppHandle,
-    owner: OperationOwner,
-    delivery: FinishDelivery,
-) {
+fn finish_operation(app: &AppHandle, owner: OperationOwner, delivery: FinishDelivery) {
     let stop_time = Instant::now();
     debug!("Finishing transcription for {owner}");
 
@@ -648,10 +640,9 @@ fn finish_operation(
                         // old second-pass rows stay readable; new takes write none.
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
-                                if let Err(err) = hm.save_pending_entry(
-                                    pending_audio_guard,
-                                    transcription,
-                                ) {
+                                if let Err(err) =
+                                    hm.save_pending_entry(pending_audio_guard, transcription)
+                                {
                                     error!("Failed to save history entry: {}", err);
                                 }
                             }
@@ -767,10 +758,9 @@ fn finish_operation(
                         // Save entry with empty text so user can retry
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
-                                if let Err(save_err) = hm.save_pending_entry(
-                                    pending_audio_guard,
-                                    String::new(),
-                                ) {
+                                if let Err(save_err) =
+                                    hm.save_pending_entry(pending_audio_guard, String::new())
+                                {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
                             }

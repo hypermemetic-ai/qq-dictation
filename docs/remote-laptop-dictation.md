@@ -45,7 +45,7 @@ Both modes require `/usr/bin/python3` with `python-xlib`, `ssh`, `notify-send`, 
 
 The configured SSH alias uses the operator's existing authentication; no password, key, token, or secret command is stored by qq-dictation.
 
-The remote client is the X11 session's sole Right-Control owner from service start, including while remote mode is off. Any other application that owns the Right-Control grab must already be disabled before installation or service start. The installer and client do not discover, stop, disable, remember, restore, or coexist with a previous owner. There is no alternate remote mode key and no managed local/remote handoff or rollback.
+The remote client is the X11 session's sole Left-Control owner from service start, including while remote mode is off. Any other application that owns the Left-Control grab must already be disabled before installation or service start. The installer and client do not discover, stop, disable, remember, restore, or coexist with a previous owner. There is no alternate remote mode key and no managed local/remote handoff or rollback.
 
 ## Per-install configuration
 
@@ -109,11 +109,11 @@ A PipeWire `--target` may be added during installation. The client validates thi
 
 ## Controls and shared lifecycle
 
-- Right-Control arms or exits remote mode.
+- Left-Control arms or exits remote mode.
 - Space starts or finishes recording.
 - Delete cancels recording or processing while remaining armed.
 
-Arming creates one SSH helper and dynamically grabs Space/Delete. The client owns those controls while armed except for the bounded local synthetic-injection window described below; its Right-Control mode-key grab remains owned throughout. A valid workstation `start` immediately returns `recording`; capture begins and PCM streams before Space-stop. Herdr mode captures the active configured Ghostty window's exact X11 ID, PID, title, and class before start. Local mode reads no start window and requires no Herdr state. Stop terminates/reaps capture, sends `finish`, and shows `processing`—never recording—until a terminal result.
+Arming creates one SSH helper and dynamically grabs Space/Delete. The client owns those controls while armed except for the bounded local synthetic-injection window described below; its Left-Control mode-key grab remains owned throughout. A valid workstation `start` immediately returns `recording`; capture begins and PCM streams before Space-stop. Herdr mode captures the active configured Ghostty window's exact X11 ID, PID, title, and class before start. Local mode reads no start window and requires no Herdr state. Stop terminates/reaps capture, sends `finish`, and shows `processing`—never recording—until a terminal result.
 
 Recording cancellation returns to armed immediately. Processing cancellation remains visibly non-recording and busy until workstation completion is terminal. Terminal requests retire so another Space can start on the same helper. Notifications expose only `off`, `armed`, `recording`, `processing`, and `failed`; the four routine states expire after 2 seconds and `failed` expires after 8 seconds, so none is indefinite.
 
@@ -129,7 +129,7 @@ The workstation applies trailing-space and auto-submit policy and makes at most 
 
 For nonblank output, status reports `ready` without result text. The laptop checks readable X11 focus and sends one commit. Only that consuming response to the exact owning connection/request may include a nonempty final text/submit plan; polling, cancellation, error, Herdr, terminal replay, stale request, and another connection never receive it. The workstation has already applied output processing and the configured trailing space and selected `enter`, `ctrl_enter`, `cmd_enter`, or no key from its auto-submit settings.
 
-The laptop validates the plan and its 8192-byte text bound, checks readable focus again, marks the attempt, and releases its Space/Delete grabs immediately before invoking the configured xdotool once for exact text as `type --delay 0 --clearmodifiers -- TEXT`. Only after reported text success does it make at most one configured submit-key attempt. After the complete adapter attempt succeeds, the client reacquires Space/Delete before reporting `armed`; Right-Control remains grabbed throughout this bounded window. It never retries text, retries the key, partially re-injects, re-requests the result, activates a saved target, or falls back. Missing focus before commit prevents result consumption; focus loss after consumption, xdotool error, timeout, post-effect Space/Delete reacquisition failure, or any uncertain effect becomes a visible local failure even though the consumed workstation result cannot be returned again. Adapter failure does not perform successful-path reacquisition, and fail-closed teardown leaves the client non-recording.
+The laptop validates the plan and its 8192-byte text bound, checks readable focus again, marks the attempt, and releases its Space/Delete grabs immediately before invoking the configured xdotool once for exact text as `type --delay 0 --clearmodifiers -- TEXT`. Only after reported text success does it make at most one configured submit-key attempt. After the complete adapter attempt succeeds, the client reacquires Space/Delete before reporting `armed`; Left-Control remains grabbed throughout this bounded window. It never retries text, retries the key, partially re-injects, re-requests the result, activates a saved target, or falls back. Missing focus before commit prevents result consumption; focus loss after consumption, xdotool error, timeout, post-effect Space/Delete reacquisition failure, or any uncertain effect becomes a visible local failure even though the consumed workstation result cannot be returned again. Adapter failure does not perform successful-path reacquisition, and fail-closed teardown leaves the client non-recording.
 
 Direct X11 synthetic typing is best-effort. Some applications intercept, reject, or transform synthetic input, and Unicode, keyboard-layout, compose, and IME behavior varies. An xdotool success confirms only that the configured adapter accepted its one attempt; the one-laptop proof below establishes ordinary behavior only for the tested laptop/application/version combination.
 

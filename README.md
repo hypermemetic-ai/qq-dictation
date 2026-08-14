@@ -1,8 +1,8 @@
 # qq-dictation
 
-`qq-dictation` is the private `qqp-dev/qq-dictation` Linux/X11 product for QQ
+`qq-dictation` is the private `qqp-dev/qq-dictation` Linux/X11 product for qq
 workstations and laptops. It retains Handy's local speech recognition and adds
-Herdr-pane target binding, the Right-Control dictation-mode bridge, the adopted
+Herdr-pane target binding, the Left-Control q mode bridge, the adopted
 second-pass cleanup prompt, and a pinned per-user build and installation path.
 There is no public support, release, or self-update channel.
 
@@ -11,8 +11,8 @@ There is no public support, release, or self-update channel.
 - Speech recognition, VAD, audio capture, models, and history remain local.
 - A workstation recording started in Herdr is delivered to the pane focused at
   recording start; recordings started elsewhere use focused X11 insertion.
-- Right-Control arms or exits dictation mode. While armed, Space starts or stops
-  recording and Delete cancels.
+- Left-Control arms or exits q mode. While armed, Space starts or stops recording
+  and Delete cancels.
 - The A-25 remote Linux/X11 laptop path uses the workstation's serialized
   transcription, selected model/language, history, and delivery
   policy.
@@ -67,7 +67,7 @@ branch, and fully rechecked. Upstream is never merged wholesale.
 
 ## App controls and host runtime
 
-A running instance accepts semantic controls:
+q mode sends semantic controls to an already-running instance:
 
 ```bash
 handy --toggle-transcription --herdr-pane "$HERDR_PANE_ID"
@@ -82,8 +82,8 @@ Auto targeting. Cancel is targetless and affects only workstation-local
 recording or processing; it cannot cancel laptop/remote ownership.
 
 These commands are fire-and-forget. They make no cold-start, readiness, or
-acknowledgement claim. The installed bridge and realtime signal path remain
-unchanged and supported. Startup also accepts `--start-hidden`, `--no-tray`,
+acknowledgement claim. The installed Left-Control q mode bridge and realtime
+signal path remain unchanged and supported. Startup also accepts `--start-hidden`, `--no-tray`,
 `--debug`, and `--help`.
 
 The package includes its private native libraries. The Linux host needs the GTK

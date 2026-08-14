@@ -11,7 +11,7 @@ used independently during A-25 laptop operations.
 
 The product preserves Handy's local ASR, selected model and dictated language,
 history and WAV retention, Herdr delivery, the
-Right-Control mode bridge, and the A-25 workstation/laptop path. It supports the
+Left-Control q mode bridge, and the A-25 workstation/laptop path. It supports the
 private Linux/X11 workflow only; it has no public release, updater, alternate
 artifact download, other-platform, or translated-UI contract.
 
@@ -193,7 +193,7 @@ later delivers only to that pane; identified capture or delivery failures fail
 closed rather than typing into current focus. Non-Herdr workstation recordings
 retain focused X11 insertion.
 
-The already-running app accepts
+q mode invokes the already-running app with
 `handy --toggle-transcription --herdr-pane "$HERDR_PANE_ID"`. On an
 Idle→Recording transition it strictly validates and stores that exact public
 pane id. The stop invocation ignores its then-current pane, retains the start
@@ -206,11 +206,11 @@ isolated. Both semantic commands are fire-and-forget controls for an
 already-running instance only, with no cold-start, readiness, or acknowledgement
 claim.
 
-The installed bridge and realtime signal path remain unchanged and supported.
-Right-Control arms/exits mode, Space starts/stops, and Delete cancels while
-armed. The realtime signal contract remains prepare `SIGRTMIN+2`, mode-on `+3`,
+The installed Left-Control q mode bridge and realtime signal path remain
+unchanged and supported. Left-Control arms/exits q mode, Space starts/stops, and
+Delete cancels while armed. The realtime signal contract remains prepare `SIGRTMIN+2`, mode-on `+3`,
 mode-off `+4`, Space `+5`, and Delete `+6`; the legacy PTT pair remains
-`SIGRTMIN`/`+1`. App or bridge replacement returns to mode off and releases
+`SIGRTMIN`/`+1`. App or bridge replacement returns q mode to off and releases
 dynamic grabs.
 
 The `transcription_history` table remains the source for the latest 1,000

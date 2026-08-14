@@ -133,7 +133,7 @@ enum Command {
         owner: OperationOwner,
         outcome: OperationOutcome,
     },
-    // Visible Space dictation mode (qq-dictation). Right-Control arms/exits;
+    // Visible Space dictation mode (qq-dictation). Left-Control arms/exits;
     // while armed, Space toggles recording and Delete cancels active local work.
     ModePrepare,
     ModeOn,
