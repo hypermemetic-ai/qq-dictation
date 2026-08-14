@@ -20,8 +20,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::settings::{
-    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, OverlayPosition,
-    OverlayStyle, PasteMethod, ShortcutBinding, SoundTheme, Theme, TypingTool,
+    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation,
+    OverlayPosition, OverlayStyle, PasteMethod, ShortcutBinding, SoundTheme, Theme, TypingTool,
 };
 use crate::tray;
 

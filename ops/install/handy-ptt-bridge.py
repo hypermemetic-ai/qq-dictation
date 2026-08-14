@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Left-Control q mode bridge for Handy on X11.
+"""Left-Control armed dictation-mode bridge for Handy on X11.
 
-The bridge replaces the old hold-to-talk workflow with explicit q mode:
+The bridge replaces the old hold-to-talk workflow with an explicit
+system-wide mode:
 
-- Left-Control arms q mode (dynamically grabbing Space and Delete) or,
-  while armed, cancels any active operation and exits q mode.
+- Left-Control arms the mode (dynamically grabbing Space and Delete) or,
+  while armed, cancels any active operation and exits the mode.
 - While armed, each distinct physical Space press toggles recording
   (start/submit); releases and X11 auto-repeat pairs do nothing.
 - While armed, each distinct physical Delete press cancels the active
@@ -13,10 +14,10 @@ The bridge replaces the old hold-to-talk workflow with explicit q mode:
 The bridge communicates with Handy through explicit realtime signals:
 SIGRTMIN+2 prepare, SIGRTMIN+3 mode-on, SIGRTMIN+4 mode-off,
 SIGRTMIN+5 Space, and SIGRTMIN+6 Delete. The legacy PTT pair stays on SIGRTMIN and
-SIGRTMIN+1. Handy restarts default to q mode off: if the target Handy PID
-disappears or changes while the bridge is armed, the bridge resets q mode to
-off, releases the Space/Delete grabs, and drops the pending action; a later
-explicit arm emits mode-on to the current Handy process.
+SIGRTMIN+1. Handy restarts default to mode off: if the target Handy PID
+disappears or changes while the bridge is armed, the bridge resets to
+mode off, releases the Space/Delete grabs, and drops the pending action;
+a later explicit arm emits mode-on to the current Handy process.
 """
 
 import os
@@ -172,7 +173,7 @@ class DistinctPressTracker:
         """Forget held/repeat state, e.g. across an arm/exit transition.
 
         Space/Delete events are only visible while grabbed; a key released
-        while q mode was off leaves no release event behind, so a stale
+        while the mode was off leaves no release event behind, so a stale
         held flag must not swallow the next distinct press.
         """
         self._held = False
@@ -212,7 +213,7 @@ def grab_keys(dpy, root, keycodes, report_failure=True):
         return True
 
     if report_failure:
-        log("ERROR: a q mode key is already grabbed by another application")
+        log("ERROR: a dictation-mode key is already grabbed by another application")
     for keycode, modifiers in grabbed:
         root.ungrab_key(keycode, modifiers, onerror=lambda *_: None)
     try:
@@ -271,12 +272,12 @@ def main():
         return 1
 
     # A restarted bridge must not inherit app-side armed state from its
-    # predecessor. If Handy is absent, its next process starts with q mode off.
+    # predecessor. If Handy is absent, its next process starts mode-off.
     existing_pid = handy_pid()
     if existing_pid is not None and handy_ready(existing_pid):
-        send_signal(existing_pid, MODE_OFF_SIGNAL, "reset q mode")
+        send_signal(existing_pid, MODE_OFF_SIGNAL, "reset dictation mode")
 
-    log(f"ready — press {MODE_KEY} to arm or exit q mode")
+    log(f"ready — press {MODE_KEY} to arm or exit dictation mode")
 
     mode_on = False
     control = DistinctPressTracker()
@@ -307,7 +308,7 @@ def main():
         if mode_on and pid is not None and current_pid in (None, pid):
             send_signal(pid, MODE_OFF_SIGNAL, "recover from lost mode acknowledgement")
         reset_local_mode(
-            "Handy restarted or lost armed acknowledgement — q mode off; "
+            "Handy restarted or lost armed acknowledgement — dictation mode off; "
             "Space/Delete released"
         )
         return False
@@ -316,7 +317,7 @@ def main():
         nonlocal mode_on, signaled_pid
         pid = ensure_handy()
         if pid is None:
-            log("ERROR: Handy did not become ready; q mode remains off")
+            log("ERROR: Handy did not become ready; dictation mode remains off")
             return
 
         # Two-phase arm keeps the overlay truthful. Prepare acknowledges the
@@ -327,7 +328,7 @@ def main():
         grabbed = False
         committed = False
         try:
-            if not send_signal(pid, MODE_PREPARE_SIGNAL, "prepare q mode"):
+            if not send_signal(pid, MODE_PREPARE_SIGNAL, "prepare dictation mode"):
                 return
             if wait_until_state(
                 pid,
@@ -335,7 +336,7 @@ def main():
                 MODE_ACK_ATTEMPTS,
                 MODE_ACK_SECONDS,
             ) is None:
-                log("ERROR: Handy did not prepare q mode")
+                log("ERROR: Handy did not prepare dictation mode")
                 return
 
             for _ in range(ARM_GRAB_ATTEMPTS):
@@ -351,10 +352,10 @@ def main():
                     break
                 time.sleep(ARM_GRAB_RETRY_SECONDS)
             if not grabbed:
-                log("ERROR: q mode not armed; Space/Delete left free")
+                log("ERROR: dictation mode not armed; Space/Delete left free")
                 return
 
-            if not send_signal(pid, MODE_ON_SIGNAL, "commit q mode"):
+            if not send_signal(pid, MODE_ON_SIGNAL, "commit dictation mode"):
                 return
             if wait_until_state(
                 pid,
@@ -362,7 +363,7 @@ def main():
                 MODE_ACK_ATTEMPTS,
                 MODE_ACK_SECONDS,
             ) is None:
-                log("ERROR: Handy did not commit q mode")
+                log("ERROR: Handy did not commit dictation mode")
                 return
 
             space.reset()
@@ -371,7 +372,7 @@ def main():
             mode_on = True
             committed = True
             log(
-                "q mode on — Space starts/stops, "
+                "dictation mode on — Space starts/stops, "
                 "Delete cancels, Left-Control exits"
             )
         finally:
@@ -379,7 +380,7 @@ def main():
                 if grabbed:
                     ungrab_keys(dpy, root, (space_keycode, cancel_keycode))
                 if rollback_required and handy_pid() in (None, pid):
-                    send_signal(pid, MODE_OFF_SIGNAL, "roll back q mode")
+                    send_signal(pid, MODE_OFF_SIGNAL, "roll back dictation mode")
 
     def disarm_mode():
         pid = signaled_pid
@@ -387,15 +388,15 @@ def main():
         # pgrep miss must not skip app-side disarm; a different PID is a new,
         # default-off process and is never signaled.
         if pid is not None and handy_pid() in (None, pid):
-            send_signal(pid, MODE_OFF_SIGNAL, "exit q mode")
-        reset_local_mode("q mode off")
+            send_signal(pid, MODE_OFF_SIGNAL, "exit dictation mode")
+        reset_local_mode("dictation mode off")
 
     def deliver_action(handy_signal, action):
         if not current_handy_matches():
             return
         if not send_signal(signaled_pid, handy_signal, action):
             reset_local_mode(
-                "Handy exited while armed — q mode off; "
+                "Handy exited while armed — dictation mode off; "
                 "Space/Delete released"
             )
 

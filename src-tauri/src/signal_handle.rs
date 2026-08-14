@@ -15,8 +15,8 @@ pub fn ptt_stop_signal() -> i32 {
     libc::SIGRTMIN() + 1
 }
 
-// q mode (qq-dictation). Realtime signal numbers preserve safety ordering
-// when several are pending: prepare, commit, off,
+// Visible Space dictation mode (qq-dictation). Realtime signal numbers
+// preserve safety ordering when several are pending: prepare, commit, off,
 // Space, then Delete.
 pub fn mode_prepare_signal() -> i32 {
     libc::SIGRTMIN() + 2
@@ -52,8 +52,8 @@ pub fn transcription_signals() -> Vec<i32> {
     ]
 }
 
-/// Send a legacy toggle input to the coordinator.
-/// Used by the compatibility signal handlers.
+/// Send a transcription input to the coordinator.
+/// Used by signal handlers, CLI flags, and any other external trigger.
 pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
         c.send_input(binding_id, source, true, false);
@@ -70,7 +70,7 @@ fn send_ptt_input(app: &AppHandle, source: &str, is_pressed: bool) {
     }
 }
 
-/// Route a q mode command to the coordinator. Mode signals are commands
+/// Route a dictation-mode command to the coordinator. Mode signals are commands
 /// (not raw key events), so the signal thread never calls pipeline actions
 /// directly — the coordinator serialises them with every other input.
 fn send_mode_input(app: &AppHandle, command: ModeCommand) {
@@ -130,23 +130,23 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
                     send_ptt_input(&app_handle, "SIGRTMIN+1", false);
                 }
                 sig if sig == mode_prepare => {
-                    debug!("Received SIGRTMIN+2 (q mode prepare)");
+                    debug!("Received SIGRTMIN+2 (dictation mode prepare)");
                     send_mode_input(&app_handle, ModeCommand::Prepare);
                 }
                 sig if sig == mode_on => {
-                    debug!("Received SIGRTMIN+3 (q mode on)");
+                    debug!("Received SIGRTMIN+3 (dictation mode on)");
                     send_mode_input(&app_handle, ModeCommand::On);
                 }
                 sig if sig == mode_off => {
-                    debug!("Received SIGRTMIN+4 (q mode off)");
+                    debug!("Received SIGRTMIN+4 (dictation mode off)");
                     send_mode_input(&app_handle, ModeCommand::Off);
                 }
                 sig if sig == mode_space => {
-                    debug!("Received SIGRTMIN+5 (q mode Space)");
+                    debug!("Received SIGRTMIN+5 (dictation mode Space)");
                     send_mode_input(&app_handle, ModeCommand::Space);
                 }
                 sig if sig == mode_delete => {
-                    debug!("Received SIGRTMIN+6 (q mode Delete)");
+                    debug!("Received SIGRTMIN+6 (dictation mode Delete)");
                     send_mode_input(&app_handle, ModeCommand::Delete);
                 }
                 _ => continue,
@@ -211,4 +211,5 @@ mod tests {
         }
         assert_eq!(handled.len(), 9);
     }
+
 }

@@ -959,4 +959,5 @@ mod tests {
         );
         assert_eq!(settings.transcribe_gpu_device, 2);
     }
+
 }

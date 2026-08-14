@@ -22,9 +22,9 @@ pub(crate) const REMOTE_MAX_TOTAL_AUDIO_SAMPLES: usize = 16_000 * 60 * 10;
 const REMOTE_TERMINAL_LIFETIME: Duration = Duration::from_secs(60);
 const MAX_REMOTE_TERMINALS: usize = 8;
 
-/// Descriptive hotkey string for q mode recordings; appears only in logs,
-/// never in shortcut registration.
-const MODE_HOTKEY: &str = "q mode (Space)";
+/// Descriptive hotkey string for dictation-mode recordings; appears only in
+/// logs, never in shortcut registration.
+const MODE_HOTKEY: &str = "Dictation mode (Space)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -133,8 +133,8 @@ enum Command {
         owner: OperationOwner,
         outcome: OperationOutcome,
     },
-    // q mode (qq-dictation). Left-Control arms/exits; while armed, Space
-    // toggles recording and Delete cancels active workstation-local work.
+    // Visible Space dictation mode (qq-dictation). Right-Control arms/exits;
+    // while armed, Space toggles recording and Delete cancels active local work.
     ModePrepare,
     ModeOn,
     ModeOff,
@@ -265,7 +265,7 @@ fn classify_ptt_event(
     }
 }
 
-/// What a q mode Space press does, given the armed flag and the
+/// What a dictation-mode Space press does, given the armed flag and the
 /// pipeline stage owned by the coordinator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModeSpaceAction {
@@ -552,7 +552,7 @@ impl TranscriptionCoordinator {
                 let mut pending_release: Option<PendingRelease> = None;
                 let mut active_remote: Option<ActiveRemote> = None;
                 let mut terminals = VecDeque::new();
-                // q mode defaults off on every app start.
+                // Visible Space dictation mode defaults off on every app start.
                 let mut prepared = false;
                 let mut armed = false;
 
@@ -736,11 +736,11 @@ impl TranscriptionCoordinator {
                         Command::ModePrepare => {
                             if !prepared && !armed {
                                 if let Err(error) = crate::overlay::mark_dictation_mode_prepared() {
-                                    warn!("Cannot acknowledge prepared q mode: {error}");
+                                    warn!("Cannot acknowledge prepared dictation mode: {error}");
                                     continue;
                                 }
                                 prepared = true;
-                                debug!("q mode prepared");
+                                debug!("Dictation mode prepared");
                             }
                         }
                         Command::ModeOn => {
@@ -751,9 +751,9 @@ impl TranscriptionCoordinator {
                                     crate::overlay::show_armed_overlay(&app);
                                 }
                                 if let Err(error) = crate::overlay::mark_dictation_mode_armed() {
-                                    warn!("Cannot acknowledge armed q mode: {error}");
+                                    warn!("Cannot acknowledge armed dictation mode: {error}");
                                 }
-                                debug!("q mode armed");
+                                debug!("Dictation mode armed");
                             }
                         }
                         Command::ModeOff => {
@@ -762,7 +762,7 @@ impl TranscriptionCoordinator {
                                 prepared = false;
                                 armed = false;
                                 if let Err(error) = crate::overlay::mark_dictation_mode_off() {
-                                    warn!("Cannot acknowledge disarmed q mode: {error}");
+                                    warn!("Cannot acknowledge disarmed dictation mode: {error}");
                                 }
                                 match &stage {
                                     Stage::Recording(owner) if owner.is_local() => {
@@ -777,7 +777,7 @@ impl TranscriptionCoordinator {
                                     }
                                     _ => {}
                                 }
-                                debug!("q mode disarmed");
+                                debug!("Dictation mode disarmed");
                             }
                         }
                         Command::ModeSpace { binding_id } => {

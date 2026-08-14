@@ -380,8 +380,8 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
 }
 
 /// Hides the recording overlay window with fade-out animation.
-/// While q mode is armed, snap back to the q mode pill instead of
-/// fading the working state out and then immediately showing it again.
+/// While dictation mode is armed, snap back to the Ready pill instead of
+/// fading the working state out and then immediately showing Ready again.
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
     if DICTATION_MODE_ARMED.load(Ordering::Relaxed) {
         show_armed_overlay(app_handle);
