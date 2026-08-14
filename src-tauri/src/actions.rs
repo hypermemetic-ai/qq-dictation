@@ -5,7 +5,7 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::operation::{OperationOutcome, OperationOwner};
+use crate::operation::{OperationOutcome, OperationOwner, StartTarget};
 use crate::settings::{get_settings, AppSettings, OverlayStyle};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -73,7 +73,7 @@ impl Drop for FinishGuard {
 
 // Shortcut Action Trait
 pub trait ShortcutAction: Send + Sync {
-    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
+    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str, target: StartTarget);
     fn stop(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
 }
 
@@ -203,7 +203,7 @@ pub(crate) async fn process_transcription_output(
 }
 
 impl ShortcutAction for TranscribeAction {
-    fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+    fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str, target: StartTarget) {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
@@ -320,13 +320,17 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
-            // Bind this recording to the focused herdr pane (if any) so the
-            // finished transcription can be delivered there regardless of
-            // later focus changes. Only after a successful start: a failed
-            // start must not mint a token or disturb the binding of a
-            // transcription still in flight. `stop` reads the token back via
-            // `latest_token`.
-            crate::target_binding::begin_capture(app.clone());
+            // Store targeting only after recording has started successfully. An
+            // explicit pane target is recorded synchronously without reading
+            // focus; Auto starts retain asynchronous focus capture. `stop` reads
+            // this recording's token back via `latest_token` and never consumes
+            // or replaces it with a stop-time target.
+            match target {
+                StartTarget::Auto => crate::target_binding::begin_auto_capture(app.clone()),
+                StartTarget::ExplicitPane(pane_id) => {
+                    crate::target_binding::begin_explicit_target(pane_id)
+                }
+            };
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -363,11 +367,7 @@ impl ShortcutAction for TranscribeAction {
         shortcut::unregister_cancel_shortcut(app);
         let owner = OperationOwner::local(binding_id);
         let target_token = crate::target_binding::latest_token();
-        finish_operation(
-            app,
-            owner,
-            FinishDelivery::Local { target_token },
-        );
+        finish_operation(app, owner, FinishDelivery::Local { target_token });
     }
 }
 
@@ -458,11 +458,7 @@ pub(crate) fn finish_remote_operation(
     );
 }
 
-fn finish_operation(
-    app: &AppHandle,
-    owner: OperationOwner,
-    delivery: FinishDelivery,
-) {
+fn finish_operation(app: &AppHandle, owner: OperationOwner, delivery: FinishDelivery) {
     let stop_time = Instant::now();
     debug!("Finishing transcription for {owner}");
 
@@ -644,10 +640,9 @@ fn finish_operation(
                         // old second-pass rows stay readable; new takes write none.
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
-                                if let Err(err) = hm.save_pending_entry(
-                                    pending_audio_guard,
-                                    transcription,
-                                ) {
+                                if let Err(err) =
+                                    hm.save_pending_entry(pending_audio_guard, transcription)
+                                {
                                     error!("Failed to save history entry: {}", err);
                                 }
                             }
@@ -763,10 +758,9 @@ fn finish_operation(
                         // Save entry with empty text so user can retry
                         if wav_saved {
                             if let Some(pending_audio_guard) = pending_audio_guard.as_mut() {
-                                if let Err(save_err) = hm.save_pending_entry(
-                                    pending_audio_guard,
-                                    String::new(),
-                                ) {
+                                if let Err(save_err) =
+                                    hm.save_pending_entry(pending_audio_guard, String::new())
+                                {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
                             }
@@ -792,7 +786,7 @@ fn finish_operation(
 struct CancelAction;
 
 impl ShortcutAction for CancelAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str, _target: StartTarget) {
         utils::cancel_current_operation(app);
     }
 
@@ -805,7 +799,7 @@ impl ShortcutAction for CancelAction {
 struct TestAction;
 
 impl ShortcutAction for TestAction {
-    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
+    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str, _target: StartTarget) {
         log::info!(
             "Shortcut ID '{}': Started - {} (App: {})", // Changed "Pressed" to "Started" for consistency
             binding_id,

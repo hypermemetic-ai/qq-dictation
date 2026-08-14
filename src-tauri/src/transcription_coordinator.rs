@@ -4,7 +4,7 @@ use crate::actions::{
 };
 use crate::clipboard::RemoteInjectionPlan;
 use crate::managers::audio::AudioRecordingManager;
-use crate::operation::{OperationOutcome, OperationOwner};
+use crate::operation::{OperationOutcome, OperationOwner, StartTarget};
 use log::{debug, error, warn};
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Sender};
@@ -125,12 +125,15 @@ enum Command {
         is_pressed: bool,
         push_to_talk: bool,
     },
+    StartOrStop {
+        target: StartTarget,
+    },
     LocalCancel,
     ProcessingFinished {
         owner: OperationOwner,
         outcome: OperationOutcome,
     },
-    // Visible Space dictation mode (qq-dictation). Right-Control arms/exits;
+    // Visible Space dictation mode (qq-dictation). Left-Control arms/exits;
     // while armed, Space toggles recording and Delete cancels active local work.
     ModePrepare,
     ModeOn,
@@ -195,6 +198,33 @@ enum PttLifecycleAction {
     Start,
     Stop,
     Ignore,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StartOrStopAction {
+    Start(StartTarget),
+    Stop,
+    Ignore,
+}
+
+/// Classify semantic CLI control against the serialized lifecycle. Explicit
+/// pane syntax is inspected only for an Idle→Recording start; a stop or busy
+/// invocation ignores its then-current target completely.
+fn classify_start_or_stop(stage: &Stage, target: StartTarget) -> Result<StartOrStopAction, String> {
+    match stage {
+        Stage::Idle => {
+            if let StartTarget::ExplicitPane(pane_id) = &target {
+                if !crate::target_binding::validate_pane_id(pane_id) {
+                    return Err("Explicit Herdr pane id is malformed".to_string());
+                }
+            }
+            Ok(StartOrStopAction::Start(target))
+        }
+        Stage::Recording(owner) if local_binding_matches(owner, "transcribe") => {
+            Ok(StartOrStopAction::Stop)
+        }
+        Stage::Recording(_) | Stage::Processing(_) => Ok(StartOrStopAction::Ignore),
+    }
 }
 
 fn local_binding_matches(owner: &OperationOwner, binding_id: &str) -> bool {
@@ -264,6 +294,23 @@ fn mode_delete_is_active(armed: bool, stage: &Stage) -> bool {
             stage,
             Stage::Recording(owner) | Stage::Processing(owner) if owner.is_local()
         )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LocalCancelAction {
+    Recording(OperationOwner),
+    Processing(OperationOwner),
+    Ignore,
+}
+
+fn classify_local_cancel(stage: &Stage) -> LocalCancelAction {
+    match stage {
+        Stage::Recording(owner) if owner.is_local() => LocalCancelAction::Recording(owner.clone()),
+        Stage::Processing(owner) if owner.is_local() => {
+            LocalCancelAction::Processing(owner.clone())
+        }
+        Stage::Idle | Stage::Recording(_) | Stage::Processing(_) => LocalCancelAction::Ignore,
+    }
 }
 
 fn active_local_binding(stage: &Stage) -> Option<&str> {
@@ -540,6 +587,22 @@ impl TranscriptionCoordinator {
                     };
 
                     match command {
+                        Command::StartOrStop { target } => {
+                            match classify_start_or_stop(&stage, target) {
+                                Ok(StartOrStopAction::Start(target)) => {
+                                    start_local(&app, &mut stage, "transcribe", "CLI", target)
+                                }
+                                Ok(StartOrStopAction::Stop) => {
+                                    stop_local(&app, &mut stage, "transcribe", "CLI")
+                                }
+                                Ok(StartOrStopAction::Ignore) => {
+                                    debug!("Ignoring semantic transcription control: pipeline busy")
+                                }
+                                Err(error) => {
+                                    warn!("Ignoring semantic transcription start: {error}")
+                                }
+                            }
+                        }
                         Command::Input {
                             binding_id,
                             hotkey_string,
@@ -586,9 +649,13 @@ impl TranscriptionCoordinator {
 
                             if push_to_talk {
                                 match classify_ptt_lifecycle(&stage, &binding_id, is_pressed) {
-                                    PttLifecycleAction::Start => {
-                                        start_local(&app, &mut stage, &binding_id, &hotkey_string)
-                                    }
+                                    PttLifecycleAction::Start => start_local(
+                                        &app,
+                                        &mut stage,
+                                        &binding_id,
+                                        &hotkey_string,
+                                        StartTarget::Auto,
+                                    ),
                                     PttLifecycleAction::Stop => {
                                         stop_local(&app, &mut stage, &binding_id, &hotkey_string)
                                     }
@@ -596,9 +663,13 @@ impl TranscriptionCoordinator {
                                 }
                             } else if is_pressed {
                                 match &stage {
-                                    Stage::Idle => {
-                                        start_local(&app, &mut stage, &binding_id, &hotkey_string)
-                                    }
+                                    Stage::Idle => start_local(
+                                        &app,
+                                        &mut stage,
+                                        &binding_id,
+                                        &hotkey_string,
+                                        StartTarget::Auto,
+                                    ),
                                     Stage::Recording(owner)
                                         if local_binding_matches(owner, &binding_id) =>
                                     {
@@ -612,15 +683,17 @@ impl TranscriptionCoordinator {
                         }
                         Command::LocalCancel => {
                             pending_release = None;
-                            match &stage {
-                                Stage::Recording(owner) if owner.is_local() => {
-                                    crate::utils::cancel_owned_operation(&app, owner, true);
+                            match classify_local_cancel(&stage) {
+                                LocalCancelAction::Recording(owner) => {
+                                    crate::utils::cancel_owned_operation(&app, &owner, true);
                                     stage = Stage::Idle;
                                 }
-                                Stage::Processing(owner) if owner.is_local() => {
-                                    crate::utils::cancel_owned_operation(&app, owner, false);
+                                LocalCancelAction::Processing(owner) => {
+                                    crate::utils::cancel_owned_operation(&app, &owner, false);
                                 }
-                                _ => debug!("Ignoring local cancel: local source is not owner"),
+                                LocalCancelAction::Ignore => {
+                                    debug!("Ignoring local cancel: local source is not owner")
+                                }
                             }
                             if armed && matches!(stage, Stage::Idle) {
                                 crate::overlay::show_armed_overlay(&app);
@@ -712,7 +785,13 @@ impl TranscriptionCoordinator {
                                 active_local_binding(&stage).map(str::to_string);
                             match classify_mode_space(armed, &stage) {
                                 ModeSpaceAction::Start => {
-                                    start_local(&app, &mut stage, &binding_id, MODE_HOTKEY);
+                                    start_local(
+                                        &app,
+                                        &mut stage,
+                                        &binding_id,
+                                        MODE_HOTKEY,
+                                        StartTarget::Auto,
+                                    );
                                     if matches!(stage, Stage::Idle) {
                                         crate::overlay::show_armed_overlay(&app);
                                     }
@@ -1071,6 +1150,12 @@ impl TranscriptionCoordinator {
         }
     }
 
+    pub(crate) fn start_or_stop(&self, target: StartTarget) {
+        if self.tx.send(Command::StartOrStop { target }).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
     pub(crate) fn request_local_cancel(&self) {
         if self.tx.send(Command::LocalCancel).is_err() {
             warn!("Transcription coordinator channel closed");
@@ -1251,12 +1336,18 @@ fn cancel_remote(
     }
 }
 
-fn start_local(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+fn start_local(
+    app: &AppHandle,
+    stage: &mut Stage,
+    binding_id: &str,
+    hotkey_string: &str,
+    target: StartTarget,
+) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
-    action.start(app, binding_id, hotkey_string);
+    action.start(app, binding_id, hotkey_string, target);
     let expected = OperationOwner::local(binding_id);
     if app
         .try_state::<Arc<AudioRecordingManager>>()
@@ -1336,6 +1427,69 @@ mod tests {
             ),
             PttAction::CancelRelease
         );
+    }
+
+    #[test]
+    fn semantic_start_validates_and_retains_the_exact_explicit_target() {
+        let target = StartTarget::ExplicitPane("w2H:p13".to_string());
+        assert_eq!(
+            classify_start_or_stop(&Stage::Idle, target.clone()),
+            Ok(StartOrStopAction::Start(target))
+        );
+        assert!(classify_start_or_stop(
+            &Stage::Idle,
+            StartTarget::ExplicitPane("malformed".to_string()),
+        )
+        .is_err());
+        assert_eq!(
+            classify_start_or_stop(&Stage::Idle, StartTarget::Auto),
+            Ok(StartOrStopAction::Start(StartTarget::Auto))
+        );
+    }
+
+    #[test]
+    fn semantic_stop_and_busy_stages_never_inspect_the_callers_target() {
+        let malformed = || StartTarget::ExplicitPane("not:a:public:pane".to_string());
+        assert_eq!(
+            classify_start_or_stop(&local_recording("transcribe"), malformed()),
+            Ok(StartOrStopAction::Stop)
+        );
+        assert_eq!(
+            classify_start_or_stop(
+                &Stage::Processing(OperationOwner::local("transcribe")),
+                malformed(),
+            ),
+            Ok(StartOrStopAction::Ignore)
+        );
+        assert_eq!(
+            classify_start_or_stop(&remote_recording("request-a"), malformed()),
+            Ok(StartOrStopAction::Ignore)
+        );
+    }
+
+    #[test]
+    fn targetless_local_cancel_is_idempotent_and_remote_isolated() {
+        let recording = local_recording("transcribe");
+        assert_eq!(
+            classify_local_cancel(&recording),
+            LocalCancelAction::Recording(OperationOwner::local("transcribe"))
+        );
+        assert_eq!(
+            classify_local_cancel(&Stage::Idle),
+            LocalCancelAction::Ignore
+        );
+
+        let processing = Stage::Processing(OperationOwner::local("transcribe"));
+        let expected = LocalCancelAction::Processing(OperationOwner::local("transcribe"));
+        assert_eq!(classify_local_cancel(&processing), expected);
+        assert_eq!(classify_local_cancel(&processing), expected);
+
+        for stage in [
+            remote_recording("request-a"),
+            Stage::Processing(OperationOwner::remote("request-a")),
+        ] {
+            assert_eq!(classify_local_cancel(&stage), LocalCancelAction::Ignore);
+        }
     }
 
     #[test]

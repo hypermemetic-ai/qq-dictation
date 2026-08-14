@@ -1,5 +1,14 @@
 use std::fmt;
 
+/// Target supplied when a local transcription control starts a recording.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StartTarget {
+    /// Preserve legacy start-time focus capture and focused-input behavior.
+    Auto,
+    /// Deliver only to this exact public Herdr pane id.
+    ExplicitPane(String),
+}
+
 /// Identity of the source that owns one dictation operation.
 ///
 /// Ownership is explicit and carried through capture, processing, cancellation,

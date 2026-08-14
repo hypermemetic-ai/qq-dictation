@@ -4,7 +4,11 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
 import { commands, events } from "@/bindings";
-import type { StreamPhase, StreamPhaseEvent, StreamTextEvent } from "@/bindings";
+import type {
+  StreamPhase,
+  StreamPhaseEvent,
+  StreamTextEvent,
+} from "@/bindings";
 
 type OverlayState =
   | "armed"
@@ -287,9 +291,7 @@ const RecordingOverlay: React.FC = () => {
 
   return (
     <div className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}>
-      <div
-        className="scard compact"
-      >
+      <div className="scard compact">
         {working ? workingRow(workLabel, true) : listeningRow(false, true)}
       </div>
     </div>

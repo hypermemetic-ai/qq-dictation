@@ -646,11 +646,9 @@ impl HistoryManager {
                 "pending WAV does not belong to this history manager"
             ));
         }
-        self.save_entry_with_ownership(
-            file_name,
-            transcription_text,
-            || pending.mark_history_owned(),
-        )
+        self.save_entry_with_ownership(file_name, transcription_text, || {
+            pending.mark_history_owned()
+        })
     }
 
     fn save_entry_with_ownership(

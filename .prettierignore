@@ -14,6 +14,7 @@ src-tauri/gen
 
 # Generated files
 backlog/
+openwiki/
 src/bindings.ts
 src-tauri/src/catalog/catalog.json
 

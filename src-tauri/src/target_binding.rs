@@ -268,14 +268,18 @@ static LATEST_TOKEN: AtomicU64 = AtomicU64::new(0);
 
 const MAX_BOUND_PANES: usize = 8;
 
-/// Mint the token for a new recording synchronously (cheap), then do the
-/// expensive capture (subprocesses) on a detached thread. The token ordering
-/// is what lets `stop` attribute the binding correctly: a later recording can
-/// only mint its token after the previous recording's `stop` has run, so
-/// `latest_token` read at `stop` time is always the stopped recording's token.
-pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
+/// Mint a target token synchronously. The token ordering is what lets `stop`
+/// attribute the binding correctly: a later recording can only mint its token
+/// after the previous recording's `stop` has run.
+fn mint_target_token() -> u64 {
     let token = NEXT_TOKEN.fetch_add(1, Ordering::SeqCst);
     LATEST_TOKEN.store(token, Ordering::SeqCst);
+    token
+}
+
+/// Begin legacy Auto target capture on a detached thread.
+pub fn begin_auto_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
+    let token = mint_target_token();
 
     std::thread::spawn(move || {
         let capture = if crate::settings::get_settings(&app).herdr_binding_enabled {
@@ -298,6 +302,24 @@ pub fn begin_capture(#[allow(unused_variables)] app: AppHandle) -> u64 {
         store_capture(token, capture);
     });
 
+    token
+}
+
+/// Store an accepted semantic start target without consulting focus, X11, or
+/// Herdr session state. A defensive invalid-id branch fails closed and never
+/// converts an explicit request into legacy focused input.
+pub fn begin_explicit_target(pane_id: String) -> u64 {
+    let token = mint_target_token();
+    let capture = if validate_pane_id(&pane_id) {
+        debug!(
+            "Bound dictation #{} to explicit herdr pane {}",
+            token, pane_id
+        );
+        CaptureOutcome::Bound(pane_id)
+    } else {
+        CaptureOutcome::Failed("explicit Herdr pane id was malformed".to_string())
+    };
+    store_capture(token, capture);
     token
 }
 
@@ -1026,6 +1048,15 @@ mod tests {
     /// run in parallel, so separate tests could evict each other's entries.
     #[test]
     fn captures_are_per_recording_and_evicted_in_order() {
+        // Explicit semantic starts store their exact pane synchronously, so no
+        // focus capture can race with stop or processing.
+        let explicit_token = begin_explicit_target("wExact:pStart".to_string());
+        assert_eq!(latest_token(), explicit_token);
+        assert_eq!(
+            take_for_recording(explicit_token),
+            CaptureOutcome::Bound("wExact:pStart".to_string())
+        );
+
         // A finished "not aimed at herdr" capture answers immediately — the
         // common non-herdr case must not pay the in-flight wait.
         store_capture(950, CaptureOutcome::Legacy);

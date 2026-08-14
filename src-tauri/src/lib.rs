@@ -664,15 +664,27 @@ pub fn run(cli_args: CliArgs) {
     // That would make the headless path
     // (--transcribe-file/--list-devices/--list-models) a silent no-op whenever the
     // app is already open, so skip it in headless mode and run a standalone
-    // instance instead.
+    // instance instead. Semantic controls are intentionally fire-and-forget:
+    // this callback supplies no cold-start, readiness, or acknowledgement path.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if args.iter().any(|a| a == "--toggle-transcription") {
-                signal_handle::send_transcription_input(app, "transcribe", "CLI");
-            } else if args.iter().any(|a| a == "--cancel") {
-                crate::utils::cancel_current_operation(app);
-            } else {
-                show_main_window(app);
+            match cli::running_instance_command(&args) {
+                Ok(cli::RunningInstanceCommand::StartOrStop { target }) => {
+                    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                        coordinator.start_or_stop(target);
+                    } else {
+                        log::warn!(
+                            "Ignoring semantic transcription control before coordinator initialization"
+                        );
+                    }
+                }
+                Ok(cli::RunningInstanceCommand::Cancel) => {
+                    crate::utils::cancel_current_operation(app);
+                }
+                Ok(cli::RunningInstanceCommand::Show) => show_main_window(app),
+                Err(error) => {
+                    log::warn!("Ignoring malformed running-instance arguments: {error}");
+                }
             }
         }));
     }
