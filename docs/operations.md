@@ -10,8 +10,8 @@ used independently during A-25 laptop operations.
 ## Product and reproducible inputs
 
 The product preserves Handy's local ASR, selected model and dictated language,
-history and WAV retention, Herdr delivery, the
-Left-Control q mode bridge, and the A-25 workstation/laptop path. It supports the
+history and WAV retention, Herdr delivery, externally owned qq/Herdr q mode
+controls, and the A-25 workstation/laptop path. It supports the
 private Linux/X11 workflow only; it has no public release, updater, alternate
 artifact download, other-platform, or translated-UI contract.
 
@@ -160,10 +160,13 @@ ops/install/install-local.sh
 ```
 
 It installs the AppDir at `~/.local/opt/qq-dictation/Handy.AppDir`, launchers
-under `~/.local/bin`, and `handy-ptt.service` under
-`~/.config/systemd/user`. It preserves existing app data, ASR models, history,
-WAV policy, and logs. Replaced launchers, bridge, service, settings, and prior
-AppDir receive retained backups before replacement. There is no implicit
+under `~/.local/bin`, and `handy.service` under `~/.config/systemd/user`.
+The direct user service starts `handy --start-hidden` at login and is the
+lifecycle/readiness owner. Migration stops and disables the retired
+`handy-ptt.service`, removes only its active unit and bridge script, and leaves
+existing backup artifacts intact. It preserves existing app data, ASR models,
+history, WAV policy, and logs. Replaced launchers, direct service, settings, and
+prior AppDir receive retained backups before replacement. There is no implicit
 update: every update is a clean contained build followed by this installer.
 
 The installer enables Herdr binding, push-to-talk, auto-submit, and the
@@ -206,12 +209,13 @@ isolated. Both semantic commands are fire-and-forget controls for an
 already-running instance only, with no cold-start, readiness, or acknowledgement
 claim.
 
-The installed Left-Control q mode bridge and realtime signal path remain
-unchanged and supported. Left-Control arms/exits q mode, Space starts/stops, and
-Delete cancels while armed. The realtime signal contract remains prepare `SIGRTMIN+2`, mode-on `+3`,
-mode-off `+4`, Space `+5`, and Delete `+6`; the legacy PTT pair remains
-`SIGRTMIN`/`+1`. App or bridge replacement returns q mode to off and releases
-dynamic grabs.
+qq/Herdr owns workstation q mode and invokes the semantic commands above; the
+qq-dictation workstation install owns no Left-Control or other mode-key grab.
+`handy.service`, rather than a semantic command, keeps one hidden app instance
+ready across login. The app retains the realtime prepare/mode/action signal
+handlers as a dormant compatibility seam, but no installed workstation service
+sends those signals. The A-25 laptop's separate configured controls remain as
+documented in the remote laptop guide.
 
 The `transcription_history` table remains the source for the latest 1,000
 successful takes, including older second-pass pairs that still have prompt and

@@ -15,9 +15,9 @@ pub fn ptt_stop_signal() -> i32 {
     libc::SIGRTMIN() + 1
 }
 
-// Visible Space dictation mode (qq-dictation). Realtime signal numbers
-// preserve safety ordering when several are pending: prepare, commit, off,
-// Space, then Delete.
+// Dormant compatibility seam for the retired workstation key bridge. Realtime
+// signal numbers preserve safety ordering when several are pending: prepare,
+// commit, off, Space, then Delete.
 pub fn mode_prepare_signal() -> i32 {
     libc::SIGRTMIN() + 2
 }

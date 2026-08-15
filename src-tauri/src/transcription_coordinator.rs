@@ -133,8 +133,8 @@ enum Command {
         owner: OperationOwner,
         outcome: OperationOutcome,
     },
-    // Visible Space dictation mode (qq-dictation). Left-Control arms/exits;
-    // while armed, Space toggles recording and Delete cancels active local work.
+    // Dormant realtime-signal compatibility seam for the retired workstation
+    // key bridge. Installed q mode uses semantic CLI controls instead.
     ModePrepare,
     ModeOn,
     ModeOff,
@@ -552,7 +552,7 @@ impl TranscriptionCoordinator {
                 let mut pending_release: Option<PendingRelease> = None;
                 let mut active_remote: Option<ActiveRemote> = None;
                 let mut terminals = VecDeque::new();
-                // Visible Space dictation mode defaults off on every app start.
+                // The dormant realtime compatibility mode defaults off on every start.
                 let mut prepared = false;
                 let mut armed = false;
 
