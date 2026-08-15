@@ -1,1 +1,0 @@
-/home/qqp/projects/qq/CONCEPTS.md
