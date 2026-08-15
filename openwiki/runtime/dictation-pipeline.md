@@ -28,18 +28,20 @@ stateDiagram-v2
 Exact local entrypoints are:
 
 - `shortcut::handler::handle_shortcut_event` → `TranscriptionCoordinator::send_input`.
-- `signal_handle::send_transcription_input` for `SIGUSR1`, `SIGUSR2`, and forwarded `--toggle-transcription`.
-- realtime `SIGRTMIN` and `SIGRTMIN+1` for PTT press and release.
-- `TranscriptionCoordinator::{mode_prepare, mode_on, mode_off, mode_space, mode_delete}` for `SIGRTMIN+2` through `SIGRTMIN+6`.
-- `commands::cancel_operation`, tray or CLI cancellation → `utils::cancel_current_operation` → `request_local_cancel`.
+- `signal_handle::send_transcription_input` for `SIGUSR1`, `SIGUSR2`, and realtime `SIGRTMIN`/`SIGRTMIN+1` PTT press/release.
+- Forwarded `--toggle-transcription [--herdr-pane PANE_ID]` → `cli::running_instance_command` → `TranscriptionCoordinator::start_or_stop`.
+- `TranscriptionCoordinator::{mode_prepare, mode_on, mode_off, mode_space, mode_delete}` for the dormant `SIGRTMIN+2` through `SIGRTMIN+6` compatibility seam.
+- `commands::cancel_operation`, tray, or targetless CLI `--cancel` → `utils::cancel_current_operation` → `request_local_cancel`.
 
 Remote methods use the same worker but add request and connection ownership; protocol details are in [Remote and delivery](remote-and-delivery.md).
 
-## Input timing and dictation mode
+## Input timing and local controls
 
 All pressed `Command::Input` events share a **30 ms debounce**. PTT release for the currently recording binding is delayed by **50 ms**; a same-binding press during that grace cancels the pending release. This absorbs X11 autorepeat release and press bursts. A genuine release stops exactly once after the grace timeout.
 
-Visible dictation mode is an independent `prepared` and `armed` protocol, reset off at every app start:
+The current workstation q mode is owned by qq/Herdr, which invokes semantic CLI controls against the already-running app. On `Idle`, `--toggle-transcription --herdr-pane PANE_ID` validates the public pane ID and starts with `StartTarget::ExplicitPane`; the no-pane form uses `StartTarget::Auto`. While the matching `transcribe` owner is recording, the same command stops and ignores the caller's current pane, preserving the start target. During processing or remote ownership it does nothing. `--cancel` is idempotent, targetless, and affects only local recording or processing.
+
+The app still retains an independent `prepared` and `armed` realtime-signal protocol, reset off at every app start, as a dormant compatibility seam:
 
 1. `ModePrepare` is accepted only while neither prepared nor armed, then publishes `prepared` readiness.
 2. `ModeOn` requires prepared, sets armed, shows the armed overlay if idle, and publishes `armed`.
@@ -47,7 +49,7 @@ Visible dictation mode is an independent `prepared` and `armed` protocol, reset 
 4. Armed `Delete` cancels only locally owned recording or processing.
 5. `ModeOff` clears both flags, publishes `ready`, and cancels locally owned work; it does not cancel remote ownership.
 
-Realtime signal numbers are deliberately ordered prepare, on, off, Space, Delete. `signal_handle::setup_signal_handler` registers the ordinary and realtime signals, its signal thread maps each number to `send_transcription_input` or the corresponding coordinator mode method, and all paths therefore enter the serialized `Command` channel. `overlay::clear_dictation_overlay_ready` runs before this registration, and the React overlay invokes `mark_dictation_overlay_ready` only after all listeners are installed.
+Realtime signal numbers remain deliberately ordered prepare, on, off, Space, Delete. `signal_handle::setup_signal_handler` registers the ordinary and realtime signals, its signal thread maps each number to `send_transcription_input` or the corresponding coordinator mode method, and all paths therefore enter the serialized `Command` channel. `overlay::clear_dictation_overlay_ready` runs before this registration, and the React overlay invokes `mark_dictation_overlay_ready` only after all listeners are installed. The current installer sends none of these mode signals; [installation](../operations/build-install-check.md#per-user-installation) starts the app directly with `handy.service`.
 
 ## Capture, VAD, and microphone lifetime
 
@@ -149,7 +151,7 @@ Failure surfaces are narrow:
 
 ## Extension points
 
-- **New local trigger:** route it through `send_input` or a mode method; do not call `ACTION_MAP` directly.
+- **New local trigger:** route ordinary key/signal inputs through `send_input`; semantic toggles through `start_or_stop(StartTarget)`; compatibility-mode actions through a mode method. Do not call `ACTION_MAP` directly. Preserve Idle-only explicit-target validation, stop-time target ignorance, and remote-owner isolation.
 - **New action:** add a `ShortcutAction` to `ACTION_MAP`, but preserve coordinator ownership for dictation-capable actions.
 - **Capture policy or VAD:** update `VadPolicy`, `VadConfig::prepare`, local and remote policy selection, and frame-order tests together.
 - **Streaming engine:** extend `LoadedEngine`, load and batch dispatch, capability reporting, stream worker behavior, fallback semantics, and model metadata.
@@ -162,6 +164,7 @@ Failure surfaces are narrow:
 Run module filters from the repository root:
 
 ```bash
+cargo test --manifest-path src-tauri/Cargo.toml cli::tests
 cargo test --manifest-path src-tauri/Cargo.toml transcription_coordinator::tests
 cargo test --manifest-path src-tauri/Cargo.toml managers::audio::tests
 cargo test --manifest-path src-tauri/Cargo.toml managers::transcription::tests
@@ -172,4 +175,4 @@ cargo test --manifest-path src-tauri/Cargo.toml overlay::tests
 cargo test --manifest-path src-tauri/Cargo.toml actions::tests
 ```
 
-These cover ownership and autorepeat, shared remote VAD routing, feed-before-finalize FIFO, resampler isolation, text cleanup, signal ordering, overlay geometry, cancellation polling, and streaming-overlay selection. They do **not** prove microphone permission behavior, first-sample latency, actual mute tools, live VAD quality, accelerator execution, X11 signal delivery, or GTK/WebKit overlay behavior; validate only the changed boundary on representative Linux hardware.
+These cover semantic argument pairing and classification, explicit start-target retention, targetless local cancellation, ownership and autorepeat, shared remote VAD routing, feed-before-finalize FIFO, resampler isolation, text cleanup, signal ordering, overlay geometry, cancellation polling, and streaming-overlay selection. They do **not** prove microphone permission behavior, first-sample latency, actual mute tools, live VAD quality, accelerator execution, X11 signal delivery, or GTK/WebKit overlay behavior; validate only the changed boundary on representative Linux hardware.

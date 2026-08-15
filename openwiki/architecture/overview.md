@@ -78,7 +78,7 @@ Details live in [Models](../domains/models.md), [History and settings](../domain
 
 `tauri.conf.json` declares no static windows. `run` creates `main`; `overlay::create_recording_overlay` creates non-focusable `recording_overlay` using `src/overlay/index.html`. Vite builds both `index.html` and `src/overlay/index.html`; frontend entrypoints are `src/main.tsx` and `src/overlay/main.tsx`.
 
-A second desktop invocation is handled by `tauri_plugin_single_instance`: `--toggle-transcription` routes to `signal_handle::send_transcription_input`, `--cancel` to centralized local cancellation, and other invocations show and focus `main`. Headless mode skips this plugin so a running desktop instance cannot turn a one-shot command into a silent no-op.
+A second desktop invocation is handled by `tauri_plugin_single_instance`. `cli::running_instance_command` reparses forwarded arguments: `--toggle-transcription` dispatches `TranscriptionCoordinator::start_or_stop`, optional `--herdr-pane` supplies an explicit start target, `--cancel` requests local-only cancellation, and other invocations show and focus `main`. These semantic controls are fire-and-forget and require an initialized running instance; they provide no cold start, readiness, or acknowledgement. Headless mode skips this plugin so a running desktop instance cannot turn a one-shot command into a silent no-op.
 
 Window close is **close-to-hide**: `CloseRequested` is prevented and the window is hidden. Theme changes refresh the tray icon. The tray can reopen settings or quit, and startup refuses an unreachable hidden state when tray visibility is disabled. Settings synchronize autostart; CLI visibility flags are runtime overrides, not persisted settings.
 
