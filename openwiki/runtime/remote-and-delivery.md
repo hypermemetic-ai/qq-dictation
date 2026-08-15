@@ -1,7 +1,7 @@
 ---
 type: Runtime and protocol reference
 title: Remote dictation and target-safe delivery
-description: Source-grounded contract for local PTT, remote laptop ingress, framed protocol v1, Herdr target binding, laptop-local injection, installers, services, and fail-closed delivery behavior.
+description: Source-grounded contract for workstation semantic controls, remote laptop PTT and ingress, framed protocol v1, Herdr target binding, laptop-local injection, installers, services, and fail-closed delivery behavior.
 tags: [runtime, remote-dictation, ptt, herdr, x11, security]
 ---
 
@@ -17,11 +17,11 @@ This boundary turns local X11 controls or laptop audio into one coordinator-owne
 | `actions::{start,finish}_remote_operation` and coordinator `remote_*` methods | Enforce global local/remote exclusivity, audio/sample/lifetime limits, processing, cancellation, ready-value ownership, and consuming commit. |
 | `handy-remote-stream.py` | SSH-invoked, policy-free, bidirectional byte bridge between stdio and the app socket. |
 | `handy-remote-client.py` | Laptop X11 state machine, PipeWire capture, SSH transport, strict response validation, Herdr window gate, and optional one-shot local injection. |
-| `handy-ptt-bridge.py` | Workstation-local `Control_L` dictation-mode bridge using readiness state, Unix signals, and passive X11 grabs. |
-| `target_binding.rs` | Local start-bound pane capture and remote start/commit Herdr session identity checks. |
+| `cli::running_instance_command` and coordinator `start_or_stop` | Parse qq/Herdr semantic controls, validate explicit panes only for an idle start, and preserve local/remote ownership. |
+| `target_binding.rs` | Local Auto focus capture, explicit start-bound pane storage, and remote start/commit Herdr session identity checks. |
 | `clipboard.rs`, `input.rs` | Herdr, direct typing, clipboard paste, external script, optional clipboard copy, and submit-key effects. |
 
-`lib.rs` starts ingress as managed application state; the socket is not a Tauri command and exposes no TCP listener. Installed process entrypoints are `~/.local/bin/handy-remote-stream.py`, `handy-remote-client.py`, and `handy-ptt-bridge.py`.
+`lib.rs` starts ingress as managed application state; the socket is not a Tauri command and exposes no TCP listener. Installed remote entrypoints are `~/.local/bin/handy-remote-stream.py` and laptop-side `handy-remote-client.py`. The workstation application itself is kept ready by `handy.service`; no workstation key bridge is installed.
 
 ## Protocol v1
 
@@ -69,13 +69,13 @@ sequenceDiagram
 
 *The owning connection carries audio through a staged, one-shot commit; SSH only transports bytes.*
 
-## PTT clients
+## Local controls and remote PTT
 
-### Workstation-local bridge
+### Workstation q mode
 
-`handy-ptt-bridge.py` permanently grabs **Left Control (`Control_L`)**. Existing prose that says Right Control is stale; the implementation, service description, and current behavior are Left Control. A distinct-press tracker suppresses X11 autorepeat.
+qq/Herdr owns workstation q mode and invokes `handy --toggle-transcription --herdr-pane "$HERDR_PANE_ID"` or targetless `handy --cancel` against an already-running instance. The app grabs no workstation mode key. These controls are fire-and-forget: malformed or premature forwarding is ignored, and process lifecycle/readiness belongs to `handy.service`, not to the command.
 
-Arming is a two-phase handshake: ensure the app PID/readiness file exists, signal prepare, wait for `prepared`, atomically grab Space and Delete for modifiers `0`, `LockMask`, `Mod2Mask`, and `LockMask | Mod2Mask`, signal mode-on, then require `armed`. X errors are asynchronous: `grab_keys` supplies an `onerror` recorder to every passive grab and calls `dpy.sync()`; any recorded or synchronous `XError` causes every attempted key/modifier pair to be ungrabbed followed by another sync. Any grab/readiness failure sends mode-off and releases grabs. While off, Space/Delete are ungrabbed and pass through normally. In armed mode Space starts/stops local recording, Delete cancels locally owned recording or processing, and Left Control exits; Space cannot invert processing or affect remote work. PID replacement, readiness loss, shutdown, or bridge restart resets trackers, releases grabs, and never signals a replacement process as though it owned the old handshake. See [Dictation pipeline](dictation-pipeline.md) for the app-side prepared/armed signal map and `signal_handle::setup_signal_handler` dispatch.
+An explicit pane is strictly validated only when the command starts an idle recorder. A stop ignores its supplied pane and keeps the original start target; busy processing and remote-owned stages ignore the toggle. Cancel affects only workstation-local work. The app-side realtime prepare/armed signal protocol remains dormant compatibility behavior, described in [Dictation pipeline](dictation-pipeline.md#input-timing-and-local-controls), but the installed workstation service does not drive it.
 
 ### Remote laptop client
 
@@ -101,7 +101,7 @@ stateDiagram-v2
 
 ### Local workstation Herdr
 
-When Herdr binding is enabled, `begin_capture` mints a recording token and asynchronously captures the exact focused pane only if the active X11 window title is `herdr`. `CaptureOutcome` is `Legacy`, `Bound(pane_id)`, or `Failed(reason)`; up to eight token results are retained. Stop consumes the token associated with that recording. A bound or failed capture **never falls back** to OS input. Bound delivery uses exactly that start-selected pane, collapses CR/LF to spaces, and optionally includes one trailing carriage return in the same `herdr pane send-text` call.
+Every successful local start mints a recording token. `StartTarget::Auto` calls `begin_auto_capture` and asynchronously captures the focused pane only when Herdr binding is enabled and the active X11 window title is `herdr`. `StartTarget::ExplicitPane` calls `begin_explicit_target` and synchronously stores the validated public pane without consulting focus, X11, or Herdr session state. `CaptureOutcome` is `Legacy`, `Bound(pane_id)`, or `Failed(reason)`; up to eight token results are retained. Stop consumes the token associated with that recording and never recaptures or replaces its target. A bound or failed capture **never falls back** to OS input. Bound delivery uses exactly that start-selected pane, collapses CR/LF to spaces, and optionally includes one trailing carriage return in the same `herdr pane send-text` call.
 
 ### Remote Herdr
 
@@ -130,28 +130,33 @@ Clipboard paste first snapshots existing text, or an image when no text exists. 
 
 `install-remote-workstation.py` atomically installs only the mode-0755 SSH stream helper under an operator-owned home, rejects foreign/non-regular destinations, and preserves timestamped backups; it intentionally does not modify Herdr or SSH configuration. `install-remote-laptop.py` validates a complete Herdr or local config, creates mode-0600 config under a mode-0700 directory, refuses silent config overwrite, installs the mode-0755 client and mode-0644 `handy-remote-client.service`, then daemon-reloads, enables, restarts, and verifies a stable running PID. Both installers use atomic replacement and reject unsafe ownership/type.
 
-The local installer installs `handy-ptt-bridge.py` and `handy-ptt.service`; both PTT and remote-client user services use `DISPLAY=:0`, restart on failure after one second, and are wanted by `default.target`. Operational rollback and the fact that multi-file/service installation is not one transaction are covered in [Build, install, and Check](../operations/build-install-check.md).
+The local installer retires `handy-ptt.service` and its active bridge script, then installs `handy.service`, which directly starts `handy --start-hidden` with `DISPLAY=:0`, restarts on failure after one second, and is wanted by `default.target`. Existing legacy backup artifacts are retained. The laptop's separate remote-client service remains unchanged. Operational rollback and the fact that multi-file/service installation is not one transaction are covered in [Build, install, and Check](../operations/build-install-check.md).
 
 When changing this boundary:
 
 - Protocol: update Rust request/response serde types and bounds, Python encoder/decoder/state transitions, `docs/remote-dictation-protocol.md`, and both Rust/Python negative tests; preserve strict ownership and no-retry semantics or version the protocol.
 - Delivery mode or injection plan: update `RemoteDeliveryMode`, coordinator staging/commit, `RemoteInjectionPlan`, laptop config validation/injector, installer arguments, generated operational docs, and tests.
 - Herdr identity/pane schema: update status/snapshot parsers, equality and bounds tests, and local-versus-remote targeting tests; do not merge the two capture models.
-- PTT key/handshake: update both Python clients, service descriptions, app signals/readiness contract, installers, and tests. `Control_L` is current.
+- Workstation q-mode control: update `CliArgs`, `running_instance_command`, `StartTarget`, coordinator classification, target capture, qq/Herdr callers, and installer/service tests. Do not add a workstation key grab or make a stop depend on its caller's pane.
+- Remote laptop PTT key/handshake: update `handy-remote-client.py`, its service/config docs, installer, and Python tests. `Control_L` is current on the laptop only.
 - Local paste method/tool: update settings enums/defaults, `clipboard.rs` routing, generated bindings and settings UI described in [Frontend and IPC](../frontend/app-and-api.md).
 
 ## Focused tests and narrow validation
 
 ```bash
+cargo test --manifest-path src-tauri/Cargo.toml cli::tests
+cargo test --manifest-path src-tauri/Cargo.toml transcription_coordinator::tests
 cargo test --manifest-path src-tauri/Cargo.toml remote::tests
 cargo test --manifest-path src-tauri/Cargo.toml target_binding::tests
 cargo test --manifest-path src-tauri/Cargo.toml clipboard::tests
-python3 -m unittest tests.test_handy_ptt_bridge
+python3 -m unittest tests.test_install_local_service
 python3 -m unittest tests.test_remote_helpers
 python3 -m unittest tests.test_remote_laptop_client
 python3 -m unittest tests.test_remote_installers
 ```
 
-Named contract tests include coordinator `remote_audio_chunks_and_total_are_bounded_without_truncation`, `terminal_status_is_bound_to_connection_and_expires`, and `ready_retains_exclusive_processing_ownership_until_one_commit_attempt`; ingress `read_timeout_is_tolerated_only_between_idle_session_frames` and `local_injection_is_framed_only_on_one_consuming_owner_response`; and Python `test_start_audio_finish_ready_commit_and_terminal_states_are_ordered`, `test_local_focus_refusal_before_or_after_handoff_never_injects`, `test_local_adapter_failure_is_one_marked_attempt_without_retry_or_fallback`, `test_local_reacquisition_failure_after_injection_fails_without_repeat`, and `test_window_mismatch_at_ready_sends_no_commit_and_releases_resources`. PTT changes must also update `ReadyTests.test_marker_must_name_the_current_process`, `SignalConstantTests.test_mode_signals_are_distinct_realtime_signals_within_bounds`, `GrabTests`, and coordinator `mode_space_and_delete_apply_only_to_local_owner`.
+Named contract tests include coordinator `remote_audio_chunks_and_total_are_bounded_without_truncation`, `terminal_status_is_bound_to_connection_and_expires`, and `ready_retains_exclusive_processing_ownership_until_one_commit_attempt`; ingress `read_timeout_is_tolerated_only_between_idle_session_frames` and `local_injection_is_framed_only_on_one_consuming_owner_response`; and Python `test_start_audio_finish_ready_commit_and_terminal_states_are_ordered`, `test_local_focus_refusal_before_or_after_handoff_never_injects`, `test_local_adapter_failure_is_one_marked_attempt_without_retry_or_fallback`, `test_local_reacquisition_failure_after_injection_fails_without_repeat`, and `test_window_mismatch_at_ready_sends_no_commit_and_releases_resources`. Remote laptop PTT changes must also update its mode-key, grab, and state-transition suites. Changes to the dormant app signal compatibility seam require `signal_handle::tests` and coordinator `mode_space_and_delete_apply_only_to_local_owner`.
 
-Together these cover strict framing/version/bounds, socket ownership and replacement, connection/request ownership, terminal expiry, coordinator lifecycle, pane/identity validation, one-shot commit/injection, X11 state machines and grabs, short writes, config constraints, atomic installs, and service health. For a protocol-only change, start with the remote Rust filter plus `test_remote_helpers` and `test_remote_laptop_client`; add installer tests only when installed files/config/services change. Do not claim end-to-end delivery until manually proven with real SSH, X11, PipeWire, Herdr/Ghostty, and the target application.
+For workstation semantic controls, retrieve coordinator tests `semantic_start_validates_and_retains_the_exact_explicit_target`, `semantic_stop_and_busy_stages_never_inspect_the_callers_target`, and `targetless_local_cancel_is_idempotent_and_remote_isolated`, plus CLI argument-pairing tests and `target_binding::tests::captures_are_per_recording_and_evicted_in_order`. The local service suite checks bridge retirement, repeated migration, exact single-process executable/readiness matching, settings preservation, and direct hidden startup.
+
+Together these cover strict framing/version/bounds, socket ownership and replacement, connection/request ownership, terminal expiry, coordinator lifecycle, pane/identity validation, one-shot commit/injection, the remote laptop X11 state machine and grabs, semantic workstation controls, short writes, config constraints, atomic installs, and service health. For a protocol-only change, start with the remote Rust filter plus `test_remote_helpers` and `test_remote_laptop_client`; add installer tests only when installed files/config/services change. Do not claim end-to-end delivery until manually proven with real SSH, X11, PipeWire, Herdr/Ghostty, and the target application.

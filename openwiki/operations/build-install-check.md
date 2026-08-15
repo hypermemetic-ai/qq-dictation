@@ -74,19 +74,18 @@ After verifying the intended AppDir:
 ops/install/install-local.sh
 ```
 
-Prerequisites include `/usr/bin/python3` with `Xlib`, `/usr/bin/setsid`, a working systemd user manager, X11, GTK layer-shell runtime, and `xdotool`. The sequence is exact and not globally atomic:
+Prerequisites include `/usr/bin/python3`, a working systemd user manager, X11, GTK layer-shell runtime, and `xdotool`. The sequence is exact and not globally atomic:
 
-1. Require executable `.local-build/Handy.AppDir/AppRun`; validate Python Xlib and `setsid`.
-2. Install/update `~/.local/bin/handy-remote-stream.py` through the workstation installer.
-3. Copy the AppDir to sibling staging; stop `handy-ptt.service`; kill `handy`.
-4. Rename an existing install to `~/.local/opt/qq-dictation/Handy.AppDir.backup.<UTC>`; rename staging to `Handy.AppDir`.
-5. Preserve first-seen `.before-qq-dictation` copies of the launcher, PTT bridge, and unit; install replacements under `~/.local/bin` and `~/.config/systemd/user`.
-6. Back up existing settings as `settings_store.json.before-qq-dictation.<UTC>`, or create an empty private store. Atomically rewrite four policy keys: `overlay_style=minimal`, `herdr_binding_enabled=true`, `push_to_talk=true`, `auto_submit=true`; preserve unrelated JSON.
-7. `systemctl --user daemon-reload`, enable/start `handy-ptt.service`, launch `handy --start-hidden`, and require a running `handy` whose `/proc/<pid>/exe` is the newly installed binary.
+1. Require executable `.local-build/Handy.AppDir/AppRun` and install/update `~/.local/bin/handy-remote-stream.py` through the workstation installer.
+2. Copy the AppDir to sibling staging. Stop and disable retired `handy-ptt.service`, stop `handy.service`, kill only this user's `handy` processes, wait up to five seconds for exit, and remove the stale readiness marker.
+3. Rename an existing install to `~/.local/opt/qq-dictation/Handy.AppDir.backup.<UTC>.<pid>`; rename staging to `Handy.AppDir`.
+4. Preserve first-seen `.before-qq-dictation` copies of the launcher and direct unit; install `handy` and `handy.service`. Remove only the active legacy bridge script and `handy-ptt.service`; keep their backup artifacts.
+5. Back up existing settings as `settings_store.json.before-qq-dictation.<UTC>`, or create an empty private store. Atomically rewrite four policy keys: `overlay_style=minimal`, `herdr_binding_enabled=true`, `push_to_talk=true`, `auto_submit=true`; preserve unrelated JSON.
+6. Reload systemd, enable and start `handy.service`, then require exactly one user-owned `handy` whose `/proc/<pid>/exe` is the installed binary and whose runtime readiness marker contains that PID plus `ready`, `prepared`, or `armed`.
 
 App data under `${XDG_DATA_HOME:-$HOME/.local/share}/com.pais.handy`—models, history, recordings and logs—is not replaced. See [History and settings](../domains/history-settings.md) for persisted ownership.
 
-The service runs `handy-ptt-bridge.py` with `DISPLAY=:0`, restart-on-failure and one-second delay. Current source and the installed success message bind **Left-Control**, Space, and Delete; older Right-Control prose is stale.
+`handy.service` runs `%h/.local/bin/handy --start-hidden` directly with `DISPLAY=:0`, restart-on-failure and one-second delay. It owns app lifecycle and readiness. qq/Herdr owns semantic workstation q-mode controls; this installer installs no key-grab bridge. The separate laptop remote client still owns its configured Left-Control/Space/Delete controls.
 
 ### Remote installers
 
@@ -105,7 +104,7 @@ There is no automatic rollback and no cross-boundary merge.
 
 - **Build failure:** installed product is untouched; remove no shared cache merely because the build failed.
 - **AppDir:** stop the service/application, move the failed AppDir aside, rename exactly one known `Handy.AppDir.backup.<UTC>` back to `Handy.AppDir`, then restart.
-- **Launcher, bridge, unit:** restore the corresponding `.before-qq-dictation` file. After restoring a unit, run `systemctl --user daemon-reload` and restart that service.
+- **Launcher or direct unit:** restore the corresponding `.before-qq-dictation` file. After restoring a unit, run `systemctl --user daemon-reload` and restart that service. Legacy bridge/unit backups are migration evidence, not active files to reinstall unless intentionally rolling back the whole control model.
 - **Settings:** restore one timestamped `settings_store.json.before-qq-dictation.<UTC>` as a whole file; do not merge guessed fields.
 - **Remote files:** restore the installer-produced `.before-qq-dictation.<UTC>.<pid>` regular-file backup; explicitly reload/restart and recheck service state.
 - **Cache:** use only the separately authorized staging/quarantine reversal. Never treat product rollback as cache rollback.

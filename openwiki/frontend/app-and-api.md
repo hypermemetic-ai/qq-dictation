@@ -102,8 +102,9 @@ Raw events bypass generated payload checking. When adding one, define a shared R
 |---|---|
 | `--start-hidden` | Runtime hide override. The app still shows the window when no tray is available. |
 | `--no-tray` | Runtime tray hide override, not persisted. |
-| `--toggle-transcription` | A second GUI instance forwards a transcription input to the running instance. |
-| `--cancel` | A second GUI instance cancels the running operation. |
+| `--toggle-transcription` | Fire-and-forget start/stop control for an already-running instance. Starts only from idle; stops only the matching local `transcribe` recording; busy/remote-owned work is unchanged. |
+| `--herdr-pane PANE_ID` | Requires `--toggle-transcription`. On an idle start, strictly validates and binds the exact public Herdr pane without focus capture; on stop, the supplied pane is ignored. |
+| `--cancel` | Targetless, idempotent cancellation of workstation-local recording or processing only; conflicts with toggle/pane flags. |
 | `--debug` | Runtime-only debug mode plus trace file/webview level; does not persist settings. |
 | `-f, --transcribe-file WAV` | Standalone headless transcription of 16 kHz mono 16-bit PCM WAV; no mic, VAD, download, windows, tray, overlay, signals, autostart, or single-instance forwarding. |
 | `--model ID` | Headless model override; otherwise uses persisted selected model. |
@@ -123,7 +124,7 @@ Headless exit codes are 0 success, 1 runtime/load/inference/serialization failur
 
 ### Windows, visibility, autostart
 
-The main Linux window is created hidden at 680×570 minimum, non-maximizable and resizable. Startup settings and CLI flags decide whether to show it; lack of an available tray forces visibility. Closing any window is intercepted and hides it rather than exiting. A normal second instance forwards toggle/cancel or shows/focuses main. Exit shuts down remote ingress and unloads the model. See [Architecture](../architecture/overview.md) for full process ownership.
+The main Linux window is created hidden at 680×570 minimum, non-maximizable and resizable. Startup settings and CLI flags decide whether to show it; lack of an available tray forces visibility. Closing any window is intercepted and hides it rather than exiting. A normal second instance reparses and forwards semantic toggle/cancel controls or shows/focuses main; controls sent before coordinator initialization are ignored and have no acknowledgement. Exit shuts down remote ingress and unloads the model. See [Architecture](../architecture/overview.md) for full process ownership.
 
 Tray visibility is persisted by `show_tray_icon` and applied immediately; `--no-tray` only overrides the current process. Autostart is synchronized from `autostart_enabled` at startup and changed immediately through the plugin. Backend calls currently discard enable/disable errors, so a persisted optimistic value is not proof that the desktop autostart entry changed.
 
