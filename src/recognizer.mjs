@@ -44,6 +44,41 @@ function parseHandyText(stdout) {
   return "";
 }
 
+const RIFF = Buffer.from("RIFF");
+const WAVE = Buffer.from("WAVE");
+
+/** 16-bit PCM mono WAVE. handy --transcribe-file requires this container. */
+export function encodePcm16MonoWav(pcm, sampleRate = 16_000) {
+  const data = Buffer.isBuffer(pcm) ? pcm : Buffer.from(pcm ?? []);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+export function asWavBytes(audio, sampleRate = 16_000) {
+  const bytes = Buffer.isBuffer(audio) ? audio : Buffer.from(audio ?? []);
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).equals(RIFF)
+    && bytes.subarray(8, 12).equals(WAVE)
+  ) {
+    return bytes;
+  }
+  return encodePcm16MonoWav(bytes, sampleRate);
+}
+
 export function createHandyRecognizer(config = {}) {
   const env = config.env ?? process.env;
   const handyBin = String(config.handyBin ?? defaultHandyBin(env));
@@ -55,10 +90,12 @@ export function createHandyRecognizer(config = {}) {
     async recognize(audio) {
       const bytes = Buffer.isBuffer(audio) ? audio : Buffer.from(audio ?? []);
       if (bytes.length === 0) return "";
+      const wavBytes = asWavBytes(bytes);
+      if (wavBytes.length <= 44) return "";
       const dir = await mkdtemp(join(tmpdir(), "qq-dictate."));
       const wav = join(dir, "utterance.wav");
       try {
-        await writeFile(wav, bytes);
+        await writeFile(wav, wavBytes);
         const child = spawnImpl(handyBin, ["--transcribe-file", wav, "--json"], {
           stdio: ["ignore", "pipe", "pipe"],
         });

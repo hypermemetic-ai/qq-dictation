@@ -29,5 +29,7 @@ speech, never a slash line and never a composer draft.
 ## Transport
 
 HTTP is this plugin's own prefix (`/qq/dictate`) on the loopback `webServer`.
-The phone reaches it the same way it already reaches qq. Audio is recognized
-on the host. The PWA stays fail-closed: no offline queue, no cached session.
+The phone reaches it the same way it already reaches qq. The browser captures
+16 kHz mono PCM and posts one RIFF WAVE on end. The host writes that file and
+asks Handy to transcribe it. Missing microphone fails closed (no recording UI).
+The PWA stays fail-closed: no offline queue, no cached session.
