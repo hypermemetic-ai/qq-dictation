@@ -195,26 +195,18 @@
     if (recording || starting) return;
     starting = true;
     try {
-      const status = await readStatus();
-      if (status.state === "recording") {
-        setRecording(true);
-        return;
-      }
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("qq-dictation: microphone is unavailable");
       }
+      await startMic();
+      setRecording(true);
+      const status = await readStatus();
+      if (status.state === "recording") return;
       const sessionId = bindSessionId || "";
       await postJson("/start", sessionId ? { sessionId } : {});
-      try {
-        await startMic();
-      } catch (error) {
-        await postJson("/cancel", {});
-        setRecording(false);
-        throw error;
-      }
-      setRecording(true);
     } catch {
       await stopCapture();
+      try { await postJson("/cancel", {}); } catch {}
       setRecording(false);
     } finally {
       starting = false;
