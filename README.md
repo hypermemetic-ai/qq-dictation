@@ -10,12 +10,13 @@ a DSH session id frozen at start.
 
 ## Surfaces
 
-- **Phone / PWA / mobile browser:** mic inside `#composer`, right of the
-  textarea, lower-right when the box is expanded. Tap starts and binds that
-  session. While recording the same control is X and cancels. Send stays on
-  the right and **ends** (stop, recognize, autosubmit).
-- **Desktop:** Right-Alt starts (last composer focus in this process, else
-  the resume session). Right-Alt again ends and autosubmits. Delete cancels.
+- **Phone / PWA / mobile browser:** mic icon inside `#composer`, right of the
+  textarea. Tap starts and binds that session. While recording the same
+  control is an X and cancels. There is no Send button; Enter submits.
+  Form submit still **ends** (stop, recognize, autosubmit).
+- **Desktop:** the mic is hidden. Right-Alt starts (last composer focus in
+  this process, else the resume session). Right-Alt again ends and
+  autosubmits. Delete cancels. Enter submits. No Send button.
 
 One live recording at a time. Bind is frozen at start. Navigating away does
 not retarget. A deleted bound session drops the result. Empty recognition

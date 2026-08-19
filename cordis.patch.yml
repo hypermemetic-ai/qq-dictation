@@ -1,0 +1,6 @@
+# qq-dictation profile layer. `dsh plugin add` activates this when the sibling
+# tree is present. Not named in bin/qq or qq/host.patch.yml.
+
+- insert:
+    - id: qq-dictation
+      name: '@hypermemetic-ai/qq-dictation'

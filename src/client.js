@@ -2,8 +2,6 @@
   "use strict";
 
   const PREFIX = "/qq/dictate";
-  const MIC = "Mic";
-  const CANCEL = "X";
   const TARGET_RATE = 16_000;
   let capture = null;
   let recording = false;
@@ -23,7 +21,6 @@
   const paint = () => {
     const button = dictateButton();
     if (!button) return;
-    button.textContent = recording ? CANCEL : MIC;
     button.setAttribute("aria-label", recording ? "Cancel dictation" : "Dictate");
     button.dataset.state = recording ? "recording" : "idle";
     document.querySelector("#composer")?.classList.toggle("is-dictating", recording);
