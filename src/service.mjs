@@ -28,13 +28,10 @@ export function parseSessionId(value) {
 export function resumeSessionId(env = process.env) {
   const home = String(env.DSH_HOME ?? "").trim();
   if (!home.startsWith("/")) return "";
-  for (const name of ["qq.session", "qq-console.session"]) {
-    try {
-      const id = parseSessionId(readFileSync(join(home, name), "utf8"));
-      if (id) return id;
-    } catch {
-      // Missing or unreadable resume file is not an error.
-    }
+  try {
+    return parseSessionId(readFileSync(join(home, "qq.session"), "utf8"));
+  } catch {
+    // Missing or unreadable resume file is not an error.
   }
   return "";
 }
