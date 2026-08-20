@@ -30,6 +30,9 @@ export function apply(ctx, config = {}) {
       path: basePath,
       handler,
     });
-    return unregister;
-  }, "qq-dictation: HTTP routes");
+    return async () => {
+      unregister();
+      await service.cancel();
+    };
+  }, "qq-dictation: HTTP routes and live bind");
 }

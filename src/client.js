@@ -6,6 +6,7 @@
   let capture = null;
   let recording = false;
   let starting = false;
+  let boundSessionId = "";
   let pollTimer = 0;
 
   const pageSessionId = () => {
@@ -23,7 +24,10 @@
     if (!button) return;
     button.setAttribute("aria-label", recording ? "Cancel dictation" : "Dictate");
     button.dataset.state = recording ? "recording" : "idle";
-    document.querySelector("#composer")?.classList.toggle("is-dictating", recording);
+    const form = document.querySelector("#composer");
+    form?.classList.toggle("is-dictating", recording);
+    const prompt = document.querySelector("#prompt");
+    if (prompt instanceof HTMLTextAreaElement) prompt.required = !recording;
   };
 
   const postJson = async (path, body) => {
@@ -199,14 +203,15 @@
         throw new Error("qq-dictation: microphone is unavailable");
       }
       await startMic();
+      boundSessionId = bindSessionId || pageSessionId();
       setRecording(true);
       const status = await readStatus();
       if (status.state === "recording") return;
-      const sessionId = bindSessionId || "";
-      await postJson("/start", sessionId ? { sessionId } : {});
+      await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
     } catch {
       await stopCapture();
       try { await postJson("/cancel", {}); } catch {}
+      boundSessionId = "";
       setRecording(false);
     } finally {
       starting = false;
@@ -219,15 +224,25 @@
     setRecording(false);
     const live = await stopCapture();
     const wav = collectWav(live);
+    const send = () => fetch(`${PREFIX}/end`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "audio/wav" },
+      body: wav,
+    });
     try {
-      await fetch(`${PREFIX}/end`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "audio/wav" },
-        body: wav,
-      });
+      let response = await send();
+      // A dictation fiber may have reloaded while the phone kept capturing.
+      // Recreate only the session bind, then deliver the same local WAV.
+      if (response.status === 409 && boundSessionId) {
+        await postJson("/start", { sessionId: boundSessionId });
+        response = await send();
+      }
+      if (!response.ok) throw new Error(`dictation end failed (${response.status})`);
     } catch {
       try { await postJson("/cancel", {}); } catch {}
+    } finally {
+      boundSessionId = "";
     }
   };
 
@@ -235,6 +250,7 @@
     setRecording(false);
     await stopCapture();
     try { await postJson("/cancel", {}); } catch {}
+    boundSessionId = "";
   };
 
   const isPrompt = (node) => node && node.id === "prompt";
@@ -295,6 +311,14 @@
     try {
       const status = await readStatus();
       if (status.state === "recording" && !recording) setRecording(true);
+      if (status.state !== "recording" && recording && capture && !starting) {
+        starting = true;
+        try {
+          await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
+        } finally {
+          starting = false;
+        }
+      }
       if (status.state !== "recording" && recording && !capture) setRecording(false);
     } catch {}
   };
