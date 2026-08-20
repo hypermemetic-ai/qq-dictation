@@ -3,10 +3,20 @@
 
   const PREFIX = "/qq/dictate";
   const TARGET_RATE = 16_000;
+  const DESKTOP_TOGGLE_EVENT = "qq:desktop-dictation-toggle";
+  const FAILURE_VISIBLE_MS = 4_000;
+  const STATE_LABELS = Object.freeze({
+    idle: "",
+    starting: "Starting dictation…",
+    recording: "Recording · Space to send",
+    transcribing: "Transcribing…",
+    failure: "Dictation failed · Space to retry",
+  });
   let capture = null;
-  let recording = false;
-  let starting = false;
+  let clientState = "idle";
   let boundSessionId = "";
+  let failureTimer = 0;
+  let restarting = false;
   let pollTimer = 0;
 
   const pageSessionId = () => {
@@ -20,14 +30,48 @@
   const dictateButton = () => document.querySelector("#composer-dictate");
 
   const paint = () => {
+    const recording = clientState === "recording";
     const button = dictateButton();
-    if (!button) return;
-    button.setAttribute("aria-label", recording ? "Cancel dictation" : "Dictate");
-    button.dataset.state = recording ? "recording" : "idle";
+    if (button) {
+      const label = recording
+        ? "Cancel dictation"
+        : clientState === "starting"
+          ? "Starting dictation"
+          : clientState === "transcribing"
+            ? "Transcribing dictation"
+            : "Dictate";
+      button.setAttribute("aria-label", label);
+      button.dataset.state = clientState;
+    }
     const form = document.querySelector("#composer");
     form?.classList.toggle("is-dictating", recording);
+    if (form) form.dataset.dictationState = clientState;
+    const status = document.querySelector("#dictation-status");
+    if (status) {
+      status.dataset.state = clientState;
+      status.hidden = clientState === "idle";
+      status.replaceChildren(STATE_LABELS[clientState] || "");
+    }
     const prompt = document.querySelector("#prompt");
     if (prompt instanceof HTMLTextAreaElement) prompt.required = !recording;
+  };
+
+  const setState = (next) => {
+    if (failureTimer) {
+      window.clearTimeout(failureTimer);
+      failureTimer = 0;
+    }
+    clientState = next;
+    paint();
+    if (next === "failure") {
+      failureTimer = window.setTimeout(() => {
+        failureTimer = 0;
+        if (clientState === "failure") {
+          clientState = "idle";
+          paint();
+        }
+      }, FAILURE_VISIBLE_MS);
+    }
   };
 
   const postJson = async (path, body) => {
@@ -146,11 +190,6 @@
     return live;
   };
 
-  const setRecording = (next) => {
-    recording = next;
-    paint();
-  };
-
   const startMic = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("qq-dictation: microphone is unavailable");
@@ -196,32 +235,33 @@
   };
 
   const start = async (bindSessionId) => {
-    if (recording || starting) return;
-    starting = true;
+    if (clientState === "starting" || clientState === "recording" || clientState === "transcribing") return;
+    boundSessionId = bindSessionId || pageSessionId();
+    setState("starting");
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("qq-dictation: microphone is unavailable");
       }
       await startMic();
-      boundSessionId = bindSessionId || pageSessionId();
-      setRecording(true);
       const status = await readStatus();
-      if (status.state === "recording") return;
-      await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
+      if (status.state !== "recording") {
+        await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
+      }
+      setState("recording");
     } catch {
       await stopCapture();
       try { await postJson("/cancel", {}); } catch {}
       boundSessionId = "";
-      setRecording(false);
-    } finally {
-      starting = false;
+      setState("failure");
     }
   };
 
   const end = async () => {
+    if (clientState === "starting" || clientState === "transcribing") return;
+    const recording = clientState === "recording";
     const status = recording ? { state: "recording" } : await readStatus();
     if (status.state !== "recording" && !recording) return;
-    setRecording(false);
+    setState("transcribing");
     const live = await stopCapture();
     const wav = collectWav(live);
     const send = () => fetch(`${PREFIX}/end`, {
@@ -238,16 +278,21 @@
         await postJson("/start", { sessionId: boundSessionId });
         response = await send();
       }
-      if (!response.ok) throw new Error(`dictation end failed (${response.status})`);
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      if (!response.ok) throw new Error(payload.error || `dictation end failed (${response.status})`);
+      if (payload.sent !== true) throw new Error(payload.message || "dictation was not sent");
+      setState("idle");
     } catch {
       try { await postJson("/cancel", {}); } catch {}
+      setState("failure");
     } finally {
       boundSessionId = "";
     }
   };
 
   const cancel = async () => {
-    setRecording(false);
+    setState("idle");
     await stopCapture();
     try { await postJson("/cancel", {}); } catch {}
     boundSessionId = "";
@@ -265,11 +310,11 @@
     const dictate = closest(target, "#composer-dictate");
     if (dictate) {
       event.preventDefault();
-      if (recording) void cancel();
+      if (clientState === "recording") void cancel();
       else void start(pageSessionId());
       return;
     }
-    if (recording && closest(target, "#composer-submit")) {
+    if (clientState === "recording" && closest(target, "#composer-submit")) {
       event.preventDefault();
       event.stopPropagation();
       void end();
@@ -279,20 +324,25 @@
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!form || form.id !== "composer") return;
-    if (!recording) return;
+    if (clientState !== "recording") return;
     event.preventDefault();
     event.stopPropagation();
     void end();
   }, true);
 
+  document.addEventListener(DESKTOP_TOGGLE_EVENT, () => {
+    if (clientState === "recording") void end();
+    else void start(pageSessionId());
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.code === "AltRight") {
       event.preventDefault();
-      if (recording) void end();
+      if (clientState === "recording") void end();
       else void start("");
       return;
     }
-    if (event.key === "Delete" && recording) {
+    if (event.key === "Delete" && clientState === "recording") {
       event.preventDefault();
       void cancel();
     }
@@ -310,16 +360,20 @@
   const poll = async () => {
     try {
       const status = await readStatus();
-      if (status.state === "recording" && !recording) setRecording(true);
-      if (status.state !== "recording" && recording && capture && !starting) {
-        starting = true;
+      if (status.state === "recording" && clientState === "idle") setState("recording");
+      if (status.state !== "recording" && clientState === "recording" && capture && !restarting) {
+        restarting = true;
         try {
           await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
+        } catch {
+          await stopCapture();
+          boundSessionId = "";
+          setState("failure");
         } finally {
-          starting = false;
+          restarting = false;
         }
       }
-      if (status.state !== "recording" && recording && !capture) setRecording(false);
+      if (status.state !== "recording" && clientState === "recording" && !capture) setState("idle");
     } catch {}
   };
 
