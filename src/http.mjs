@@ -71,10 +71,15 @@ function routeOf(basePath, pathname) {
   if (pathname === `${basePath}/client.js`) return "client";
   if (pathname === `${basePath}/focus`) return "focus";
   if (pathname === `${basePath}/start`) return "start";
+  if (pathname === `${basePath}/resume`) return "resume";
   if (pathname === `${basePath}/chunk`) return "chunk";
   if (pathname === `${basePath}/end`) return "end";
   if (pathname === `${basePath}/cancel`) return "cancel";
   return "";
+}
+
+function requestLease(req) {
+  return String(req.headers["x-qq-dictation-lease"] ?? "").trim();
 }
 
 export const internals = Object.freeze({
@@ -82,6 +87,7 @@ export const internals = Object.freeze({
   SECURITY_HEADERS,
   routeOf,
   sameOrigin,
+  requestLease,
 });
 
 export function createDictateHandler(service, options = {}) {
@@ -111,7 +117,7 @@ export function createDictateHandler(service, options = {}) {
         write(res, 405, { Allow: "GET", "Content-Type": "text/plain; charset=utf-8" }, "Method not allowed\n");
         return;
       }
-      json(res, 200, service.snapshot());
+      json(res, 200, service.snapshot({ leaseId: requestLease(req), renew: true }));
       return;
     }
 
@@ -137,28 +143,39 @@ export function createDictateHandler(service, options = {}) {
       }
       if (route === "start") {
         const body = await readJson(req);
-        json(res, 200, await service.start({ sessionId: body.sessionId }));
+        json(res, 200, await service.start({
+          sessionId: body.sessionId,
+          leaseId: body.leaseId,
+        }));
+        return;
+      }
+      if (route === "resume") {
+        const body = await readJson(req);
+        json(res, 200, await service.resume({ leaseId: body.leaseId }));
         return;
       }
       if (route === "chunk") {
         const audio = await readBody(req);
-        json(res, 200, service.appendAudio(audio));
+        json(res, 200, service.appendAudio(audio, { leaseId: requestLease(req) }));
         return;
       }
       if (route === "cancel") {
-        await readBody(req, 4096);
-        json(res, 200, await service.cancel());
+        const body = await readJson(req);
+        json(res, 200, await service.cancel({ leaseId: body.leaseId }));
         return;
       }
       if (route === "end") {
         const type = String(req.headers["content-type"] ?? "").split(";", 1)[0].trim();
         if (type === "application/json") {
           const body = await readJson(req);
-          json(res, 200, await service.end({ text: body.text }));
+          json(res, 200, await service.end({
+            text: body.text,
+            leaseId: body.leaseId,
+          }));
           return;
         }
         const audio = await readBody(req);
-        json(res, 200, await service.end({ audio }));
+        json(res, 200, await service.end({ audio, leaseId: requestLease(req) }));
       }
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;

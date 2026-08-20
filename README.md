@@ -14,13 +14,17 @@ a DSH session id frozen at start.
   textarea. Tap starts and binds that session. While recording the same
   control is an X and cancels. There is no Send button; Enter submits.
   Form submit still **ends** (stop, recognize, autosubmit).
-- **Desktop:** the mic is hidden. Right-Alt starts (last composer focus in
-  this process, else the resume session). Right-Alt again ends and
-  autosubmits. Delete cancels. Enter submits. No Send button.
+- **Desktop:** the mic is hidden. In desktop command mode, Space starts with
+  visible feedback and Space again stops, recognizes, and autosubmits.
+  Right-Alt remains an equivalent start/end shortcut. Delete cancels. Literal
+  spaces in the composer and other editable controls are never intercepted.
 
-One live recording at a time. Bind is frozen at start. Navigating away does
-not retarget. A deleted bound session drops the result. Empty recognition
-sends nothing. Cancel sends nothing.
+One browser capture owns recording at a time through a short, opaque lease.
+Other phones or desktops show a non-owning busy state and cannot end or cancel
+it. Owner polling renews the lease; a crashed owner's lease expires, while an
+ordinary page exit stops local tracks and best-effort cancels. Bind is frozen
+at start. A deleted bound session drops the result. Empty recognition sends
+nothing. Cancel sends nothing.
 
 ## Send
 

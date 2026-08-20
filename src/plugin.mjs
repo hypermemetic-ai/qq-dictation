@@ -6,7 +6,7 @@
 
 import { createDictateHandler } from "./http.mjs";
 import { createHandyRecognizer } from "./recognizer.mjs";
-import { createDictationService } from "./service.mjs";
+import { createDictationService, defaultCaptureLeaseAuthority } from "./service.mjs";
 
 export const name = "qq-dictation";
 export const inject = ["qq", "webServer"];
@@ -19,7 +19,11 @@ export function apply(ctx, config = {}) {
   const recognize = typeof config.recognize === "function"
     ? config.recognize
     : createHandyRecognizer(config).recognize;
-  const service = createDictationService(ctx, { ...config, recognize });
+  const service = createDictationService(ctx, {
+    ...config,
+    recognize,
+    leaseAuthority: config.leaseAuthority ?? defaultCaptureLeaseAuthority,
+  });
   ctx.provide("qq-dictation", service);
 
   const basePath = String(config.basePath ?? "/qq/dictate");
@@ -32,7 +36,7 @@ export function apply(ctx, config = {}) {
     });
     return async () => {
       unregister();
-      await service.cancel();
+      await service.release();
     };
   }, "qq-dictation: HTTP routes and live bind");
 }

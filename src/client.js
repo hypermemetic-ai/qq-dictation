@@ -10,13 +10,14 @@
     starting: "Starting dictation…",
     recording: "Recording · Space to send",
     transcribing: "Transcribing…",
+    busy: "Dictation active on another device",
     failure: "Dictation failed · Space to retry",
   });
   let capture = null;
   let clientState = "idle";
   let boundSessionId = "";
+  let leaseId = "";
   let failureTimer = 0;
-  let restarting = false;
   let pollTimer = 0;
 
   const pageSessionId = () => {
@@ -25,6 +26,19 @@
     if (fromComposer) return fromComposer;
     const match = location.pathname.match(/\/session\/(session-[0-9a-fA-F-]{36})(?:\/|$)/);
     return match ? match[1] : "";
+  };
+
+  const newLeaseId = () => {
+    const cryptoApi = globalThis.crypto;
+    if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+    if (typeof cryptoApi?.getRandomValues !== "function") {
+      throw new Error("qq-dictation: secure capture identity is unavailable");
+    }
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   };
 
   const dictateButton = () => document.querySelector("#composer-dictate");
@@ -39,8 +53,12 @@
           ? "Starting dictation"
           : clientState === "transcribing"
             ? "Transcribing dictation"
-            : "Dictate";
+            : clientState === "busy"
+              ? "Dictation active on another device"
+              : "Dictate";
       button.setAttribute("aria-label", label);
+      button.setAttribute("aria-disabled", clientState === "busy" ? "true" : "false");
+      button.disabled = clientState === "busy" || clientState === "starting" || clientState === "transcribing";
       button.dataset.state = clientState;
     }
     const form = document.querySelector("#composer");
@@ -74,12 +92,13 @@
     }
   };
 
-  const postJson = async (path, body) => {
+  const postJson = async (path, body, options = {}) => {
     const response = await fetch(`${PREFIX}${path}`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body ?? {}),
+      keepalive: options.keepalive === true,
     });
     let payload = {};
     try {
@@ -96,8 +115,9 @@
     return payload;
   };
 
-  const readStatus = async () => {
-    const response = await fetch(`${PREFIX}/`, { credentials: "same-origin" });
+  const readStatus = async (ownerLease = leaseId) => {
+    const headers = ownerLease ? { "x-qq-dictation-lease": ownerLease } : {};
+    const response = await fetch(`${PREFIX}/`, { credentials: "same-origin", headers });
     if (!response.ok) return { state: "idle" };
     try {
       return await response.json();
@@ -235,47 +255,67 @@
   };
 
   const start = async (bindSessionId) => {
-    if (clientState === "starting" || clientState === "recording" || clientState === "transcribing") return;
+    if (["starting", "recording", "transcribing", "busy"].includes(clientState)) return;
     boundSessionId = bindSessionId || pageSessionId();
     setState("starting");
+    let startRequested = false;
     try {
+      leaseId = newLeaseId();
+      const availability = await readStatus("");
+      if (availability.capture === "foreign") {
+        leaseId = "";
+        boundSessionId = "";
+        setState("busy");
+        return;
+      }
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("qq-dictation: microphone is unavailable");
       }
       await startMic();
-      const status = await readStatus();
-      if (status.state !== "recording") {
-        await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
+      startRequested = true;
+      const started = await postJson("/start", {
+        leaseId,
+        ...(boundSessionId ? { sessionId: boundSessionId } : {}),
+      });
+      if (started.capture !== "local" || started.state !== "recording") {
+        throw new Error("qq-dictation: capture ownership was not granted");
       }
       setState("recording");
     } catch {
       await stopCapture();
-      try { await postJson("/cancel", {}); } catch {}
+      const failedLease = leaseId;
+      leaseId = "";
+      if (startRequested && failedLease) {
+        try { await postJson("/cancel", { leaseId: failedLease }); } catch {}
+      }
       boundSessionId = "";
-      setState("failure");
+      const status = await readStatus("").catch(() => ({ state: "idle", capture: null }));
+      setState(status.capture === "foreign" ? "busy" : "failure");
     }
   };
 
   const end = async () => {
-    if (clientState === "starting" || clientState === "transcribing") return;
-    const recording = clientState === "recording";
-    const status = recording ? { state: "recording" } : await readStatus();
-    if (status.state !== "recording" && !recording) return;
+    if (clientState !== "recording" || !leaseId) return;
+    const ownerLease = leaseId;
     setState("transcribing");
     const live = await stopCapture();
     const wav = collectWav(live);
     const send = () => fetch(`${PREFIX}/end`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "audio/wav" },
+      headers: {
+        "content-type": "audio/wav",
+        "x-qq-dictation-lease": ownerLease,
+      },
       body: wav,
     });
     try {
       let response = await send();
-      // A dictation fiber may have reloaded while the phone kept capturing.
-      // Recreate only the session bind, then deliver the same local WAV.
-      if (response.status === 409 && boundSessionId) {
-        await postJson("/start", { sessionId: boundSessionId });
+      // A dictation fiber may have reloaded while this browser kept capturing.
+      // Only explicit owner end may resume the same unrevoked lease; the lease
+      // authority preserves its original frozen session binding.
+      if (response.status === 409) {
+        await postJson("/resume", { leaseId: ownerLease });
         response = await send();
       }
       let payload = {};
@@ -284,18 +324,22 @@
       if (payload.sent !== true) throw new Error(payload.message || "dictation was not sent");
       setState("idle");
     } catch {
-      try { await postJson("/cancel", {}); } catch {}
+      try { await postJson("/cancel", { leaseId: ownerLease }); } catch {}
       setState("failure");
     } finally {
+      leaseId = "";
       boundSessionId = "";
     }
   };
 
   const cancel = async () => {
+    if (clientState !== "recording" || !leaseId) return;
+    const ownerLease = leaseId;
+    leaseId = "";
+    boundSessionId = "";
     setState("idle");
     await stopCapture();
-    try { await postJson("/cancel", {}); } catch {}
-    boundSessionId = "";
+    try { await postJson("/cancel", { leaseId: ownerLease }); } catch {}
   };
 
   const isPrompt = (node) => node && node.id === "prompt";
@@ -360,20 +404,30 @@
   const poll = async () => {
     try {
       const status = await readStatus();
-      if (status.state === "recording" && clientState === "idle") setState("recording");
-      if (status.state !== "recording" && clientState === "recording" && capture && !restarting) {
-        restarting = true;
-        try {
-          await postJson("/start", boundSessionId ? { sessionId: boundSessionId } : {});
-        } catch {
+      if (clientState === "starting" || clientState === "transcribing" || clientState === "failure") return;
+
+      if (status.capture === "foreign") {
+        if (capture || leaseId) {
           await stopCapture();
+          leaseId = "";
           boundSessionId = "";
-          setState("failure");
-        } finally {
-          restarting = false;
         }
+        setState("busy");
+        return;
       }
-      if (status.state !== "recording" && clientState === "recording" && !capture) setState("idle");
+
+      if (status.capture === "local" && capture &&
+          (status.state === "recording" || status.resumable === true)) {
+        if (clientState !== "recording") setState("recording");
+        return;
+      }
+
+      if (capture || leaseId) {
+        await stopCapture();
+        leaseId = "";
+        boundSessionId = "";
+      }
+      if (clientState === "recording" || clientState === "busy") setState("idle");
     } catch {}
   };
 
@@ -384,5 +438,15 @@
   }
   void poll();
   pollTimer = window.setInterval(() => { void poll(); }, 1000);
-  window.addEventListener("pagehide", () => clearInterval(pollTimer), { once: true });
+  window.addEventListener("pagehide", () => {
+    clearInterval(pollTimer);
+    const ownerLease = leaseId;
+    leaseId = "";
+    boundSessionId = "";
+    clientState = "idle";
+    void stopCapture();
+    if (ownerLease) {
+      void postJson("/cancel", { leaseId: ownerLease }, { keepalive: true }).catch(() => {});
+    }
+  }, { once: true });
 })();
