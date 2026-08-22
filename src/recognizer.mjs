@@ -98,6 +98,12 @@ export function createHandyRecognizer(config = {}) {
         await writeFile(wav, wavBytes);
         const child = spawnImpl(handyBin, ["--transcribe-file", wav, "--json"], {
           stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...env,
+            DISPLAY: String(env.DISPLAY ?? "").trim() || ":0",
+            GDK_BACKEND: String(env.GDK_BACKEND ?? "").trim() || "x11",
+            MESA_VK_DEVICE_SELECT: String(env.MESA_VK_DEVICE_SELECT ?? "").trim() || "1002:1900",
+          },
         });
         const timer = setTimeout(() => {
           try { child.kill("SIGTERM"); } catch {}

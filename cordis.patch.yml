@@ -1,5 +1,5 @@
 # qq-dictation profile layer. `dsh plugin add` activates this when the sibling
-# tree is present. Not named in bin/qq or qq/host.patch.yml.
+# tree is present. Not named in bin/qq or core/host.patch.yml.
 
 - insert:
     - id: qq-dictation
