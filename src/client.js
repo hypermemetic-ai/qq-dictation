@@ -346,6 +346,7 @@
       headers: {
         "content-type": "audio/wav",
         "x-qq-dictation-lease": ownerLease,
+        "x-qq-dictation-protocol": "composer-handoff-v1",
       },
       body: wav,
     });
@@ -361,6 +362,12 @@
       let payload = {};
       try { payload = await response.json(); } catch {}
       if (!response.ok) throw new Error(payload.error || `dictation end failed (${response.status})`);
+      // During the opposite side of a live reload, an older server may ignore
+      // the opt-in marker, submit directly, and return its legacy response.
+      if (payload.sent === true) {
+        setState("idle");
+        return;
+      }
       if (payload.recognized !== true) throw new Error(payload.message || "dictation was empty");
       submitRecognition(payload, expectedSessionId);
     } catch {

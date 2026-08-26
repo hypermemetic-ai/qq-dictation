@@ -7,6 +7,8 @@ import { DictationError } from "./service.mjs";
 
 const MAX_BODY_BYTES = 8_388_608;
 const CLIENT_PATH = fileURLToPath(new URL("./client.js", import.meta.url));
+const LEGACY_DIRECT_PROTOCOL = "legacy-direct-v1";
+const COMPOSER_HANDOFF_PROTOCOL = "composer-handoff-v1";
 
 const SECURITY_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
@@ -82,12 +84,27 @@ function requestLease(req) {
   return String(req.headers["x-qq-dictation-lease"] ?? "").trim();
 }
 
+function requestProtocol(req) {
+  return String(req.headers["x-qq-dictation-protocol"] ?? "").trim() === COMPOSER_HANDOFF_PROTOCOL
+    ? COMPOSER_HANDOFF_PROTOCOL
+    : LEGACY_DIRECT_PROTOCOL;
+}
+
+async function endResponse(service, result, protocol) {
+  return protocol === COMPOSER_HANDOFF_PROTOCOL
+    ? result
+    : service.submitRecognition(result);
+}
+
 export const internals = Object.freeze({
   MAX_BODY_BYTES,
   SECURITY_HEADERS,
   routeOf,
   sameOrigin,
   requestLease,
+  requestProtocol,
+  LEGACY_DIRECT_PROTOCOL,
+  COMPOSER_HANDOFF_PROTOCOL,
 });
 
 export function createDictateHandler(service, options = {}) {
@@ -165,17 +182,20 @@ export function createDictateHandler(service, options = {}) {
         return;
       }
       if (route === "end") {
+        const protocol = requestProtocol(req);
         const type = String(req.headers["content-type"] ?? "").split(";", 1)[0].trim();
         if (type === "application/json") {
           const body = await readJson(req);
-          json(res, 200, await service.end({
+          const result = await service.end({
             text: body.text,
             leaseId: body.leaseId,
-          }));
+          });
+          json(res, 200, await endResponse(service, result, protocol));
           return;
         }
         const audio = await readBody(req);
-        json(res, 200, await service.end({ audio, leaseId: requestLease(req) }));
+        const result = await service.end({ audio, leaseId: requestLease(req) });
+        json(res, 200, await endResponse(service, result, protocol));
       }
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;

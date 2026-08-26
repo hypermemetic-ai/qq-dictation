@@ -344,6 +344,40 @@ export function createDictationService(ctx, config = {}) {
     });
   }
 
+  // Pages that loaded the pre-composer-handoff client expect /end to submit
+  // directly and return { sent: true }. Keep that compatibility conversion
+  // separate from recognition so current clients can merge through composer.
+  async function submitRecognition(result = {}) {
+    const { recognized, ...response } = result;
+    if (recognized !== true) {
+      return Object.freeze({ ...response, sent: false });
+    }
+
+    const sessionId = parseSessionId(result.boundSessionId);
+    const text = asUserSpeech(result.text);
+    if (!sessionId || !text) {
+      throw new DictationError("qq-dictation: invalid recognized handoff", 500);
+    }
+    if (typeof qq.prompt !== "function") {
+      throw new DictationError("qq-dictation: qq prompt service is unavailable", 503);
+    }
+    try {
+      await qq.prompt(sessionId, text);
+    } catch (error) {
+      if (Number(error?.status) === 404) {
+        return Object.freeze({
+          ...response,
+          sent: false,
+          reason: "gone",
+          boundSessionId: sessionId,
+          message: "Bound session is gone; dictation dropped.",
+        });
+      }
+      throw error;
+    }
+    return Object.freeze({ ...response, sent: true, boundSessionId: sessionId, text });
+  }
+
   return Object.freeze({
     snapshot,
     noteFocus,
@@ -353,6 +387,7 @@ export function createDictationService(ctx, config = {}) {
     resume,
     appendAudio,
     end,
+    submitRecognition,
     cancel,
     release,
   });

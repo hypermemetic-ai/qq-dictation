@@ -28,12 +28,18 @@ nothing. Cancel sends nothing.
 
 ## Send
 
-End returns recognized ordinary user speech to the browser that owns the
-capture. If that browser still owns the bound session's composer, it appends
-the speech to the current draft with a whitespace boundary and invokes the
-composer's normal submit path. This preserves slash-command handling, draft
-clearing, and admission behavior. A completion is dropped if the composer has
-changed sessions while recognition was in flight.
+Clients opt into the `composer-handoff-v1` end protocol with the
+`x-qq-dictation-protocol` request header. End then returns recognized ordinary
+user speech to the browser that owns the capture. If that browser still owns
+the bound session's composer, it appends the speech to the current draft with
+a whitespace boundary and invokes the composer's normal submit path. This
+preserves slash-command handling, draft clearing, and admission behavior. A
+completion is dropped if the composer has changed sessions while recognition
+was in flight.
+
+An end request without that marker is from a legacy page retained across a
+plugin reload. The service directly submits its recognized speech and returns
+the legacy `{ sent: true }` response until that page reloads.
 
 ## Transport
 
