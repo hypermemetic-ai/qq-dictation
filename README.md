@@ -28,8 +28,12 @@ nothing. Cancel sends nothing.
 
 ## Send
 
-End calls `qq.prompt` on the bound session. The utterance is ordinary user
-speech, never a slash line and never a composer draft.
+End returns recognized ordinary user speech to the browser that owns the
+capture. If that browser still owns the bound session's composer, it appends
+the speech to the current draft with a whitespace boundary and invokes the
+composer's normal submit path. This preserves slash-command handling, draft
+clearing, and admission behavior. A completion is dropped if the composer has
+changed sessions while recognition was in flight.
 
 ## Transport
 

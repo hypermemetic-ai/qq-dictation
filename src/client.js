@@ -277,6 +277,7 @@
         leaseId,
         ...(boundSessionId ? { sessionId: boundSessionId } : {}),
       });
+      boundSessionId = String(started.boundSessionId || boundSessionId);
       if (started.capture !== "local" || started.state !== "recording") {
         throw new Error("qq-dictation: capture ownership was not granted");
       }
@@ -294,9 +295,48 @@
     }
   };
 
+  const mergedComposerText = (draft, speech) => {
+    const current = String(draft ?? "");
+    const recognized = String(speech ?? "").trim();
+    if (!recognized) return current;
+    if (!current.trim()) return recognized;
+    return `${current}${/\s$/.test(current) ? "" : " "}${recognized}`;
+  };
+
+  const submitRecognition = (payload, expectedSessionId) => {
+    const form = document.querySelector("#composer");
+    const prompt = document.querySelector("#prompt");
+    if (!(form instanceof HTMLFormElement)
+        || !(prompt instanceof HTMLTextAreaElement)
+        || prompt.form !== form
+        || typeof form.requestSubmit !== "function") {
+      throw new Error("dictation composer is unavailable");
+    }
+    const responseSessionId = String(payload?.boundSessionId ?? "").trim();
+    const frozenSessionId = responseSessionId || String(expectedSessionId ?? "").trim();
+    if (!frozenSessionId
+        || (expectedSessionId && responseSessionId && responseSessionId !== expectedSessionId)
+        || pageSessionId() !== frozenSessionId) {
+      throw new Error("dictation composer changed sessions");
+    }
+    const speech = String(payload?.text ?? "").trim();
+    if (!speech) throw new Error("dictation recognition was empty");
+    const merged = mergedComposerText(prompt.value, speech);
+    prompt.value = merged;
+    try { prompt.setSelectionRange(merged.length, merged.length); } catch {}
+
+    // The synthetic submit must pass through the ordinary composer handlers,
+    // not loop back into dictation's recording-submit interception.
+    leaseId = "";
+    boundSessionId = "";
+    setState("idle");
+    form.requestSubmit();
+  };
+
   const end = async () => {
     if (clientState !== "recording" || !leaseId) return;
     const ownerLease = leaseId;
+    const expectedSessionId = boundSessionId;
     setState("transcribing");
     const live = await stopCapture();
     const wav = collectWav(live);
@@ -321,8 +361,8 @@
       let payload = {};
       try { payload = await response.json(); } catch {}
       if (!response.ok) throw new Error(payload.error || `dictation end failed (${response.status})`);
-      if (payload.sent !== true) throw new Error(payload.message || "dictation was not sent");
-      setState("idle");
+      if (payload.recognized !== true) throw new Error(payload.message || "dictation was empty");
+      submitRecognition(payload, expectedSessionId);
     } catch {
       try { await postJson("/cancel", { leaseId: ownerLease }); } catch {}
       setState("failure");
@@ -368,10 +408,16 @@
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!form || form.id !== "composer") return;
-    if (clientState !== "recording") return;
-    event.preventDefault();
-    event.stopPropagation();
-    void end();
+    if (clientState === "recording") {
+      event.preventDefault();
+      event.stopPropagation();
+      void end();
+      return;
+    }
+    if (clientState === "starting" || clientState === "transcribing") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }, true);
 
   document.addEventListener(DESKTOP_TOGGLE_EVENT, () => {

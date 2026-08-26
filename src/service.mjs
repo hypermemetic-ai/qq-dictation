@@ -1,6 +1,6 @@
 // In-process dictation service. Bind is frozen at start; end recognizes and
-// autosubmits on that session; cancel drops. One owned browser capture at a
-// time. Capture leases survive a Cordis fiber replacement but expire without
+// returns speech to the owning browser composer; cancel drops. One owned
+// browser capture at a time. Capture leases survive a Cordis fiber replacement but expire without
 // an owner heartbeat.
 
 import { readFileSync } from "node:fs";
@@ -170,7 +170,7 @@ export const defaultCaptureLeaseAuthority = globalThis[DEFAULT_AUTHORITY_KEY];
 
 export function createDictationService(ctx, config = {}) {
   const qq = ctx.get?.("qq", false) ?? ctx.get?.("qq") ?? null;
-  if (!qq || typeof qq.prompt !== "function") {
+  if (!qq) {
     throw new Error("qq-dictation: qq service is unavailable");
   }
 
@@ -325,34 +325,20 @@ export function createDictationService(ctx, config = {}) {
       recognized = asUserSpeech(await recognize(payload, { sessionId: bound.sessionId }));
     }
     if (!recognized) {
-      return Object.freeze({ ...snapshot({ leaseId: id }), sent: false, reason: "empty" });
+      return Object.freeze({ ...snapshot({ leaseId: id }), recognized: false, reason: "empty" });
     }
     if (!(await sessionExists(bound.sessionId))) {
       return Object.freeze({
         ...snapshot({ leaseId: id }),
-        sent: false,
+        recognized: false,
         reason: "gone",
         boundSessionId: bound.sessionId,
         message: "Bound session is gone; dictation dropped.",
       });
     }
-    try {
-      await qq.prompt(bound.sessionId, recognized);
-    } catch (error) {
-      if (Number(error?.status) === 404) {
-        return Object.freeze({
-          ...snapshot({ leaseId: id }),
-          sent: false,
-          reason: "gone",
-          boundSessionId: bound.sessionId,
-          message: "Bound session is gone; dictation dropped.",
-        });
-      }
-      throw error;
-    }
     return Object.freeze({
       ...snapshot({ leaseId: id }),
-      sent: true,
+      recognized: true,
       boundSessionId: bound.sessionId,
       text: recognized,
     });

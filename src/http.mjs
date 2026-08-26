@@ -181,7 +181,7 @@ export function createDictateHandler(service, options = {}) {
       const status = Number.isInteger(error?.status) ? error.status : 500;
       json(res, status, {
         error: error instanceof Error ? error.message : String(error),
-        sent: false,
+        recognized: false,
       });
     }
   };
