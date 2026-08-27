@@ -1,7 +1,7 @@
 // In-process dictation service. Bind is frozen at start; end recognizes and
-// returns speech to the owning browser composer; cancel drops. One owned
-// browser capture at a time. Capture leases survive a Cordis fiber replacement but expire without
-// an owner heartbeat.
+// server delivery submits to that session; cancel drops. One owned browser
+// capture at a time. Capture leases survive a Cordis fiber replacement but
+// expire without an owner heartbeat.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,6 +22,15 @@ export function asUserSpeech(text) {
   const raw = String(text ?? "").replace(/^\uFEFF/, "").trim();
   if (!raw) return "";
   return raw.replace(/^[\\/]+/, "").trim();
+}
+
+/** Match qq-ui's composer handoff whitespace rule without rewriting the draft. */
+export function mergeComposerText(draft, speech) {
+  const current = String(draft ?? "");
+  const recognized = asUserSpeech(speech);
+  if (!recognized) return current;
+  if (!current.trim()) return recognized;
+  return `${current}${/\s$/.test(current) ? "" : " "}${recognized}`;
 }
 
 export function parseSessionId(value) {
@@ -344,18 +353,19 @@ export function createDictationService(ctx, config = {}) {
     });
   }
 
-  // Pages that loaded the pre-composer-handoff client expect /end to submit
-  // directly and return { sent: true }. Keep that compatibility conversion
-  // separate from recognition so current clients can merge through composer.
-  async function submitRecognition(result = {}) {
+  // Legacy direct pages and server-delivery-v1 both submit a completed
+  // recognition here. Only the new protocol supplies a frozen composer draft;
+  // composer-handoff-v1 never calls this method.
+  async function submitRecognition(result = {}, { draft = "" } = {}) {
     const { recognized, ...response } = result;
     if (recognized !== true) {
       return Object.freeze({ ...response, sent: false });
     }
 
     const sessionId = parseSessionId(result.boundSessionId);
-    const text = asUserSpeech(result.text);
-    if (!sessionId || !text) {
+    const speech = asUserSpeech(result.text);
+    const text = mergeComposerText(draft, speech);
+    if (!sessionId || !speech || !text) {
       throw new DictationError("qq-dictation: invalid recognized handoff", 500);
     }
     if (typeof qq.prompt !== "function") {
