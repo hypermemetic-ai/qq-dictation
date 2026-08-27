@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "In-process voice-input plugin for the qq DSH host. One repository, one plugin, one version; Handy runs as this plugin's recognizer.",
+  "description": "In-process Cordis voice-input plugin for the core DSH host.",
   "main": "src/plugin.mjs",
   "exports": {
     ".": "./src/plugin.mjs",
