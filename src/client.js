@@ -5,6 +5,8 @@
   const TARGET_RATE = 16_000;
   const DESKTOP_TOGGLE_EVENT = "qq:desktop-dictation-toggle";
   const FAILURE_VISIBLE_MS = 4_000;
+  const SERVER_DELIVERY_PROTOCOL = "server-delivery-v1";
+  const COMPOSER_DRAFT_PREFIX = "qq:composer:";
   const STATE_LABELS = Object.freeze({
     idle: "",
     starting: "Starting dictation…",
@@ -198,7 +200,7 @@
     return encodeWav(pcm, TARGET_RATE);
   };
 
-  const stopCapture = async () => {
+  const stopCapture = () => {
     const live = capture;
     capture = null;
     if (!live) return null;
@@ -206,7 +208,10 @@
     try { live.processor?.disconnect?.(); } catch {}
     try { live.mute?.disconnect?.(); } catch {}
     try { live.stream?.getTracks?.().forEach((track) => track.stop()); } catch {}
-    try { await live.context?.close?.(); } catch {}
+    try {
+      const closing = live.context?.close?.();
+      if (typeof closing?.catch === "function") void closing.catch(() => {});
+    } catch {}
     return live;
   };
 
@@ -295,61 +300,65 @@
     }
   };
 
-  const mergedComposerText = (draft, speech) => {
-    const current = String(draft ?? "");
-    const recognized = String(speech ?? "").trim();
-    if (!recognized) return current;
-    if (!current.trim()) return recognized;
-    return `${current}${/\s$/.test(current) ? "" : " "}${recognized}`;
-  };
-
-  const submitRecognition = (payload, expectedSessionId) => {
+  const frozenComposerDraft = (sessionId) => {
+    const frozenSessionId = String(sessionId ?? "").trim();
+    if (!frozenSessionId) return "";
     const form = document.querySelector("#composer");
     const prompt = document.querySelector("#prompt");
-    if (!(form instanceof HTMLFormElement)
-        || !(prompt instanceof HTMLTextAreaElement)
-        || prompt.form !== form
-        || typeof form.requestSubmit !== "function") {
-      throw new Error("dictation composer is unavailable");
+    if (form instanceof HTMLFormElement
+        && prompt instanceof HTMLTextAreaElement
+        && prompt.form === form
+        && String(form.dataset.sessionId ?? "").trim() === frozenSessionId) {
+      return prompt.value;
     }
-    const responseSessionId = String(payload?.boundSessionId ?? "").trim();
-    const frozenSessionId = responseSessionId || String(expectedSessionId ?? "").trim();
-    if (!frozenSessionId
-        || (expectedSessionId && responseSessionId && responseSessionId !== expectedSessionId)
-        || pageSessionId() !== frozenSessionId) {
-      throw new Error("dictation composer changed sessions");
+    try {
+      return sessionStorage.getItem(`${COMPOSER_DRAFT_PREFIX}${frozenSessionId}`) ?? "";
+    } catch {
+      return "";
     }
-    const speech = String(payload?.text ?? "").trim();
-    if (!speech) throw new Error("dictation recognition was empty");
-    const merged = mergedComposerText(prompt.value, speech);
-    prompt.value = merged;
-    try { prompt.setSelectionRange(merged.length, merged.length); } catch {}
+  };
 
-    // The synthetic submit must pass through the ordinary composer handlers,
-    // not loop back into dictation's recording-submit interception.
-    leaseId = "";
-    boundSessionId = "";
-    setState("idle");
-    form.requestSubmit();
+  const clearFrozenComposerDraft = (sessionId) => {
+    const frozenSessionId = String(sessionId ?? "").trim();
+    if (!frozenSessionId) return;
+    const form = document.querySelector("#composer");
+    const prompt = document.querySelector("#prompt");
+    if (form instanceof HTMLFormElement
+        && prompt instanceof HTMLTextAreaElement
+        && prompt.form === form
+        && String(form.dataset.sessionId ?? "").trim() === frozenSessionId) {
+      prompt.value = "";
+      try { prompt.setSelectionRange(0, 0); } catch {}
+    }
+    try { sessionStorage.removeItem(`${COMPOSER_DRAFT_PREFIX}${frozenSessionId}`); } catch {}
   };
 
   const end = async () => {
     if (clientState !== "recording" || !leaseId) return;
     const ownerLease = leaseId;
     const expectedSessionId = boundSessionId;
+    // Freeze A's draft at the send gesture. If the operator already switched,
+    // qq-ui persisted it under this session-specific key while leaving A.
+    const draft = frozenComposerDraft(expectedSessionId);
     setState("transcribing");
-    const live = await stopCapture();
+    const live = stopCapture();
     const wav = collectWav(live);
-    const send = () => fetch(`${PREFIX}/end`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "content-type": "audio/wav",
-        "x-qq-dictation-lease": ownerLease,
-        "x-qq-dictation-protocol": "composer-handoff-v1",
-      },
-      body: wav,
-    });
+    const send = () => {
+      const body = new FormData();
+      body.append("audio", wav, "dictation.wav");
+      // A Blob preserves textarea LF bytes; multipart string fields normalize
+      // line endings to CRLF before the server can merge the frozen draft.
+      body.append("draft", new Blob([draft], { type: "text/plain;charset=utf-8" }), "composer.txt");
+      return fetch(`${PREFIX}/end`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "x-qq-dictation-lease": ownerLease,
+          "x-qq-dictation-protocol": SERVER_DELIVERY_PROTOCOL,
+        },
+        body,
+      });
+    };
     try {
       let response = await send();
       // A dictation fiber may have reloaded while this browser kept capturing.
@@ -362,16 +371,16 @@
       let payload = {};
       try { payload = await response.json(); } catch {}
       if (!response.ok) throw new Error(payload.error || `dictation end failed (${response.status})`);
-      // During the opposite side of a live reload, an older server may ignore
-      // the opt-in marker, submit directly, and return its legacy response.
-      if (payload.sent === true) {
-        setState("idle");
-        return;
+      const deliveredSessionId = String(payload.boundSessionId ?? "").trim();
+      if (payload.sent !== true) throw new Error(payload.message || "dictation was not sent");
+      if (!expectedSessionId || (deliveredSessionId && deliveredSessionId !== expectedSessionId)) {
+        throw new Error("dictation delivery changed sessions");
       }
-      if (payload.recognized !== true) throw new Error(payload.message || "dictation was empty");
-      submitRecognition(payload, expectedSessionId);
+      clearFrozenComposerDraft(expectedSessionId);
+      setState("idle");
     } catch {
-      try { await postJson("/cancel", { leaseId: ownerLease }); } catch {}
+      // Once /end starts, recognition and delivery belong to the server. Do
+      // not race it with /cancel if the page leaves or the response is lost.
       setState("failure");
     } finally {
       leaseId = "";
@@ -493,12 +502,13 @@
   pollTimer = window.setInterval(() => { void poll(); }, 1000);
   window.addEventListener("pagehide", () => {
     clearInterval(pollTimer);
+    const cancelRecording = clientState === "recording";
     const ownerLease = leaseId;
     leaseId = "";
     boundSessionId = "";
     clientState = "idle";
     void stopCapture();
-    if (ownerLease) {
+    if (cancelRecording && ownerLease) {
       void postJson("/cancel", { leaseId: ownerLease }, { keepalive: true }).catch(() => {});
     }
   }, { once: true });

@@ -22,6 +22,6 @@
     }
   },
   "scripts": {
-    "test": "node --check src/plugin.mjs"
+    "test": "node --check src/plugin.mjs && node --check src/client.js && node --test"
   }
 }

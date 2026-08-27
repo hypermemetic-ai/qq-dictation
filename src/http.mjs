@@ -9,6 +9,8 @@ const MAX_BODY_BYTES = 8_388_608;
 const CLIENT_PATH = fileURLToPath(new URL("./client.js", import.meta.url));
 const LEGACY_DIRECT_PROTOCOL = "legacy-direct-v1";
 const COMPOSER_HANDOFF_PROTOCOL = "composer-handoff-v1";
+const SERVER_DELIVERY_PROTOCOL = "server-delivery-v1";
+const MULTIPART_HEADER_BYTES = 8_192;
 
 const SECURITY_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
@@ -68,6 +70,75 @@ async function readJson(req) {
   }
 }
 
+function multipartBoundary(contentType) {
+  const match = String(contentType ?? "").match(/(?:^|;)\s*boundary=(?:"([^"]+)"|([^;\s]+))/i);
+  const boundary = match?.[1] ?? match?.[2] ?? "";
+  if (!boundary || boundary.length > 70 || /[\r\n]/.test(boundary)) {
+    throw new DictationError("qq-dictation: invalid multipart boundary", 415);
+  }
+  return boundary;
+}
+
+function multipartName(headerText) {
+  for (const line of headerText.split("\r\n")) {
+    const separator = line.indexOf(":");
+    if (separator < 0 || line.slice(0, separator).trim().toLowerCase() !== "content-disposition") continue;
+    const match = line.slice(separator + 1).match(/(?:^|;)\s*name="([^"]+)"/i);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+function parseEndMultipart(raw, contentType) {
+  const boundary = multipartBoundary(contentType);
+  const delimiter = Buffer.from(`--${boundary}`);
+  const nextDelimiter = Buffer.from(`\r\n--${boundary}`);
+  const headerSeparator = Buffer.from("\r\n\r\n");
+  let cursor = 0;
+  let draft = "";
+  let audio = null;
+
+  if (!raw.subarray(0, delimiter.length).equals(delimiter)) {
+    throw new DictationError("qq-dictation: malformed multipart body", 415);
+  }
+
+  while (cursor < raw.length) {
+    if (!raw.subarray(cursor, cursor + delimiter.length).equals(delimiter)) {
+      throw new DictationError("qq-dictation: malformed multipart delimiter", 415);
+    }
+    cursor += delimiter.length;
+    if (raw.subarray(cursor, cursor + 2).toString("ascii") === "--") {
+      cursor += 2;
+      if (cursor === raw.length || raw.subarray(cursor).toString("ascii") === "\r\n") break;
+      throw new DictationError("qq-dictation: malformed multipart ending", 415);
+    }
+    if (raw.subarray(cursor, cursor + 2).toString("ascii") !== "\r\n") {
+      throw new DictationError("qq-dictation: malformed multipart part", 415);
+    }
+    cursor += 2;
+
+    const headerEnd = raw.indexOf(headerSeparator, cursor);
+    if (headerEnd < 0 || headerEnd - cursor > MULTIPART_HEADER_BYTES) {
+      throw new DictationError("qq-dictation: malformed multipart headers", 415);
+    }
+    const name = multipartName(raw.subarray(cursor, headerEnd).toString("latin1"));
+    const valueStart = headerEnd + headerSeparator.length;
+    const valueEnd = raw.indexOf(nextDelimiter, valueStart);
+    if (valueEnd < 0) throw new DictationError("qq-dictation: unterminated multipart part", 415);
+    const value = raw.subarray(valueStart, valueEnd);
+    if (name === "draft") draft = value.toString("utf8");
+    if (name === "audio") audio = Buffer.from(value);
+    cursor = valueEnd + 2;
+  }
+
+  if (audio === null) throw new DictationError("qq-dictation: multipart audio is required", 400);
+  return Object.freeze({ audio, draft });
+}
+
+async function readEndMultipart(req, contentType) {
+  return parseEndMultipart(await readBody(req), contentType);
+}
+
 function routeOf(basePath, pathname) {
   if (pathname === basePath || pathname === `${basePath}/`) return "status";
   if (pathname === `${basePath}/client.js`) return "client";
@@ -85,15 +156,17 @@ function requestLease(req) {
 }
 
 function requestProtocol(req) {
-  return String(req.headers["x-qq-dictation-protocol"] ?? "").trim() === COMPOSER_HANDOFF_PROTOCOL
-    ? COMPOSER_HANDOFF_PROTOCOL
-    : LEGACY_DIRECT_PROTOCOL;
+  const requested = String(req.headers["x-qq-dictation-protocol"] ?? "").trim();
+  if (requested === COMPOSER_HANDOFF_PROTOCOL) return COMPOSER_HANDOFF_PROTOCOL;
+  if (requested === SERVER_DELIVERY_PROTOCOL) return SERVER_DELIVERY_PROTOCOL;
+  return LEGACY_DIRECT_PROTOCOL;
 }
 
-async function endResponse(service, result, protocol) {
-  return protocol === COMPOSER_HANDOFF_PROTOCOL
-    ? result
-    : service.submitRecognition(result);
+async function endResponse(service, result, protocol, draft = "") {
+  if (protocol === COMPOSER_HANDOFF_PROTOCOL) return result;
+  return service.submitRecognition(result, {
+    draft: protocol === SERVER_DELIVERY_PROTOCOL ? draft : "",
+  });
 }
 
 export const internals = Object.freeze({
@@ -103,8 +176,11 @@ export const internals = Object.freeze({
   sameOrigin,
   requestLease,
   requestProtocol,
+  multipartBoundary,
+  parseEndMultipart,
   LEGACY_DIRECT_PROTOCOL,
   COMPOSER_HANDOFF_PROTOCOL,
+  SERVER_DELIVERY_PROTOCOL,
 });
 
 export function createDictateHandler(service, options = {}) {
@@ -183,14 +259,24 @@ export function createDictateHandler(service, options = {}) {
       }
       if (route === "end") {
         const protocol = requestProtocol(req);
-        const type = String(req.headers["content-type"] ?? "").split(";", 1)[0].trim();
+        const contentType = String(req.headers["content-type"] ?? "");
+        const type = contentType.split(";", 1)[0].trim().toLowerCase();
         if (type === "application/json") {
           const body = await readJson(req);
           const result = await service.end({
             text: body.text,
             leaseId: body.leaseId,
           });
-          json(res, 200, await endResponse(service, result, protocol));
+          json(res, 200, await endResponse(service, result, protocol, body.draft));
+          return;
+        }
+        if (type === "multipart/form-data") {
+          const body = await readEndMultipart(req, contentType);
+          const result = await service.end({
+            audio: body.audio,
+            leaseId: requestLease(req),
+          });
+          json(res, 200, await endResponse(service, result, protocol, body.draft));
           return;
         }
         const audio = await readBody(req);
