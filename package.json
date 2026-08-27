@@ -20,5 +20,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "scripts": {
+    "test": "node --check src/plugin.mjs"
   }
 }
