@@ -9,7 +9,7 @@ import { createHandyRecognizer } from "./recognizer.mjs";
 import { createDictationService, defaultCaptureLeaseAuthority } from "./service.mjs";
 
 export const name = "qq-dictation";
-export const inject = ["qq", "webServer"];
+export const inject = ["qq-core", "webServer"];
 export const provide = "qq-dictation";
 
 export function apply(ctx, config = {}) {

@@ -178,7 +178,7 @@ if (!globalThis[DEFAULT_AUTHORITY_KEY]) {
 export const defaultCaptureLeaseAuthority = globalThis[DEFAULT_AUTHORITY_KEY];
 
 export function createDictationService(ctx, config = {}) {
-  const qq = ctx.get?.("qq", false) ?? ctx.get?.("qq") ?? null;
+  const qq = ctx.get?.("qq-core", false) ?? ctx.get?.("qq-core") ?? ctx.get?.("qq", false) ?? ctx.get?.("qq") ?? null;
   if (!qq) {
     throw new Error("qq-dictation: qq service is unavailable");
   }
