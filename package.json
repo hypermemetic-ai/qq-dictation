@@ -22,6 +22,7 @@
     }
   },
   "scripts": {
-    "test": "node --check src/plugin.mjs && node --check src/client.js && node --test"
+    "test": "node --check src/client.js && node --check src/http.mjs && node --check src/plugin.mjs && node --check src/recognizer.mjs && node --check src/service.mjs && node --test",
+    "reproduce:tail": "node scripts/reproduce-hallucinated-tail.mjs"
   }
 }
